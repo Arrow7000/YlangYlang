@@ -9,7 +9,9 @@
     <None Include="Test.yl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <Compile Include="Helpers.fs" />
     <Compile Include="FileHelpers.fs" />
+    <Compile Include="Lexer.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
