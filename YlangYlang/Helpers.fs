@@ -18,6 +18,8 @@ type NonEmptyList<'a> =
 
             NEL (head1, rest1 @ (head2 :: rest2))
 
+    static member appendList (list : 'a list) (NEL (head, tail)) = NEL (head, tail @ list)
+
 /// A convenient alias
 and NEL<'a> = NonEmptyList<'a>
 
@@ -66,9 +68,17 @@ type Result<'a, 'e> with
 
         match errs with
         | [] -> Ok <| Result.gatherOks list
-        | _ -> Error errs
+        | head :: tail -> NEL.make head |> NEL.appendList tail |> Error
 
 
 
 module String =
-    let fromSeq s = Seq.fold (fun s c -> s + string c) "" s
+    let ofSeq s = Seq.fold (fun s c -> s + string c) "" s
+
+    let len s = String.length s |> uint
+
+    let split (separator : char) (str : string) = str.Split (separator) |> List.ofArray
+
+    let toList (str : string) = str.ToCharArray () |> List.ofArray
+
+    let tail = toList >> List.tail
