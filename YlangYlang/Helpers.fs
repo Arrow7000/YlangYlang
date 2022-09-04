@@ -13,12 +13,23 @@ type NonEmptyList<'a> =
         | [] -> None
         | head :: rest -> Some <| NEL (head, rest)
 
+    static member toList(NEL (head, tail)) = head :: tail
+
     static member append : (NEL<'a> -> NEL<'a> -> NEL<'a>) =
         fun (NEL (head1, rest1)) (NEL (head2, rest2)) ->
 
             NEL (head1, rest1 @ (head2 :: rest2))
 
+    static member cons (item : 'a) (NEL (head, tail)) = NEL (item, head :: tail)
+
     static member appendList (list : 'a list) (NEL (head, tail)) = NEL (head, tail @ list)
+
+    static member fold f state (NEL (head, tail)) = tail |> List.fold f (f state head)
+
+    static member last(NEL (head, tail)) =
+        match List.tryLast tail with
+        | None -> head
+        | Some last -> last
 
 /// A convenient alias
 and NEL<'a> = NonEmptyList<'a>

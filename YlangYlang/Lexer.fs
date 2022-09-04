@@ -21,16 +21,6 @@ type ParseError =
 // @TODO: at some point include the line and col numbers along with the errors, or even just with the tokens tbh
 type ParseErrors = NonEmptyList<ParseError>
 
-//type CharacterGotStuckOn =
-//    { char : char
-//      contextSoFar : char list
-//      error : ParseError }
-
-//type TokenParseState<'a> =
-//    | StillGoing of 'a
-//    | Stopped
-//    | ParseError of CharacterGotStuckOn
-
 
 type WhitespaceChar =
     | Space
@@ -43,10 +33,11 @@ type Token =
     | String of string
     | LetKeyword
     | InKeyword
-    | ModuleSegments of string list // when it has dots in so we can unambiguously know that this refers to a module (well, submodule really)
+    | ModuleSegmentsOrQualifiedTypeOrVariant of NEL<string> // when it has dots in so it could be either a module name or refer to a (partially) qualified type or type variant
     | TypeNameOrVariantOrTopLevelModule of string // when there are no dots in the segments so it could be either a module name or just refer to a type or type variant. There's probably better ways of doing this less ambiguously. Atm I'm gonna leave that for the parsing stage, but it could be moved into the lexing stage at some point if we want to.
     | ModuleKeyword
     | ImportKeyWord
+    | AsKeyword
     | ExposingKeyword
     | ParensOpen
     | ParensClose
@@ -82,7 +73,7 @@ type Token =
     | BackwardPipeOp
 
 
-/// Not yet used, but to add later
+/// Not yet used, but to add later for better debugging messages
 type TokenWithContext =
     { token : Token
       line : uint // the line of the starting character. Is 1-indexed.
@@ -287,8 +278,15 @@ module Matchers =
 
     let moduleSegmentsMatcher =
         function
-        | MultiCharRegex "[A-Z]\w*(?:\.[A-Z]\w*)*(?=\s)" str ->
-            Success (ModuleSegments <| String.split '.' str, String.len str)
+        | MultiCharRegex "[A-Z]\w*(?:\.[A-Z]\w*)+(?=\s)" str ->
+            let token =
+                String.split '.' str
+                |> NEL.fromList
+                |> function
+                    | Some nel -> ModuleSegmentsOrQualifiedTypeOrVariant nel
+                    | None -> failwithf "Module segments list was somehow empty"
+
+            Success (token, String.len str)
         | _ -> NoMatch
 
     let qualifiedIdentifierMatcher =
@@ -309,6 +307,7 @@ module Matchers =
         | _ -> NoMatch
 
     let importKeyword = simpleMatch ImportKeyWord "import\\b"
+    let asKeyword = simpleMatch AsKeyword "as\\b"
 
     let typeNameOrVariantOrTopLevelModule =
         function
@@ -383,6 +382,7 @@ module Matchers =
           moduleSegmentsMatcher
           moduleKeyWordMatcher
           importKeyword
+          asKeyword
           exposingKeyWordMatcher
           unit
           parensOpen
