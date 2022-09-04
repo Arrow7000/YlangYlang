@@ -38,13 +38,14 @@ type WhitespaceChar =
 type Token =
     | Int of uint
     | Whitespace of WhitespaceChar list
+    | String of string
 
 /// Not yet used, but to add later
 type TokenWithContext =
     { token : Token
-      line : uint // is 1-indexed
+      line : uint // the line of the starting character. Is 1-indexed.
       col : uint // the col of the starting character. Is 1-indexed.
-      numOfChars : uint } // I don't think any token spans multiple lines so this should be fine
+      numOfChars : uint } // bear in mind that the whitespace tokens will span multiple lines
 
 type LexingState =
     | NoMatch of ParseErrors option // there may or may not be a reason why it didn't match
@@ -60,15 +61,28 @@ type Matcher = string -> LexingState
 
 
 
-/// You probably want to use `getMatchAtStart`
-let getMatch pattern input =
-    let m = Regex.Match (input, pattern)
-    if m.Success then Some m.Value else None
 
 /// Prepends a ^ at the start of your search so you don't have to remember it each time. Don't say I don't do anything for you ;)
 let getMatchAtStart pattern (input : string) =
     // This basically enforces that the match has to be at the start of the string
-    getMatch ($"^(?:{pattern})") input
+    let wrappedPattern = $"^(?:{pattern})"
+    let m = Regex.Match (input, wrappedPattern)
+    if m.Success then Some m.Value else None
+
+
+/// This will of course start to get fucky real fast if the before/after groups themselves contain groups
+let getMatchAtStartWithGroup (beforeGroup : string) (pattern : string) (afterGroup : string) (input : string) =
+    // This basically enforces that the match has to be at the start of the string, and wraps the pattern in a group
+    let wrappedPattern = $"^(?:{beforeGroup}({pattern}){afterGroup})"
+    let m = Regex.Match (input, wrappedPattern)
+
+    if m.Success then
+        (m.Groups
+         |> Seq.item 1
+         |> fun capture -> capture.Value, m.Length)
+        |> Some
+    else
+        None
 
 
 let (|SingleCharRegex|_|) pattern input =
@@ -82,6 +96,9 @@ let (|SingleCharRegex|_|) pattern input =
     | None -> None
 
 let (|MultiCharRegex|_|) pattern input = getMatchAtStart pattern input
+
+let (|MultiCharRegexGrouped|_|) beforeGroup pattern afterGroup input =
+    getMatchAtStartWithGroup beforeGroup pattern afterGroup input
 
 
 let getUpToNextWhitespace string =
@@ -129,6 +146,43 @@ let whitespaceMatcher allFileChars =
     | _ -> NoMatch None
 
 
+
+type EscapeState =
+    | Normal
+    | EscapeNextChar
+
+let stringMatcher string =
+    match string with
+    | MultiCharRegexGrouped "\"" """[^"\\]*(?:\\.[^"\\]*)*""" "\"" (groupString, len) -> // forgive me, Father, for I have sinned
+        // The map of what escaped char to replace with what
+        // @TODO: find out all the escaped char sequences and add them in
+        let escapedCharsMap =
+            [ '\\', '\\'
+              '"', '"'
+              'n', '\n'
+              'r', '\r' ]
+            |> Map.ofSeq
+
+        let escapedString =
+            groupString
+            |> Seq.fold
+                (fun (state, list) char ->
+                    match state with
+                    | EscapeNextChar ->
+                        match Map.tryFind char escapedCharsMap with
+                        | Some replaceChar -> Normal, (list @ [ replaceChar ])
+                        | None -> Normal, list @ [ '\\' ] // cos we have to add in the slash we skipped when we were expecting an escape-able character
+                    | Normal ->
+                        match char with
+                        | '\\' -> EscapeNextChar, list
+                        | c -> Normal, (list @ [ c ]))
+                (Normal, List.empty)
+            |> snd
+            |> String.fromSeq
+
+
+        Success (String escapedString, uint len)
+    | _ -> NoMatch None
 
 
 let justKeepLexing (allMatchers : Matcher list) string =

@@ -9,8 +9,14 @@ open Lexer
 let main argv =
     let fileText = readFile "Test.yl"
 
-    let matchers = [ intMatcher; whitespaceMatcher ]
+    let matchers =
+        [ intMatcher
+          whitespaceMatcher
+          stringMatcher ]
 
-    justKeepLexing matchers fileText |> printfn "%A"
+    justKeepLexing matchers fileText
+
+
+    |> printfn "%A"
 
     0

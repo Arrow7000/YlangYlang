@@ -67,3 +67,8 @@ type Result<'a, 'e> with
         match errs with
         | [] -> Ok <| Result.gatherOks list
         | _ -> Error errs
+
+
+
+module String =
+    let fromSeq s = Seq.fold (fun s c -> s + string c) "" s
