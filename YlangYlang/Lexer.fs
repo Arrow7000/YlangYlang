@@ -30,7 +30,9 @@ type Token =
     | Whitespace of WhitespaceChar list
     | SingleLineComment of string
     | IntLiteral of uint
-    | String of string
+    | FloatLiteral of float
+    | StringLiteral of string
+    | CharLiteral of char
     | LetKeyword
     | InKeyword
     | ModuleSegmentsOrQualifiedTypeOrVariant of NEL<string> // when it has dots in so it could be either a module name or refer to a (partially) qualified type or type variant
@@ -60,9 +62,18 @@ type Token =
     | PipeChar
     | TypeKeyword
     | AliasKeyword
+    | CaseKeyword
+    | OfKeyword
+    | IfKeyword
+    | ThenKeyword
+    | ElseKeyword
     | Colon
     | Arrow
     | DoubleDot
+    | AndOp
+    | OrOp
+    | Backslash // to signify start of lambda
+    | Underscore // to signify unused function param
     | Unit // ()
     | QualifiedIdentifier of segments : string list
     | RecordAccess of segments : string list
@@ -208,6 +219,13 @@ module Matchers =
                 failwithf $"Tried to parse string of digits as int32 and encountered an error. Digits are: \"{digits}\""
         | _ -> NoMatch
 
+    let floatMatcher =
+        function
+        | MultiCharRegex "\d+\.\d+" str ->
+            match Double.TryParse (str) with
+            | true, num -> Success (FloatLiteral num, String.len str)
+            | false, _ -> NoMatch
+        | _ -> NoMatch
 
     let whitespaceMatcher allFileChars =
         match allFileChars with
@@ -268,7 +286,15 @@ module Matchers =
                 |> String.ofSeq
 
 
-            Success (String escapedString, uint len)
+            Success (StringLiteral escapedString, uint len)
+        | _ -> NoMatch
+
+    let charLiteral =
+        function
+        | MultiCharRegexGrouped "'" "(.|\\\\\w)" "'" (group, len) -> // I'm so sorry
+            match Char.TryParse (group) with
+            | true, c -> Success (CharLiteral c, uint len)
+            | false, _ -> failwith $"Couldn't parse '{group}' as char"
         | _ -> NoMatch
 
 
@@ -345,46 +371,81 @@ module Matchers =
     let typeKeyword = simpleMatch TypeKeyword "type\\b"
     let aliasKeyword = simpleMatch AliasKeyword "alias\\b"
 
-    /// Only run this after all the keywords have been tried!
-    let valueIdentifier =
-        function
-        | MultiCharRegex "[a-z]\w*" ident -> Success (ValueIdentifier ident, String.len ident)
-        | _ -> NoMatch
-
     let singleLineComment =
         function
         | MultiCharRegex "--[^\\r\\n]*" str -> Success (SingleLineComment str, String.len str)
         | _ -> NoMatch
 
     let minus = singleCharMatcher "\-" MinusOp
-    let plus = singleCharMatcher "\+" PlusOp
-    let exp = singleCharMatcher "\^" ExpOp
-    let pipe = singleCharMatcher "\|" PipeChar
-    let colon = singleCharMatcher "\:" Colon
+
 
     let unit = simpleMatch Unit "\(\)"
     let arrow = simpleMatch Arrow "\-\>"
     let doubleDot = simpleMatch DoubleDot "\.\."
 
+    let caseKeyword = simpleMatch Arrow "case\\b"
+    let ofKeyword = simpleMatch DoubleDot "of\\b"
+    let ifKeyword = simpleMatch Arrow "if\\b"
+    let thenKeyword = simpleMatch DoubleDot "then\\b"
+    let elseKeyword = simpleMatch Arrow "else\\b"
+
     let forwardComposeOp = simpleMatch ForwardComposeOp "\>\>"
     let backwardComposeOp = simpleMatch BackwardComposeOp "\<\<"
     let forwardPipeOp = simpleMatch ForwardPipeOp "\|\>"
     let backwardPipeOp = simpleMatch BackwardPipeOp "\<\|"
+    let andOp = simpleMatch BackwardPipeOp "&&"
+    let orOp = simpleMatch BackwardPipeOp "\|\|"
 
+    let plus = singleCharMatcher "\+" PlusOp
+    let exp = singleCharMatcher "\^" ExpOp
+    let pipe = singleCharMatcher "\|" PipeChar
+    let colon = singleCharMatcher "\:" Colon
+    let backslash = simpleMatch BackwardPipeOp "\\\\"
+    let underscore = simpleMatch BackwardPipeOp "_"
+
+
+    /// Only run this after all the keywords have been tried!
+    let valueIdentifier =
+        function
+        | MultiCharRegex "[a-z]\w*" ident -> Success (ValueIdentifier ident, String.len ident)
+        | _ -> NoMatch
 
     let allMatchersInOrder =
-        [ singleLineComment
-          intMatcher
+        [ intMatcher
+          floatMatcher
           whitespaceMatcher
           stringMatcher
+          charLiteral
           letKeywordMatcher
           inKeywordMatcher
           moduleSegmentsMatcher
-          moduleKeyWordMatcher
+          qualifiedIdentifierMatcher
+          recordAccess
+          dotGetter
           importKeyword
           asKeyword
+          typeNameOrVariantOrTopLevelModule
+          moduleKeyWordMatcher
           exposingKeyWordMatcher
+          equality
+          inequality
+          assignment
+          concat
+          typeKeyword
+          aliasKeyword
+          singleLineComment
           unit
+          arrow
+          doubleDot
+          caseKeyword
+          ofKeyword
+          ifKeyword
+          thenKeyword
+          elseKeyword
+          forwardComposeOp
+          backwardComposeOp
+          forwardPipeOp
+          backwardPipeOp
           parensOpen
           parensClose
           bracketsOpen
@@ -392,21 +453,13 @@ module Matchers =
           bracesOpen
           bracesClose
           comma
-          qualifiedIdentifierMatcher
-          recordAccess
-          dotGetter
-          valueIdentifier
-          typeNameOrVariantOrTopLevelModule
-          forwardComposeOp
-          backwardComposeOp
-          forwardPipeOp
-          backwardPipeOp
-          assignment
-          concat
-          arrow
           minus
+          andOp
+          orOp
           plus
           exp
           pipe
           colon
-          doubleDot ]
+          backslash
+          underscore
+          valueIdentifier ]
