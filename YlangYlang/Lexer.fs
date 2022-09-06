@@ -323,8 +323,7 @@ module Matchers =
 
     let recordAccess =
         function
-        | MultiCharRegex "[a-z]\w*(?:\.[a-z]\w*)+" str ->
-            Success (QualifiedIdentifier <| String.split '.' str, String.len str)
+        | MultiCharRegex "[a-z]\w*(?:\.[a-z]\w*)+" str -> Success (RecordAccess <| String.split '.' str, String.len str)
         | _ -> NoMatch
 
     let dotGetter =
@@ -383,11 +382,11 @@ module Matchers =
     let arrow = simpleMatch Arrow "\-\>"
     let doubleDot = simpleMatch DoubleDot "\.\."
 
-    let caseKeyword = simpleMatch Arrow "case\\b"
-    let ofKeyword = simpleMatch DoubleDot "of\\b"
-    let ifKeyword = simpleMatch Arrow "if\\b"
-    let thenKeyword = simpleMatch DoubleDot "then\\b"
-    let elseKeyword = simpleMatch Arrow "else\\b"
+    let caseKeyword = simpleMatch CaseKeyword "case\\b"
+    let ofKeyword = simpleMatch OfKeyword "of\\b"
+    let ifKeyword = simpleMatch IfKeyword "if\\b"
+    let thenKeyword = simpleMatch ThenKeyword "then\\b"
+    let elseKeyword = simpleMatch ElseKeyword "else\\b"
 
     let forwardComposeOp = simpleMatch ForwardComposeOp "\>\>"
     let backwardComposeOp = simpleMatch BackwardComposeOp "\<\<"
