@@ -1,15 +1,27 @@
-﻿module Parser
+﻿module ParserTypes
 
 open Lexer
+
+
+// NAMES AND IDENTIFIERS
+
+type IdentifierName = string
+
+type Operator = string // maybe should be char list to symbolise that it's a list of symbols? idk
+
 
 type TypeName = NEL<string> // to account for fact that it could be direct or qualified reference
 type ModuleName = NEL<string> // to account for fact that it could be top level or submodule
 
 type MaybeQualifiedValue = NEL<string>
 
+
+
+// TYPES
+
 type TypeReference =
     | Concrete of TypeName // name of the type referenced
-    | Generic of string // name of the type param
+    | Generic of string // name of the type param. This includes unused parameters in functions and case matches
 
 
 
@@ -39,18 +51,16 @@ and TupleType = { types : MentionableType list } // could process into pairs and
 
 //type Triple<'a, 'b, 'c> = { fst : 'a; snd : 'b; third : 'c }
 
-and VariantCase =
-    { label : string
+type VariantCase =
+    { label : IdentifierName
       contents : MentionableType list }
 
-and SumType = { variants : NEL<VariantCase> }
+type SumType = { variants : NEL<VariantCase> }
 
 
-and TypeOfTypeDeclaration =
+type TypeOfTypeDeclaration =
     | Sum of SumType
     | Alias of AliasType
-    | Record of RecordType
-    | Arrow of (TypeOfTypeDeclaration * TypeOfTypeDeclaration) // because functions can take functions as input and return functions as output (any multi-parameter function satisfies the latter criterion fyi)
 
 /// A top level type declaration
 type TypeDeclaration =
@@ -65,27 +75,6 @@ type TypeOfFunction =
 
 
 
-/// import Thing.Thung
-type ImportExposingMode =
-    | NoExposeds
-    | ExplicitExposeds of string list // exposing (Foo,Bar,baz)
-    | ExposeAll // exposing (..)
-
-type Import =
-    { path : NEL<string> // dot-separated module path
-      alias : string option
-      exposingMode : ImportExposingMode }
-
-
-type TypeExport =
-    { name : string
-      exposeVariants : bool }
-
-type ValueExport = { name : string }
-
-type Exports =
-    { types : TypeExport list
-      values : ValueExport list }
 
 
 type BuiltInPrimitiveTypes =
@@ -103,7 +92,12 @@ type BuiltInCompoundTypes =
 
 
 
-// Values from expressions
+
+
+
+
+
+// VALUES
 
 type NumberLiteralValue =
     | FloatLiteral of float
@@ -122,25 +116,37 @@ and CompoundTypeValues =
     | Tuple of AnyValue list
 
 // Not sure yet if it makes sense to have this as a separate type
-and CustomTypeValues = Variant of (string * AnyValue list)
+and CustomTypeValues =
+    { label : IdentifierName
+      values : AnyValue list }
+
+// lambas and named funcs have different syntaxes but i think they can both be treated as the same thing
+and FunctionValue =
+    { params_ : IdentifierName list
+      body : Expression }
+
 
 and AnyValue =
     | Compound of CompoundTypeValues
     | Primitive of PrimitiveLiteralValue
-    | Custom of CustomTypeValues
-    | Function of (MentionableType * MentionableType)
+    | CustomTypeVariant of CustomTypeValues
+
+    // functions and other values might be unified by just giving all values a possibly-empty list of parameters
+    | Function of FunctionValue // for the parameters
 
 
+and LetBinding =
+    { name : IdentifierName
+      value : Expression }
 
-type IdentifierName = string
 
-type Operator = string // maybe should be char list to symbolise that it's a list of symbols? idk
-
-type Expression =
+and Expression =
     | ExplicitValue of AnyValue
     | Identifier of IdentifierName // referencing some other expression...
     | Operator of (Operator * Expression * Expression)
-    | FunctionApplication of (IdentifierName * AnyValue list)
+    | NamedFunctionApplication of (IdentifierName * Expression list) // might only be a partial application
+    | LambdaFunctionApplication of (FunctionValue * Expression list)
+    | LetExpression of (LetBinding list * Expression) // can't have lets outside of an expression
 
 
 // Not sure if it makes sense to have these yet, when we haven't yet enforced that the types are consistent...
@@ -162,11 +168,40 @@ let typeOfPrimitiveLiteralValue =
 
 
 
-type ValueDeclaration =
-    { typeSignature : TypeDeclaration list option
-    //body : Expression // aaand heeere's where the magic happens!
-     }
+// THE MODULE AS AN ENTITY
 
+/// `import Thing.OtherThing.Stuff (as TT) (exposing ((..)|(baa,baz,Bar))) `
+type ImportExposingMode =
+    | NoExposeds
+    | ExplicitExposeds of IdentifierName list // exposing (Foo,Bar,baz)
+    | ExposeAll // exposing (..)
+
+type Import =
+    { path : NEL<string> // dot-separated module path
+      alias : IdentifierName option
+      exposingMode : ImportExposingMode }
+
+
+type TypeExport =
+    { name : IdentifierName
+      exposeVariants : bool }
+
+type ValueExport = { name : IdentifierName }
+
+type ExportExposingMode =
+    | ExplicitExposeds of IdentifierName list // exposing (Foo,Bar,baz)
+    | ExposeAll // exposing (..)
+
+
+type Exports =
+    { types : TypeExport list
+      values : ValueExport list }
+
+type ValueDeclaration =
+    { typeSignature : TypeDeclaration list option // either it's explicit or it'll have to be inferred
+      body : Expression } // aaand heeere's where the magic happens!
+
+// Representing a whole file/module
 type YlModule =
     { moduleName : ModuleName
       imports : Import list
