@@ -193,9 +193,13 @@ type ExportExposingMode =
     | ExposeAll // exposing (..)
 
 
-type Exports =
+type ExplicitExports =
     { types : TypeExport list
       values : ValueExport list }
+
+type Exports =
+    | ExportAll
+    | ExportExplicits of ValueExport list
 
 type ValueDeclaration =
     { typeSignature : TypeDeclaration list option // either it's explicit or it'll have to be inferred
@@ -204,7 +208,7 @@ type ValueDeclaration =
 // Representing a whole file/module
 type YlModule =
     { moduleName : ModuleName
-      imports : Import list
       exports : Exports
+      imports : Import list
       typeDeclarations : TypeDeclaration list
       valueDeclarations : ValueDeclaration list }

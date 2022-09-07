@@ -24,10 +24,16 @@ type ParseErrors = NonEmptyList<ParseError>
 
 type WhitespaceChar =
     | Space
+    | NewLineChar
+
+type Whitespace =
+    | Spaces of int // i.e. combine all non-newline whitespace chars into a single item so they are easier to handle
     | NewLine
 
+
+
 type Token =
-    | Whitespace of WhitespaceChar list
+    | Whitespace of Whitespace list
     | SingleLineComment of string
     | IntLiteral of uint
     | FloatLiteral of float
@@ -91,6 +97,7 @@ type TokenWithContext =
       col : uint // the col of the starting character. Is 1-indexed.
       chars : char list } // keep the original constituent chars around, for better error messages :)
     member this.charLength = List.length this.chars // bear in mind that the whitespace tokens will span multiple lines
+    member this.endCol = int this.col + this.charLength
 
 
 type FileCursor = { line : uint; col : uint }
@@ -112,7 +119,7 @@ type Matcher = FileCursor -> string -> LexingState
 
 let makeCursorFromTokenCtx ({ line = line; col = col } : TokenWithContext) : FileCursor = { line = line; col = col }
 
-
+/// This currently makes the token context have the col and line that the chars _end_ on, whereas it should be the ones that the token _begins_ on
 let makeTokenWithCtx (cursor : FileCursor) token (chars : string) =
     let nextCursor =
         chars
@@ -269,9 +276,9 @@ module Matchers =
             // Need to handle CRLF files so that we don't think there's double the newlines than there actually are
             let mapWhitespaceChar c =
                 match c with
-                | '\r' -> Ok NewLine
-                | '\n' -> Ok NewLine
                 | ' ' -> Ok Space
+                | '\r' -> Ok NewLineChar
+                | '\n' -> Ok NewLineChar
                 | '\t' -> Error TabsNotAllowed
                 | c' -> failwithf "Couldn't match whitespace char in whitespace matcher: '%c'" c'
 
@@ -280,6 +287,29 @@ module Matchers =
                 |> Seq.map mapWhitespaceChar
                 |> Seq.toList
                 |> Result.anyErrors
+                |> Result.map (function
+                    | [] -> []
+                    | head :: tail ->
+                        let headState =
+                            match head with
+                            | Space -> Spaces 1
+                            | NewLineChar -> NewLine
+
+                        tail
+                        |> List.fold
+                            (fun (list, state) thisChar ->
+
+                                match state with
+                                | Spaces count ->
+                                    match thisChar with
+                                    | Space -> (list, Spaces (count + 1))
+                                    | NewLineChar -> (list @ [ state ], NewLine)
+                                | NewLine ->
+                                    match thisChar with
+                                    | Space -> (list @ [ state ], Spaces 1)
+                                    | NewLineChar -> (list @ [ state ], NewLine))
+                            ([], headState)
+                        |> fun (list, state) -> list @ [ state ])
 
             match tokensResult with
             | Ok tokens' -> makeTokenWithCtx cursor (Whitespace tokens') chars
