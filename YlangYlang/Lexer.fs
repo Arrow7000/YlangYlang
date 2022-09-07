@@ -89,25 +89,52 @@ type TokenWithContext =
     { token : Token
       line : uint // the line of the starting character. Is 1-indexed.
       col : uint // the col of the starting character. Is 1-indexed.
-      chars : char list // keep the original constituent chars around, for better error messages :)
-      numOfChars : uint } // bear in mind that the whitespace tokens will span multiple lines
-    member this.charLength = List.length this.chars
+      chars : char list } // keep the original constituent chars around, for better error messages :)
+    member this.charLength = List.length this.chars // bear in mind that the whitespace tokens will span multiple lines
+
+
+type FileCursor = { line : uint; col : uint }
 
 // Should probably add an Error variant here for lexing errors that are more severe than just 'not a match', e.g. tabs, which are wholesale not allowed. Then that can contain all the parse errors and NoMatch can just denote a simple innocuous no match
 type LexingState =
     | NoMatch
-    | Success of token : Token * charsChomped : uint
+    | Success of TokenWithContext
     // In case we encounter a error even at the lexing stage, e.g. we've found a tab character.
     // @TODO: might be a good idea to thread errors through the lexing state, so that we can keep parsing the rest of the file even if we encounter an error locally!
     | Err of ParseErrors
 
 
 
-type LexingResult = Result<Token list, ParseErrors>
+type LexingResult = Result<TokenWithContext list, ParseErrors>
 
 
-type Matcher = string -> LexingState
+type Matcher = FileCursor -> string -> LexingState
 
+let makeCursorFromTokenCtx ({ line = line; col = col } : TokenWithContext) : FileCursor = { line = line; col = col }
+
+
+let makeTokenWithCtx (cursor : FileCursor) token (chars : string) =
+    let nextCursor =
+        chars
+        |> String.toList
+        |> Seq.fold
+            (fun cursor' char ->
+                // Although ideally we wouldn't be parsing whitespace characters in two different places
+                match char with
+                | '\n'
+                | '\r' ->
+                    { col = uint 0
+                      line = cursor'.line + uint 1 }
+                | _ -> { cursor' with col = cursor'.col + uint 1 })
+            cursor
+
+
+
+    Success
+        { token = token
+          line = nextCursor.line
+          col = nextCursor.col
+          chars = String.toList chars }
 
 
 
@@ -120,6 +147,10 @@ let getMatchAtStart pattern (input : string) =
     if m.Success then Some m.Value else None
 
 
+type GroupedCapture =
+    { group : string
+      chompedChars : string }
+
 /// This will of course start to get fucky real fast if the before/after groups themselves contain groups
 let getMatchAtStartWithGroup (beforeGroup : string) (pattern : string) (afterGroup : string) (input : string) =
     // This basically enforces that the match has to be at the start of the string, and wraps the pattern in a group
@@ -129,7 +160,9 @@ let getMatchAtStartWithGroup (beforeGroup : string) (pattern : string) (afterGro
     if m.Success then
         (m.Groups
          |> Seq.item 1
-         |> fun capture -> capture.Value, m.Length)
+         |> fun capture ->
+             { group = capture.Value
+               chompedChars = m.Value })
         |> Some
     else
         None
@@ -158,38 +191,41 @@ let getUpToNextLineBreak string =
 
 
 let justKeepLexing (allMatchers : Matcher list) string =
-    let getFirstMatch string =
+    let initialCursor = { line = uint 0; col = uint 0 }
+
+    let getFirstMatch cursor string =
         allMatchers
         |> List.fold
             (fun state matcher ->
                 match state with
-                | Success (token, chars) -> Success (token, chars)
+                | Success ctx -> Success ctx
                 | Err errs -> Err errs
                 | NoMatch ->
-                    match matcher string with
-                    | Success (token, chars) -> Success (token, chars)
+                    match matcher cursor string with
+                    | Success ctx -> Success ctx
                     | NoMatch -> NoMatch
                     | Err errs -> Err errs
 
                 )
             NoMatch
 
-    let rec keepLexing tokensSoFar restOfString =
+    let rec keepLexing tokensSoFar cursor restOfString =
         match restOfString with
         | "" -> Ok tokensSoFar
         | rest ->
-            match getFirstMatch rest with
-            | Success (token, charsChomped) ->
-                let stringLeft = rest[int charsChomped ..]
+            match getFirstMatch cursor rest with
+            | Success ctx ->
+                let stringLeft = rest[int ctx.charLength ..]
+                let newCursor = makeCursorFromTokenCtx ctx
 
-                keepLexing (tokensSoFar @ [ token ]) stringLeft
+                keepLexing (tokensSoFar @ [ ctx ]) newCursor stringLeft
 
             | Err err -> Error err
             | NoMatch ->
                 let line = getUpToNextLineBreak rest
                 NoMatchOnRestOfString line |> NEL.make |> Error
 
-    keepLexing List.empty string
+    keepLexing List.empty initialCursor string
 
 
 
@@ -203,31 +239,31 @@ module Matchers =
     let private charLen = uint 1
 
     /// For matches where the actual characters can be discarded
-    let private simpleMatch token pattern =
+    let private simpleMatch token pattern cursor =
         function
-        | MultiCharRegex pattern str -> Success (token, String.len str)
+        | MultiCharRegex pattern str -> makeTokenWithCtx cursor token str
         | _ -> NoMatch
 
-    let intMatcher allFileChars =
+    let intMatcher cursor allFileChars =
         match allFileChars with
         | MultiCharRegex "\d+" digits ->
             match UInt32.TryParse (digits) with
-            | true, num -> Success (IntLiteral num, String.length digits |> uint)
+            | true, num -> makeTokenWithCtx cursor (IntLiteral num) digits
             | false, _ ->
                 // Should never happen since we've matched on only digit chars, but just in case
 
                 failwithf $"Tried to parse string of digits as int32 and encountered an error. Digits are: \"{digits}\""
         | _ -> NoMatch
 
-    let floatMatcher =
+    let floatMatcher cursor =
         function
         | MultiCharRegex "\d+\.\d+" str ->
-            match Double.TryParse (str) with
-            | true, num -> Success (FloatLiteral num, String.len str)
+            match Double.TryParse str with
+            | true, num -> makeTokenWithCtx cursor (FloatLiteral num) str
             | false, _ -> NoMatch
         | _ -> NoMatch
 
-    let whitespaceMatcher allFileChars =
+    let whitespaceMatcher cursor allFileChars =
         match allFileChars with
         | MultiCharRegex "\s+" chars ->
             // Need to handle CRLF files so that we don't think there's double the newlines than there actually are
@@ -246,7 +282,7 @@ module Matchers =
                 |> Result.anyErrors
 
             match tokensResult with
-            | Ok tokens' -> Success (Whitespace tokens', List.length tokens' |> uint)
+            | Ok tokens' -> makeTokenWithCtx cursor (Whitespace tokens') chars
             | Error errs -> Err errs
         | _ -> NoMatch
 
@@ -256,9 +292,9 @@ module Matchers =
         | Normal
         | EscapeNextChar
 
-    let stringMatcher string =
+    let stringMatcher cursor string =
         match string with
-        | MultiCharRegexGrouped "\"" """[^"\\]*(?:\\.[^"\\]*)*""" "\"" (groupString, len) -> // forgive me, Father, for I have sinned
+        | MultiCharRegexGrouped "\"" """[^"\\]*(?:\\.[^"\\]*)*""" "\"" match' -> // forgive me, Father, for I have sinned
             // The map of what escaped char to replace with what
             // @TODO: find out all the escaped char sequences and add them in
             let escapedCharsMap =
@@ -269,7 +305,7 @@ module Matchers =
                 |> Map.ofSeq
 
             let escapedString =
-                groupString
+                match'.group
                 |> Seq.fold
                     (fun (state, list) char ->
                         match state with
@@ -285,16 +321,15 @@ module Matchers =
                 |> snd
                 |> String.ofSeq
 
-
-            Success (StringLiteral escapedString, uint len)
+            makeTokenWithCtx cursor (StringLiteral escapedString) match'.chompedChars
         | _ -> NoMatch
 
-    let charLiteral =
+    let charLiteral cursor =
         function
-        | MultiCharRegexGrouped "'" "(.|\\\\\w)" "'" (group, len) -> // I'm so sorry
-            match Char.TryParse (group) with
-            | true, c -> Success (CharLiteral c, uint len)
-            | false, _ -> failwith $"Couldn't parse '{group}' as char"
+        | MultiCharRegexGrouped "'" "(.|\\\\\w)" "'" match' -> // I'm so sorry
+            match Char.TryParse match'.group with
+            | true, c -> makeTokenWithCtx cursor (CharLiteral c) match'.chompedChars
+            | false, _ -> failwith $"Couldn't parse '{match'.group}' as char"
         | _ -> NoMatch
 
 
@@ -302,7 +337,7 @@ module Matchers =
 
     let inKeywordMatcher = simpleMatch InKeyword "in\\b"
 
-    let moduleSegmentsMatcher =
+    let moduleSegmentsMatcher cursor =
         function
         | MultiCharRegex "[A-Z]\w*(?:\.[A-Z]\w*)+(?=\s)" str ->
             let token =
@@ -312,40 +347,42 @@ module Matchers =
                     | Some nel -> ModuleSegmentsOrQualifiedTypeOrVariant nel
                     | None -> failwithf "Module segments list was somehow empty"
 
-            Success (token, String.len str)
+            makeTokenWithCtx cursor token str
         | _ -> NoMatch
 
-    let qualifiedIdentifierMatcher =
+    let qualifiedIdentifierMatcher cursor =
         function
         | MultiCharRegex "[A-Z]\w*(?:\.[A-Z]\w*)*(?:\.[a-z]\w*)" str ->
-            Success (QualifiedIdentifier <| String.split '.' str, String.len str)
+            makeTokenWithCtx cursor (QualifiedIdentifier <| String.split '.' str) str
+
         | _ -> NoMatch
 
-    let recordAccess =
+    let recordAccess cursor =
         function
-        | MultiCharRegex "[a-z]\w*(?:\.[a-z]\w*)+" str -> Success (RecordAccess <| String.split '.' str, String.len str)
+        | MultiCharRegex "[a-z]\w*(?:\.[a-z]\w*)+" str ->
+            makeTokenWithCtx cursor (RecordAccess <| String.split '.' str) str
         | _ -> NoMatch
 
-    let dotGetter =
+    let dotGetter cursor =
         function
-        | MultiCharRegex "\.[a-z]\w*" str -> Success (String.tail str |> String.ofSeq |> DotGetter, String.len str)
+        | MultiCharRegex "\.[a-z]\w*" str -> makeTokenWithCtx cursor (String.tail str |> String.ofSeq |> DotGetter) str
         | _ -> NoMatch
 
     let importKeyword = simpleMatch ImportKeyWord "import\\b"
     let asKeyword = simpleMatch AsKeyword "as\\b"
 
-    let typeNameOrVariantOrTopLevelModule =
+    let typeNameOrVariantOrTopLevelModule cursor =
         function
-        | MultiCharRegex "[A-Z]\w*" str -> Success (TypeNameOrVariantOrTopLevelModule str, String.len str)
+        | MultiCharRegex "[A-Z]\w*" str -> makeTokenWithCtx cursor (TypeNameOrVariantOrTopLevelModule str) str
         | _ -> NoMatch
 
     let moduleKeyWordMatcher = simpleMatch ModuleKeyword "module\\b"
 
     let exposingKeyWordMatcher = simpleMatch ExposingKeyword "exposing\\b"
 
-    let private singleCharMatcher pattern keyword =
+    let private singleCharMatcher pattern keyword cursor =
         function
-        | SingleCharRegex pattern _ -> Success (keyword, charLen)
+        | SingleCharRegex pattern c -> makeTokenWithCtx cursor keyword <| Char.ToString c
         | _ -> NoMatch
 
     let parensOpen = singleCharMatcher "\(" ParensOpen
@@ -362,17 +399,17 @@ module Matchers =
 
     let assignment = singleCharMatcher "\=" AssignmentOp
 
-    let concat =
+    let concat cursor =
         function
-        | MultiCharRegex "\+\+" str -> Success (ConcatOp, String.len str)
+        | MultiCharRegex "\+\+" str -> makeTokenWithCtx cursor ConcatOp str
         | _ -> NoMatch
 
     let typeKeyword = simpleMatch TypeKeyword "type\\b"
     let aliasKeyword = simpleMatch AliasKeyword "alias\\b"
 
-    let singleLineComment =
+    let singleLineComment cursor =
         function
-        | MultiCharRegex "--[^\\r\\n]*" str -> Success (SingleLineComment str, String.len str)
+        | MultiCharRegex "--[^\\r\\n]*" str -> makeTokenWithCtx cursor (SingleLineComment str) str
         | _ -> NoMatch
 
     let minus = singleCharMatcher "\-" MinusOp
@@ -404,9 +441,9 @@ module Matchers =
 
 
     /// Only run this after all the keywords have been tried!
-    let valueIdentifier =
+    let valueIdentifier cursor =
         function
-        | MultiCharRegex "[a-z]\w*" ident -> Success (ValueIdentifier ident, String.len ident)
+        | MultiCharRegex "[a-z]\w*" ident -> makeTokenWithCtx cursor (ValueIdentifier ident) ident
         | _ -> NoMatch
 
     let allMatchersInOrder =
