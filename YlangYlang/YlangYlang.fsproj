@@ -13,6 +13,9 @@
     <Compile Include="FileHelpers.fs" />
     <Compile Include="Lexer.fs" />
     <Compile Include="ParserTypes.fs" />
+    <None Include="Expression.yl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <Compile Include="Parsing.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

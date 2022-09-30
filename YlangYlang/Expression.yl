@@ -1,0 +1,9 @@
+﻿thing + otherThing
+
+
+"hello " ++ "world!"
+
+
+func 1 2 "test" 'c'
+
+[ 1,234,  5 ]

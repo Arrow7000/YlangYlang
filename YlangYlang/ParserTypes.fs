@@ -186,20 +186,25 @@ type TypeExport =
     { name : IdentifierName
       exposeVariants : bool }
 
-type ValueExport = { name : IdentifierName }
+//type ValueExport = { name : IdentifierName }
+type ValueOrTypeExport =
+    | ValueExport of IdentifierName
+    | TypeExport of TypeExport
 
 type ExportExposingMode =
-    | ExplicitExposeds of IdentifierName list // exposing (Foo,Bar,baz)
     | ExposeAll // exposing (..)
+    | ExplicitExposeds of ValueOrTypeExport list // exposing (Foo,Bar,baz)
 
 
 type ExplicitExports =
     { types : TypeExport list
-      values : ValueExport list }
+      values : IdentifierName list }
+
+
 
 type Exports =
     | ExportAll
-    | ExportExplicits of ValueExport list
+    | ExportExplicits of ValueOrTypeExport list
 
 type ValueDeclaration =
     { typeSignature : TypeDeclaration list option // either it's explicit or it'll have to be inferred

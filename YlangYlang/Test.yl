@@ -1,4 +1,6 @@
-﻿module Main exposing (main)
+﻿
+  
+module Main exposing (main,Model, Msg(..))
 
 import Browser
 import Html as H

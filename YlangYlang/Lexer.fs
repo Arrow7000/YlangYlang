@@ -59,7 +59,7 @@ type Token =
     | InequalityOp
     | UnaryNegationOp // I think this one has to go, it's too context dependent, should only use the MinusOp and infer whether it's unary from the surrounding context
     | AssignmentOp
-    | ConcatOp
+    | AppendOp
     | PlusOp
     | MinusOp
     | MultOp
@@ -93,14 +93,17 @@ type Token =
 /// Not yet used, but to add later for better debugging messages
 type TokenWithContext =
     { token : Token
-      line : uint // the line of the starting character. Is 1-indexed.
-      col : uint // the col of the starting character. Is 1-indexed.
+      startLine : uint // the line of the starting character. Is 1-indexed.
+      startCol : uint // the col of the starting character. Is 1-indexed.
+      endLine : uint
+      endCol : uint
       chars : char list } // keep the original constituent chars around, for better error messages :)
     member this.charLength = List.length this.chars // bear in mind that the whitespace tokens will span multiple lines
-    member this.endCol = int this.col + this.charLength
 
 
-type FileCursor = { line : uint; col : uint }
+type FileCursor = { endLine : uint; endCol : uint }
+//| Start
+//| Prev of {| endLine : uint; endCol : uint |}
 
 // Should probably add an Error variant here for lexing errors that are more severe than just 'not a match', e.g. tabs, which are wholesale not allowed. Then that can contain all the parse errors and NoMatch can just denote a simple innocuous no match
 type LexingState =
@@ -117,7 +120,8 @@ type LexingResult = Result<TokenWithContext list, ParseErrors>
 
 type Matcher = FileCursor -> string -> LexingState
 
-let makeCursorFromTokenCtx ({ line = line; col = col } : TokenWithContext) : FileCursor = { line = line; col = col }
+let makeCursorFromTokenCtx ({ endLine = line; endCol = col } : TokenWithContext) : FileCursor =
+    { endLine = line; endCol = col }
 
 /// This currently makes the token context have the col and line that the chars _end_ on, whereas it should be the ones that the token _begins_ on
 let makeTokenWithCtx (cursor : FileCursor) token (chars : string) =
@@ -130,17 +134,17 @@ let makeTokenWithCtx (cursor : FileCursor) token (chars : string) =
                 match char with
                 | '\n'
                 | '\r' ->
-                    { col = uint 0
-                      line = cursor'.line + uint 1 }
-                | _ -> { cursor' with col = cursor'.col + uint 1 })
+                    { endCol = uint 0
+                      endLine = cursor'.endLine + uint 1 }
+                | _ -> { cursor' with endCol = cursor'.endCol + uint 1 })
             cursor
-
-
 
     Success
         { token = token
-          line = nextCursor.line
-          col = nextCursor.col
+          startLine = cursor.endLine
+          startCol = cursor.endCol
+          endLine = nextCursor.endLine
+          endCol = nextCursor.endCol
           chars = String.toList chars }
 
 
@@ -198,7 +202,8 @@ let getUpToNextLineBreak string =
 
 
 let justKeepLexing (allMatchers : Matcher list) string =
-    let initialCursor = { line = uint 0; col = uint 0 }
+    let initialCursor = { endLine = uint 0; endCol = uint 0 }
+    //let initialCursor = Start
 
     let getFirstMatch cursor string =
         allMatchers
@@ -429,9 +434,9 @@ module Matchers =
 
     let assignment = singleCharMatcher "\=" AssignmentOp
 
-    let concat cursor =
+    let append cursor =
         function
-        | MultiCharRegex "\+\+" str -> makeTokenWithCtx cursor ConcatOp str
+        | MultiCharRegex "\+\+" str -> makeTokenWithCtx cursor AppendOp str
         | _ -> NoMatch
 
     let typeKeyword = simpleMatch TypeKeyword "type\\b"
@@ -496,7 +501,7 @@ module Matchers =
           equality
           inequality
           assignment
-          concat
+          append
           typeKeyword
           aliasKeyword
           singleLineComment
