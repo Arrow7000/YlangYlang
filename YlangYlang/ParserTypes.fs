@@ -111,9 +111,9 @@ type PrimitiveLiteralValue =
     | UnitPrimitive of unit
 
 and CompoundTypeValues =
-    | List of AnyValue list
-    | Record of (string * AnyValue) list
-    | Tuple of AnyValue list
+    | List of Expression list
+    | Record of (string * Expression) list
+    | Tuple of Expression list
 
 // Not sure yet if it makes sense to have this as a separate type
 and CustomTypeValues =

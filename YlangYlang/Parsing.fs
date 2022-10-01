@@ -115,11 +115,11 @@ type ValueDeclarationParsingState =
     | Equals of
         {| valueName : IdentifierName
            params_ : IdentifierName list |}
-    | Body of ExpressionParsingState
+    | Body of ExpressionParsingState'
 
 // @TODO: implement these two
 //and MentionableTypeParsingState = | TBD // ...
-and ExpressionParsingState = | NotSureYet // ...
+and ExpressionParsingState' = | NotSureYet // ... point to the other one further down later
 
 
 
@@ -166,6 +166,122 @@ type FileParsingState =
            types : TypeDeclaration list
            values : ValueDeclaration list
            currentState : TypeOrValueParsingState |}
+
+
+
+
+type SyntaxError =
+    | UnbalancedLeftParens
+    | UnbalancedRightParens
+
+(*
+should probably do the following:
+    - group in parens first
+    - group by operators next
+    - lists? records? other grouped things?
+    - then i think just go from left to right treating everything like function application
+*)
+type ExpressionParsingState =
+    | Start
+    | ExpressionSoFar of Expression
+    | SyntaxError of SyntaxError
+
+
+type TraverseResult<'a, 'b> =
+    { remainingTokens : 'a list
+      result : 'b
+      howManyParensDeep : int }
+
+/// I think opening parens doesn't need a state because it's expressed by just calling the traverser recursively
+type GatheringTokensState<'a, 'b> =
+    | NoParensYet of 'a list
+    | FoundClosingParens of ('b * 'a list)
+
+let isClosingParens token = token.token = ParensClose
+let isOpeningParens token = token.token = ParensOpen
+
+/// This dives into a string of tokens and breaks out if it encounters a closing parens.
+/// The combine function parameter can be used to call parensTraverser mutually recursively so that we can dive into arbitrary levels of nested parens.
+let rec parensTraverser (combine : int -> TknCtx list -> TknCtx list -> 'b) howManyParensDeep tokensSoFar tokensLeft =
+    match tokensLeft with
+    | [] ->
+        { result = combine howManyParensDeep tokensSoFar List.empty
+          remainingTokens = List.empty
+          howManyParensDeep = howManyParensDeep }
+
+    | head :: rest ->
+        if isOpeningParens head then
+            parensTraverser combine (howManyParensDeep + 1) tokensSoFar rest
+
+        elif isClosingParens head then
+            { result = combine howManyParensDeep tokensSoFar tokensLeft
+              remainingTokens = rest
+              howManyParensDeep = howManyParensDeep }
+        else
+            parensTraverser combine howManyParensDeep (tokensSoFar @ [ head ]) rest
+
+
+type OperatorAccumulator =
+    | NothingYet of TknCtx list
+    // In other words, this is morally a linked list of either a null (with some or none lists of non-operator tokens) or a cons of an operator with more potentially null or more operator tokens
+    | OperatorFound of (TknCtx list * Lexer.Operator * OperatorAccumulator)
+
+let rec private addTokenToAccumulator token state =
+    match state with
+    | NothingYet list -> NothingYet <| list @ [ token ]
+    | OperatorFound (list, op, state') -> OperatorFound (list, op, addTokenToAccumulator token state')
+
+let rec private addOpToAccumulator op state =
+    match state with
+    | NothingYet list -> OperatorFound (list, op, NothingYet List.empty)
+    | OperatorFound (list, previousOp, state') -> OperatorFound (list, previousOp, addOpToAccumulator op state')
+
+let rec opTraverser (combine : int -> TknCtx list -> TknCtx list -> 'b) state tokensLeft =
+    match tokensLeft with
+    | [] -> state
+    | head :: rest ->
+        match head.token with
+        | Token.Operator op -> opTraverser combine (addOpToAccumulator op state) rest
+        | _ -> opTraverser combine (addTokenToAccumulator head state) rest
+
+
+
+let rec singleLineExpressionParser howManyParensDeep tokensSoFar (tokensLeft : TknCtx list) =
+    let result =
+        parensTraverser singleLineExpressionParser howManyParensDeep tokensSoFar tokensLeft
+
+    // // This is not correct because this function is not necessarily called right at the end
+    //if result.howManyParensDeep > 0 then
+    //    UnbalancedLeftParens
+    //elif result.howManyParensDeep < 0 then
+    //    UnbalancedRightParens
+    //else
+    match result.remainingTokens with
+    | [] -> result.result
+    | remainingTokens ->
+        // @TODO: actually handle this case properly
+        result.result
+// ok so now we have to take the `result.result` achieved from traversing down the parens and combine them with the stuff remaining in the remaining tokens
+
+
+
+
+/// Only making this parse one-line expressions to begin with for simplicity.
+/// `isInImmediateParens` parameter is so that we can determine whether the contents should be parsed as a tuple, which need to be wrapped in parentheses
+let expressionParser (tokensLeft : TknCtx list) =
+    let (thisLineTokens, remainingTokens) =
+        tokensLeft
+        |> List.takeWhilePartition (fun tokenCtx ->
+            match tokenCtx.token with
+            | Whitespace list -> not <| List.contains NewLine list
+            | _ -> true)
+
+
+    singleLineExpressionParser 0 thisLineTokens, remainingTokens
+
+
+
+
 
 // @TODO: finish all the various states for when parsing is interrupted mid-state
 let areYouDoneParsing state =

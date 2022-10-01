@@ -32,6 +32,24 @@ type Whitespace =
 
 
 
+type Operator =
+    | EqualityOp
+    | InequalityOp
+    | UnaryNegationOp // I think this one has to go, it's too context dependent, should only use the MinusOp and infer whether it's unary from the surrounding context
+    | AppendOp
+    | PlusOp
+    | MinusOp
+    | MultOp
+    | DivOp
+    | ExpOp
+    | AndOp
+    | OrOp
+    | ForwardComposeOp
+    | BackwardComposeOp
+    | ForwardPipeOp
+    | BackwardPipeOp
+    | OtherOp of string
+
 type Token =
     | Whitespace of Whitespace list
     | SingleLineComment of string
@@ -55,16 +73,16 @@ type Token =
     | BracesClose
     | ValueIdentifier of string
     | Comma
-    | EqualityOp
-    | InequalityOp
-    | UnaryNegationOp // I think this one has to go, it's too context dependent, should only use the MinusOp and infer whether it's unary from the surrounding context
-    | AssignmentOp
-    | AppendOp
-    | PlusOp
-    | MinusOp
-    | MultOp
-    | DivOp
-    | ExpOp
+    //| EqualityOp
+    //| InequalityOp
+    //| UnaryNegationOp // I think this one has to go, it's too context dependent, should only use the MinusOp and infer whether it's unary from the surrounding context
+    | AssignmentEquals
+    //| AppendOp
+    //| PlusOp
+    //| MinusOp
+    //| MultOp
+    //| DivOp
+    //| ExpOp
     | PipeChar
     | TypeKeyword
     | AliasKeyword
@@ -76,18 +94,20 @@ type Token =
     | Colon
     | Arrow
     | DoubleDot
-    | AndOp
-    | OrOp
+    //| AndOp
+    //| OrOp
     | Backslash // to signify start of lambda
     | Underscore // to signify unused function param
     | Unit // ()
     | QualifiedIdentifier of segments : string list
     | RecordAccess of segments : string list
     | DotGetter of fieldName : string
-    | ForwardComposeOp
-    | BackwardComposeOp
-    | ForwardPipeOp
-    | BackwardPipeOp
+    //| ForwardComposeOp
+    //| BackwardComposeOp
+    //| ForwardPipeOp
+    //| BackwardPipeOp
+    | Operator of Operator
+//| OtherOp of string
 
 
 /// Not yet used, but to add later for better debugging messages
@@ -100,6 +120,8 @@ type TokenWithContext =
       chars : char list } // keep the original constituent chars around, for better error messages :)
     member this.charLength = List.length this.chars // bear in mind that the whitespace tokens will span multiple lines
 
+/// Simple alias for `TokenWithContext`
+and TknCtx = TokenWithContext
 
 type FileCursor = { endLine : uint; endCol : uint }
 //| Start
@@ -428,15 +450,15 @@ module Matchers =
     let bracesClose = singleCharMatcher "\}" BracesClose
     let comma = singleCharMatcher "\," Comma
 
-    let equality = simpleMatch EqualityOp "\=\="
+    let equality = simpleMatch (Operator EqualityOp) "\=\="
 
-    let inequality = simpleMatch InequalityOp "\/\="
+    let inequality = simpleMatch (Operator InequalityOp) "\/\="
 
-    let assignment = singleCharMatcher "\=" AssignmentOp
+    let assignment = singleCharMatcher "\=" AssignmentEquals
 
     let append cursor =
         function
-        | MultiCharRegex "\+\+" str -> makeTokenWithCtx cursor AppendOp str
+        | MultiCharRegex "\+\+" str -> makeTokenWithCtx cursor (Operator AppendOp) str
         | _ -> NoMatch
 
     let typeKeyword = simpleMatch TypeKeyword "type\\b"
@@ -447,7 +469,7 @@ module Matchers =
         | MultiCharRegex "--[^\\r\\n]*" str -> makeTokenWithCtx cursor (SingleLineComment str) str
         | _ -> NoMatch
 
-    let minus = singleCharMatcher "\-" MinusOp
+    let minus = singleCharMatcher "\-" (Operator MinusOp)
 
 
     let unit = simpleMatch Unit "\(\)"
@@ -460,25 +482,31 @@ module Matchers =
     let thenKeyword = simpleMatch ThenKeyword "then\\b"
     let elseKeyword = simpleMatch ElseKeyword "else\\b"
 
-    let forwardComposeOp = simpleMatch ForwardComposeOp "\>\>"
-    let backwardComposeOp = simpleMatch BackwardComposeOp "\<\<"
-    let forwardPipeOp = simpleMatch ForwardPipeOp "\|\>"
-    let backwardPipeOp = simpleMatch BackwardPipeOp "\<\|"
-    let andOp = simpleMatch BackwardPipeOp "&&"
-    let orOp = simpleMatch BackwardPipeOp "\|\|"
+    let forwardComposeOp = simpleMatch (Operator ForwardComposeOp) "\>\>"
+    let backwardComposeOp = simpleMatch (Operator BackwardComposeOp) "\<\<"
+    let forwardPipeOp = simpleMatch (Operator ForwardPipeOp) "\|\>"
+    let backwardPipeOp = simpleMatch (Operator BackwardPipeOp) "\<\|"
+    let andOp = simpleMatch (Operator BackwardPipeOp) "&&"
+    let orOp = simpleMatch (Operator BackwardPipeOp) "\|\|"
 
-    let plus = singleCharMatcher "\+" PlusOp
-    let exp = singleCharMatcher "\^" ExpOp
+    let plus = singleCharMatcher "\+" (Operator PlusOp)
+    let exp = singleCharMatcher "\^" (Operator ExpOp)
     let pipe = singleCharMatcher "\|" PipeChar
     let colon = singleCharMatcher "\:" Colon
-    let backslash = simpleMatch BackwardPipeOp "\\\\"
-    let underscore = simpleMatch BackwardPipeOp "_"
+    let backslash = simpleMatch (Operator BackwardPipeOp) "\\\\"
+    let underscore = simpleMatch (Operator BackwardPipeOp) "_"
 
 
     /// Only run this after all the keywords have been tried!
     let valueIdentifier cursor =
         function
         | MultiCharRegex "[a-z]\w*" ident -> makeTokenWithCtx cursor (ValueIdentifier ident) ident
+        | _ -> NoMatch
+
+    let otherOp cursor =
+        function
+        | MultiCharRegex "[<>!@#\\\\\/*^%£$%&*\\-+|=]+" opChars ->
+            makeTokenWithCtx cursor (OtherOp opChars |> Operator) opChars
         | _ -> NoMatch
 
     let allMatchersInOrder =
@@ -533,4 +561,5 @@ module Matchers =
           colon
           backslash
           underscore
-          valueIdentifier ]
+          valueIdentifier
+          otherOp ]

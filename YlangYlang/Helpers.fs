@@ -93,3 +93,12 @@ module String =
     let toList (str : string) = str.ToCharArray () |> List.ofArray
 
     let tail = toList >> List.tail
+
+
+module List =
+    let takeWhilePartition predicate list =
+
+        let firstPart = List.takeWhile predicate list
+        let lastPart = List.skipWhile predicate list
+
+        firstPart, lastPart
