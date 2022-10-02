@@ -8,11 +8,12 @@ open Parsing
 
 [<EntryPoint>]
 let main argv =
-    let fileText = readFile "Test.yl"
+    let fileText = readFile "Expression.yl"
 
 
     justKeepLexing allMatchersInOrder fileText
-    |> Result.map parser
+    //|> Result.map parser
+    |> Result.map expressionParser
     |> printfn "%A"
 
     0

@@ -4,264 +4,69 @@
 
 open Lexer
 open ParserTypes
+open ParserStates
 
 
-
-(*
-@TODO: yet to cover
-- destructurings of tuples, records and single-case sum type variants
-*)
-
-type TypeExportExposeMode =
-    | OpenParens
-    | Dots
-
-
-type ExportsListParsingState =
-    //| Start
-    | TypeExport of IdentifierName
-    | TypeExportExposeMode of TypeExportExposeMode
-    | ValueExport of IdentifierName
-    | Comma
-
-type ExportExposingState =
-    | OpenParens
-    // actually might need to have additional parsing state DU types for these so we can keep track of exactly where we are in the parsing step, including commas, and so on
-    | ExposeAll
-    | Explicits of (ValueOrTypeExport list * ExportsListParsingState)
-//| Exports of ExportExposingMode // can just keep accumulating in the explicit case
-//| CloseParens of ExportExposingMode
+let literalTokenToParsingValue isPrecededByMinus (primitiveLiteral : PrimitiveLiteral) =
+    match primitiveLiteral with
+    | PrimitiveLiteral.IntLiteral num ->
+        num
+        |> int
+        |> if isPrecededByMinus then (*) -1 else id
+        |> IntLiteral
+        |> NumberPrimitive
+    | PrimitiveLiteral.FloatLiteral num -> FloatLiteral num |> NumberPrimitive
+    | StringLiteral str -> StringPrimitive str
+    | CharLiteral c -> CharPrimitive c
 
 
+//let rec singleLineExpressionParser ctx (state : ExpressionParsingState) (tokens : TokenWithContext list) =
+let rec singleLineExpressionParser (stateCtx : ExpressionParsingStateWithContext) (tokens : TokenWithContext list) =
+    let onlyUpdateState state = { stateCtx with state = state }
 
-type ImportState =
-    | Start
-    | Import
-    | ModuleName of ModuleName
-    // optional
-    | As of ModuleName
-    | ModuleAlias of
-        {| moduleName : ModuleName
-           localAlias : IdentifierName |}
-    // also optional
-    | Exposing of
-        {| moduleName : ModuleName
-           localAlias : IdentifierName
-           state : ExportExposingMode |} // accumulate in the explicit case
-
-type MentionableTypeParsingState =
-    | Start
-    | End // @TODO: this is not a real end, it's just a placeholder for now
-// | And the rest...
-
-type SumVariantParsingState =
-    | Start
-    | VariantName of string
-    // probably need to add another state for parsing mentionable types
-    | SumVariantTypeParams of
-        {| variantName : string
-           typeParams : MentionableType list
-           state : MentionableTypeParsingState |}
-
-type SumTypeParsingState =
-    | Start
-    | ParsingVariants of
-        {| variants : VariantCase list
-           state : SumVariantParsingState |}
-
-
-type TypeDeclarationParsingState =
-    | Type
-    | Alias of isAlias : bool
-    | TypeName of
-        {| isAlias : bool
-           typeName : IdentifierName |}
-    | TypeParams of
-        {| isAlias : bool
-           typeName : IdentifierName
-           typeParams : IdentifierName list |}
-    | Equals of
-        {| isAlias : bool
-           typeName : IdentifierName
-           typeParams : IdentifierName list |}
-    | SumTypeParsingState of SumTypeParsingState
-
-// not sure if we need an End state here and elsewhere? or whether it can be inferred from just moving on to the next legal token that wouldn't make sense in this context
-type ParsingArrowListState =
-    | Start
-    | MentionableTypeParsingState of MentionableTypeParsingState
-    | Arrow of MentionableType list
-
-type ValueTypeDeclaration =
-    | Name of IdentifierName
-    | Colon of IdentifierName
-    | ArrowList of
-        {| valueName : IdentifierName
-           paramsTypes : NEL<MentionableType>
-           currentState : MentionableTypeParsingState |} // @TODO: probably need to chuck in a lil mentionable type parser state carrier
-
-
-type ValueDeclarationParsingState =
-    | Name of IdentifierName // either for the value itself or the type, we don't know yet
-    // optional
-    | ValueTypeDeclaration of ValueTypeDeclaration
-    // NameValue is for when we've already got the type declaration of the value, and now we're carrying that forward into the actual value declaration
-    | NameValue of
-        {| valueName : IdentifierName
-           paramsTypes : NEL<MentionableType> |}
-    | Params of
-        {| valueName : IdentifierName
-           params_ : IdentifierName list |}
-    | Equals of
-        {| valueName : IdentifierName
-           params_ : IdentifierName list |}
-    | Body of ExpressionParsingState'
-
-// @TODO: implement these two
-//and MentionableTypeParsingState = | TBD // ...
-and ExpressionParsingState' = | NotSureYet // ... point to the other one further down later
-
-
-
-//and PrimitiveParsingState =
-
-
-
-
-
-
-
-
-
-
-
-type TypeOrValueParsingState =
-    | TypeParsing of TypeDeclarationParsingState
-    | ValueParsing of ValueDeclarationParsingState
-
-type ValueAndTypeDeclarations =
-    { typeDeclarations : TypeDeclaration list
-      valueDeclarations : ValueDeclaration list }
-
-// This file is about parsing the token list into a concrete syntax tree
-// after parsing the entire file is done we can construct a full YlModule record!
-type FileParsingState =
-    | Start
-    | ModuleDeclaration
-    | ModuleName of ModuleName
-    | Exposing of ModuleName
-    | ExposingList of
-        {| moduleName : ModuleName
-           exposing : ExportExposingState |}
-    //exports : Exports
-    | Imports of
-        {| moduleName : ModuleName
-           exports : Exports
-           imports : Import list
-           importState : ImportState |}
-    | ValueAndTypeDeclarations of
-        {| moduleName : ModuleName
-           exports : Exports
-           imports : Import list
-           types : TypeDeclaration list
-           values : ValueDeclaration list
-           currentState : TypeOrValueParsingState |}
-
-
-
-
-type SyntaxError =
-    | UnbalancedLeftParens
-    | UnbalancedRightParens
-
-(*
-should probably do the following:
-    - group in parens first
-    - group by operators next
-    - lists? records? other grouped things?
-    - then i think just go from left to right treating everything like function application
-*)
-type ExpressionParsingState =
-    | Start
-    | ExpressionSoFar of Expression
-    | SyntaxError of SyntaxError
-
-
-type TraverseResult<'a, 'b> =
-    { remainingTokens : 'a list
-      result : 'b
-      howManyParensDeep : int }
-
-/// I think opening parens doesn't need a state because it's expressed by just calling the traverser recursively
-type GatheringTokensState<'a, 'b> =
-    | NoParensYet of 'a list
-    | FoundClosingParens of ('b * 'a list)
-
-let isClosingParens token = token.token = ParensClose
-let isOpeningParens token = token.token = ParensOpen
-
-/// This dives into a string of tokens and breaks out if it encounters a closing parens.
-/// The combine function parameter can be used to call parensTraverser mutually recursively so that we can dive into arbitrary levels of nested parens.
-let rec parensTraverser (combine : int -> TknCtx list -> TknCtx list -> 'b) howManyParensDeep tokensSoFar tokensLeft =
-    match tokensLeft with
+    match tokens with
     | [] ->
-        { result = combine howManyParensDeep tokensSoFar List.empty
-          remainingTokens = List.empty
-          howManyParensDeep = howManyParensDeep }
+        match stateCtx.isParens with
+        | Parens innerParens ->
+            { isParens = innerParens
+              state = SyntaxError ExpectingClosingParens }
+        | NoParens -> stateCtx
 
-    | head :: rest ->
-        if isOpeningParens head then
-            parensTraverser combine (howManyParensDeep + 1) tokensSoFar rest
-
-        elif isClosingParens head then
-            { result = combine howManyParensDeep tokensSoFar tokensLeft
-              remainingTokens = rest
-              howManyParensDeep = howManyParensDeep }
-        else
-            parensTraverser combine howManyParensDeep (tokensSoFar @ [ head ]) rest
-
-
-type OperatorAccumulator =
-    | NothingYet of TknCtx list
-    // In other words, this is morally a linked list of either a null (with some or none lists of non-operator tokens) or a cons of an operator with more potentially null or more operator tokens
-    | OperatorFound of (TknCtx list * Lexer.Operator * OperatorAccumulator)
-
-let rec private addTokenToAccumulator token state =
-    match state with
-    | NothingYet list -> NothingYet <| list @ [ token ]
-    | OperatorFound (list, op, state') -> OperatorFound (list, op, addTokenToAccumulator token state')
-
-let rec private addOpToAccumulator op state =
-    match state with
-    | NothingYet list -> OperatorFound (list, op, NothingYet List.empty)
-    | OperatorFound (list, previousOp, state') -> OperatorFound (list, previousOp, addOpToAccumulator op state')
-
-let rec opTraverser (combine : int -> TknCtx list -> TknCtx list -> 'b) state tokensLeft =
-    match tokensLeft with
-    | [] -> state
     | head :: rest ->
         match head.token with
-        | Token.Operator op -> opTraverser combine (addOpToAccumulator op state) rest
-        | _ -> opTraverser combine (addTokenToAccumulator head state) rest
+        | Whitespace _ -> singleLineExpressionParser stateCtx rest
+
+        | ParensOpen ->
+            singleLineExpressionParser
+                { stateCtx with
+                    isParens = Parens stateCtx.isParens
+                    state = ExpressionParsingState.Start }
+                rest
+
+        | ParensClose ->
+            match stateCtx.isParens with
+            | Parens innerParens -> { stateCtx with isParens = innerParens } // i.e. unnest a level
+            | NoParens -> onlyUpdateState (SyntaxError UnexpectedClosingParens)
+
+        | Token.Operator MinusOp ->
+
+            singleLineExpressionParser (onlyUpdateState MinusOperator) rest
 
 
+        | Token.PrimitiveLiteral literal ->
+            match stateCtx.state with
+            | MinusOperator ->
+                literalTokenToParsingValue true literal
+                |> PrimitiveLiteral
+                |> onlyUpdateState
 
-let rec singleLineExpressionParser howManyParensDeep tokensSoFar (tokensLeft : TknCtx list) =
-    let result =
-        parensTraverser singleLineExpressionParser howManyParensDeep tokensSoFar tokensLeft
+            | _ ->
+                literalTokenToParsingValue false literal
+                |> PrimitiveLiteral
+                |> onlyUpdateState
 
-    // // This is not correct because this function is not necessarily called right at the end
-    //if result.howManyParensDeep > 0 then
-    //    UnbalancedLeftParens
-    //elif result.howManyParensDeep < 0 then
-    //    UnbalancedRightParens
-    //else
-    match result.remainingTokens with
-    | [] -> result.result
-    | remainingTokens ->
-        // @TODO: actually handle this case properly
-        result.result
-// ok so now we have to take the `result.result` achieved from traversing down the parens and combine them with the stuff remaining in the remaining tokens
+        | _ -> onlyUpdateState <| UnexpectedToken head
+
 
 
 
@@ -277,7 +82,21 @@ let expressionParser (tokensLeft : TknCtx list) =
             | _ -> true)
 
 
-    singleLineExpressionParser 0 thisLineTokens, remainingTokens
+    let stateWithCtx =
+        singleLineExpressionParser
+            { isParens = NoParens
+              state = ExpressionParsingState.Start }
+            thisLineTokens
+
+    // I'm pretty sure we don't need to check whether we're in parens cos we should have already done it inside singleLineExpressionParser
+    stateWithCtx.state
+
+
+
+
+
+
+
 
 
 

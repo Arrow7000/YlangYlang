@@ -13,6 +13,7 @@
     <Compile Include="FileHelpers.fs" />
     <Compile Include="Lexer.fs" />
     <Compile Include="ParserTypes.fs" />
+    <Compile Include="ParserStates.fs" />
     <None Include="Expression.yl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

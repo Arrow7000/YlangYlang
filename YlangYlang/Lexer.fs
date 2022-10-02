@@ -32,6 +32,12 @@ type Whitespace =
 
 
 
+type PrimitiveLiteral =
+    | IntLiteral of uint
+    | FloatLiteral of float
+    | StringLiteral of string
+    | CharLiteral of char
+
 type Operator =
     | EqualityOp
     | InequalityOp
@@ -53,10 +59,7 @@ type Operator =
 type Token =
     | Whitespace of Whitespace list
     | SingleLineComment of string
-    | IntLiteral of uint
-    | FloatLiteral of float
-    | StringLiteral of string
-    | CharLiteral of char
+    | PrimitiveLiteral of PrimitiveLiteral
     | LetKeyword
     | InKeyword
     | ModuleSegmentsOrQualifiedTypeOrVariant of NEL<string> // when it has dots in so it could be either a module name or refer to a (partially) qualified type or type variant
@@ -73,16 +76,7 @@ type Token =
     | BracesClose
     | ValueIdentifier of string
     | Comma
-    //| EqualityOp
-    //| InequalityOp
-    //| UnaryNegationOp // I think this one has to go, it's too context dependent, should only use the MinusOp and infer whether it's unary from the surrounding context
     | AssignmentEquals
-    //| AppendOp
-    //| PlusOp
-    //| MinusOp
-    //| MultOp
-    //| DivOp
-    //| ExpOp
     | PipeChar
     | TypeKeyword
     | AliasKeyword
@@ -94,20 +88,13 @@ type Token =
     | Colon
     | Arrow
     | DoubleDot
-    //| AndOp
-    //| OrOp
     | Backslash // to signify start of lambda
     | Underscore // to signify unused function param
     | Unit // ()
     | QualifiedIdentifier of segments : string list
     | RecordAccess of segments : string list
     | DotGetter of fieldName : string
-    //| ForwardComposeOp
-    //| BackwardComposeOp
-    //| ForwardPipeOp
-    //| BackwardPipeOp
     | Operator of Operator
-//| OtherOp of string
 
 
 /// Not yet used, but to add later for better debugging messages
@@ -282,7 +269,7 @@ module Matchers =
         match allFileChars with
         | MultiCharRegex "\d+" digits ->
             match UInt32.TryParse (digits) with
-            | true, num -> makeTokenWithCtx cursor (IntLiteral num) digits
+            | true, num -> makeTokenWithCtx cursor (IntLiteral num |> PrimitiveLiteral) digits
             | false, _ ->
                 // Should never happen since we've matched on only digit chars, but just in case
 
@@ -293,7 +280,7 @@ module Matchers =
         function
         | MultiCharRegex "\d+\.\d+" str ->
             match Double.TryParse str with
-            | true, num -> makeTokenWithCtx cursor (FloatLiteral num) str
+            | true, num -> makeTokenWithCtx cursor (FloatLiteral num |> PrimitiveLiteral) str
             | false, _ -> NoMatch
         | _ -> NoMatch
 
@@ -378,14 +365,14 @@ module Matchers =
                 |> snd
                 |> String.ofSeq
 
-            makeTokenWithCtx cursor (StringLiteral escapedString) match'.chompedChars
+            makeTokenWithCtx cursor (StringLiteral escapedString |> PrimitiveLiteral) match'.chompedChars
         | _ -> NoMatch
 
     let charLiteral cursor =
         function
         | MultiCharRegexGrouped "'" "(.|\\\\\w)" "'" match' -> // I'm so sorry
             match Char.TryParse match'.group with
-            | true, c -> makeTokenWithCtx cursor (CharLiteral c) match'.chompedChars
+            | true, c -> makeTokenWithCtx cursor (CharLiteral c |> PrimitiveLiteral) match'.chompedChars
             | false, _ -> failwith $"Couldn't parse '{match'.group}' as char"
         | _ -> NoMatch
 
