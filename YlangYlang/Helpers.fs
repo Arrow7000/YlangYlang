@@ -1,6 +1,17 @@
 ﻿[<AutoOpen>]
 module Helpers
 
+let tee f x =
+    f x
+    x
+
+let always x _ = x
+
+let apply (f : 'a -> 'b) a = f a
+
+let flip f b a = f a b
+
+
 
 type NonEmptyList<'a> =
     | NEL of first : 'a * rest : 'a list
@@ -21,6 +32,7 @@ type NonEmptyList<'a> =
             NEL (head1, rest1 @ (head2 :: rest2))
 
     static member cons (item : 'a) (NEL (head, tail)) = NEL (item, head :: tail)
+    static member consFromList (item : 'a) tail = NEL (item, tail)
 
     static member appendList (list : 'a list) (NEL (head, tail)) = NEL (head, tail @ list)
 

@@ -3,7 +3,7 @@ open System.Text.RegularExpressions
 open FileHelpers
 open Lexer
 open Lexer.Matchers
-open Parsing
+open ExpressionParsing
 
 
 [<EntryPoint>]
@@ -12,8 +12,10 @@ let main argv =
 
 
     justKeepLexing allMatchersInOrder fileText
-    //|> Result.map parser
-    |> Result.map expressionParser
+    |> Result.map (
+        tee (fun thing -> printfn "%A" <| List.map (fun t -> t.token) thing)
+        >> Parser.run parseSingleLineExpression
+    )
     |> printfn "%A"
 
     0

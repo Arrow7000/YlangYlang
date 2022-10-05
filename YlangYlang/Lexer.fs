@@ -33,8 +33,8 @@ type Whitespace =
 
 
 type PrimitiveLiteral =
-    | IntLiteral of uint
-    | FloatLiteral of float
+    | UintLiteral of uint
+    | UfloatLiteral of float
     | StringLiteral of string
     | CharLiteral of char
 
@@ -269,7 +269,7 @@ module Matchers =
         match allFileChars with
         | MultiCharRegex "\d+" digits ->
             match UInt32.TryParse (digits) with
-            | true, num -> makeTokenWithCtx cursor (IntLiteral num |> PrimitiveLiteral) digits
+            | true, num -> makeTokenWithCtx cursor (UintLiteral num |> PrimitiveLiteral) digits
             | false, _ ->
                 // Should never happen since we've matched on only digit chars, but just in case
 
@@ -278,9 +278,9 @@ module Matchers =
 
     let floatMatcher cursor =
         function
-        | MultiCharRegex "\d+\.\d+" str ->
+        | MultiCharRegex "\\d+\\.\\d+" str ->
             match Double.TryParse str with
-            | true, num -> makeTokenWithCtx cursor (FloatLiteral num |> PrimitiveLiteral) str
+            | true, num -> makeTokenWithCtx cursor (UfloatLiteral num |> PrimitiveLiteral) str
             | false, _ -> NoMatch
         | _ -> NoMatch
 
@@ -456,7 +456,7 @@ module Matchers =
         | MultiCharRegex "--[^\\r\\n]*" str -> makeTokenWithCtx cursor (SingleLineComment str) str
         | _ -> NoMatch
 
-    let minus = singleCharMatcher "\-" (Operator MinusOp)
+    let minus = singleCharMatcher "\\-" (Operator MinusOp)
 
 
     let unit = simpleMatch Unit "\(\)"
@@ -473,15 +473,15 @@ module Matchers =
     let backwardComposeOp = simpleMatch (Operator BackwardComposeOp) "\<\<"
     let forwardPipeOp = simpleMatch (Operator ForwardPipeOp) "\|\>"
     let backwardPipeOp = simpleMatch (Operator BackwardPipeOp) "\<\|"
-    let andOp = simpleMatch (Operator BackwardPipeOp) "&&"
-    let orOp = simpleMatch (Operator BackwardPipeOp) "\|\|"
+    let andOp = simpleMatch (Operator AndOp) "&&"
+    let orOp = simpleMatch (Operator OrOp) "\|\|"
 
     let plus = singleCharMatcher "\+" (Operator PlusOp)
     let exp = singleCharMatcher "\^" (Operator ExpOp)
     let pipe = singleCharMatcher "\|" PipeChar
     let colon = singleCharMatcher "\:" Colon
-    let backslash = simpleMatch (Operator BackwardPipeOp) "\\\\"
-    let underscore = simpleMatch (Operator BackwardPipeOp) "_"
+    let backslash = simpleMatch Backslash "\\\\"
+    let underscore = simpleMatch Underscore "_"
 
 
     /// Only run this after all the keywords have been tried!
@@ -497,8 +497,8 @@ module Matchers =
         | _ -> NoMatch
 
     let allMatchersInOrder =
-        [ intMatcher
-          floatMatcher
+        [ floatMatcher
+          intMatcher
           whitespaceMatcher
           stringMatcher
           charLiteral

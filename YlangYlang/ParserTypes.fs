@@ -16,6 +16,10 @@ type ModuleName = NEL<string> // to account for fact that it could be top level 
 type MaybeQualifiedValue = NEL<string>
 
 
+type FunctionParam =
+    | Named of IdentifierName
+    | Ignored // i.e. the underscore
+
 
 // TYPES
 
@@ -64,13 +68,13 @@ type TypeOfTypeDeclaration =
 
 /// A top level type declaration
 type TypeDeclaration =
-    { typeParams : string list // generic params, could be empty
+    { typeParams : IdentifierName list // generic params, could be empty
       typeOfTypeDeclaration : TypeOfTypeDeclaration }
 
-// not sure if this is fully right yet...
-type TypeOfFunction =
-    | Named of MaybeQualifiedValue
-    | Lambda of (MentionableType * MentionableType)
+// not sure if this is fully right yet... or relevant
+//type TypeOfFunction =
+//    | Named of MaybeQualifiedValue
+//    | Lambda of (MentionableType * MentionableType)
 
 
 
@@ -108,7 +112,7 @@ type PrimitiveLiteralValue =
     | NumberPrimitive of NumberLiteralValue
     | CharPrimitive of char
     | StringPrimitive of string
-    | UnitPrimitive of unit
+    | UnitPrimitive
 
 and CompoundTypeValues =
     | List of Expression list
@@ -122,7 +126,7 @@ and CustomTypeValues =
 
 // lambas and named funcs have different syntaxes but i think they can both be treated as the same thing
 and FunctionValue =
-    { params_ : IdentifierName list
+    { params_ : NEL<FunctionParam> // cos if it didn't have any then it would just be a regular value
       body : Expression }
 
 
@@ -134,7 +138,7 @@ and AnyValue =
     // functions and other values might be unified by just giving all values a possibly-empty list of parameters
     | Function of FunctionValue // for the parameters
 
-
+/// @TODO: allow for destructured params here at some point
 and LetBinding =
     { name : IdentifierName
       value : Expression }

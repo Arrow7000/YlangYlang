@@ -1,105 +1,10 @@
-﻿module Parsing
-
+﻿module ModuleParsing
 
 
 open Lexer
 open ParserTypes
 open ParserStates
-
-
-let literalTokenToParsingValue isPrecededByMinus (primitiveLiteral : PrimitiveLiteral) =
-    match primitiveLiteral with
-    | PrimitiveLiteral.IntLiteral num ->
-        num
-        |> int
-        |> if isPrecededByMinus then (*) -1 else id
-        |> IntLiteral
-        |> NumberPrimitive
-    | PrimitiveLiteral.FloatLiteral num -> FloatLiteral num |> NumberPrimitive
-    | StringLiteral str -> StringPrimitive str
-    | CharLiteral c -> CharPrimitive c
-
-
-//let rec singleLineExpressionParser ctx (state : ExpressionParsingState) (tokens : TokenWithContext list) =
-let rec singleLineExpressionParser (stateCtx : ExpressionParsingStateWithContext) (tokens : TokenWithContext list) =
-    let onlyUpdateState state = { stateCtx with state = state }
-
-    match tokens with
-    | [] ->
-        match stateCtx.isParens with
-        | Parens innerParens ->
-            { isParens = innerParens
-              state = SyntaxError ExpectingClosingParens }
-        | NoParens -> stateCtx
-
-    | head :: rest ->
-        match head.token with
-        | Whitespace _ -> singleLineExpressionParser stateCtx rest
-
-        | ParensOpen ->
-            singleLineExpressionParser
-                { stateCtx with
-                    isParens = Parens stateCtx.isParens
-                    state = ExpressionParsingState.Start }
-                rest
-
-        | ParensClose ->
-            match stateCtx.isParens with
-            | Parens innerParens -> { stateCtx with isParens = innerParens } // i.e. unnest a level
-            | NoParens -> onlyUpdateState (SyntaxError UnexpectedClosingParens)
-
-        | Token.Operator MinusOp ->
-
-            singleLineExpressionParser (onlyUpdateState MinusOperator) rest
-
-
-        | Token.PrimitiveLiteral literal ->
-            match stateCtx.state with
-            | MinusOperator ->
-                literalTokenToParsingValue true literal
-                |> PrimitiveLiteral
-                |> onlyUpdateState
-
-            | _ ->
-                literalTokenToParsingValue false literal
-                |> PrimitiveLiteral
-                |> onlyUpdateState
-
-        | _ -> onlyUpdateState <| UnexpectedToken head
-
-
-
-
-
-/// Only making this parse one-line expressions to begin with for simplicity.
-/// `isInImmediateParens` parameter is so that we can determine whether the contents should be parsed as a tuple, which need to be wrapped in parentheses
-let expressionParser (tokensLeft : TknCtx list) =
-    let (thisLineTokens, remainingTokens) =
-        tokensLeft
-        |> List.takeWhilePartition (fun tokenCtx ->
-            match tokenCtx.token with
-            | Whitespace list -> not <| List.contains NewLine list
-            | _ -> true)
-
-
-    let stateWithCtx =
-        singleLineExpressionParser
-            { isParens = NoParens
-              state = ExpressionParsingState.Start }
-            thisLineTokens
-
-    // I'm pretty sure we don't need to check whether we're in parens cos we should have already done it inside singleLineExpressionParser
-    stateWithCtx.state
-
-
-
-
-
-
-
-
-
-
+open ExpressionParsing
 
 
 // @TODO: finish all the various states for when parsing is interrupted mid-state

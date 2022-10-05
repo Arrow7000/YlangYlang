@@ -5,6 +5,54 @@ open ParserTypes
 
 
 
+
+type SyntaxError =
+    | ExpectingClosingParens
+    | UnexpectedClosingParens
+
+
+
+(*
+should probably do the following:
+    - group in parens first
+    - group by operators next
+    - lists? records? other grouped things?
+    - then i think just go from left to right treating everything like function application
+*)
+type ExpressionParsingState =
+    | Start
+    | PrimitiveLiteral of PrimitiveLiteralValue
+    | InParens of ExpressionParsingState
+    | MinusOperator // for unary negation; might need to stick this in a substate for parsing davka just literals
+    | LambdaExpression of FunctionValue
+    //| OperatorEncountered of (PrimitiveLiteralValue * Operator)
+    //| OperatorExpression of (PrimitiveLiteralValue * Operator * PrimitiveLiteralValue) // and subsequently make these able to be recursive so we can have full expressions with operators instead of only primitive literals
+
+
+    // The error states
+    | SyntaxError of SyntaxError
+    | UnexpectedToken of TokenWithContext
+
+
+/// To represent a natural number of parens depth
+type ParensCons =
+    | NoParens // we are not currently in any level of parens
+    | Parens of ParensCons // We are in parens
+
+// I wonder if we can somehow combine the parens cons thingy and internalise it into the state itself
+type ExpressionParsingStateWithContext =
+    { isParens : ParensCons
+      state : ExpressionParsingState }
+
+
+
+
+
+
+
+
+
+
 (*
 @TODO: yet to cover
 - destructurings of tuples, records and single-case sum type variants
@@ -118,49 +166,6 @@ type ValueDeclarationParsingState =
 // @TODO: implement these two
 //and MentionableTypeParsingState = | TBD // ...
 and ExpressionParsingState' = | NotSureYet // ... point to the other one further down later
-
-
-
-//and PrimitiveParsingState =
-
-
-
-
-type SyntaxError =
-    | ExpectingClosingParens
-    | UnexpectedClosingParens
-
-
-
-/// To represent a natural number of parens depth
-type ParensCons =
-    | NoParens // we are not currently in any level of parens
-    | Parens of ParensCons // We are in parens
-
-(*
-should probably do the following:
-    - group in parens first
-    - group by operators next
-    - lists? records? other grouped things?
-    - then i think just go from left to right treating everything like function application
-*)
-type ExpressionParsingState =
-    | Start
-    | PrimitiveLiteral of PrimitiveLiteralValue
-    //| InOpenParens of NestedState<ExpressionParsingState>
-    | InParens of ExpressionParsingState
-    | MinusOperator // for unary negation
-
-    // The error states
-    | SyntaxError of SyntaxError
-    | UnexpectedToken of TokenWithContext
-
-
-
-type ExpressionParsingStateWithContext =
-    { isParens : ParensCons
-      state : ExpressionParsingState }
-
 
 
 
