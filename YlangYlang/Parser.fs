@@ -113,7 +113,12 @@ let rec chompWhileHelper predicate tokens =
 
 let rec chompWhile predicate : Parser<unit> = chompWhileHelper predicate |> Parser
 
-
+let lookAhead (isComingUp : TokenWithContext -> bool) : Parser<unit> =
+    Parser
+    <| fun tokens ->
+        match List.tryFind isComingUp tokens with
+        | Some _ -> ParsingSuccess ((), tokens)
+        | None -> NoParsingMatch
 
 
 let symbol expectedToken : Parser<unit> =
@@ -168,6 +173,8 @@ let rec repeat (parser : Parser<'a>) : Parser<'a list> =
 
 let oneOrMore (parser : Parser<_>) : Parser<_> =
     map2 NEL.consFromList parser (repeat parser)
+
+
 
 
 

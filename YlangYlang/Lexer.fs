@@ -41,7 +41,7 @@ type PrimitiveLiteral =
 type Operator =
     | EqualityOp
     | InequalityOp
-    | UnaryNegationOp // I think this one has to go, it's too context dependent, should only use the MinusOp and infer whether it's unary from the surrounding context
+    //| UnaryNegationOp // I think this one has to go, it's too context dependent, should only use the MinusOp and infer whether it's unary from the surrounding context
     | AppendOp
     | PlusOp
     | MinusOp

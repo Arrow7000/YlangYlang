@@ -7,7 +7,10 @@ open Lexer
 
 type IdentifierName = string
 
-type Operator = string // maybe should be char list to symbolise that it's a list of symbols? idk
+// maybe should be char list to symbolise that it's a list of symbols? idk
+//type Operator =
+//    | BuiltInOp of Lexer.Operator
+//    | CustomOp of IdentifierName
 
 
 type TypeName = NEL<string> // to account for fact that it could be direct or qualified reference
@@ -114,7 +117,7 @@ type PrimitiveLiteralValue =
     | StringPrimitive of string
     | UnitPrimitive
 
-and CompoundTypeValues =
+type CompoundTypeValues =
     | List of Expression list
     | Record of (string * Expression) list
     | Tuple of Expression list

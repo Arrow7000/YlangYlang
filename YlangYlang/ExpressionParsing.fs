@@ -8,20 +8,34 @@ open ParserStates
 open Parser
 
 
-let private literalTokenToParsingValue isPrecededByMinus (primitiveLiteral : PrimitiveLiteral) =
-    match primitiveLiteral with
-    | PrimitiveLiteral.UintLiteral num ->
-        num
-        |> int
-        |> if isPrecededByMinus then (*) -1 else id
-        |> IntLiteral
-        |> NumberPrimitive
-    | PrimitiveLiteral.UfloatLiteral num -> FloatLiteral num |> NumberPrimitive
-    | StringLiteral str -> StringPrimitive str
-    | CharLiteral c -> CharPrimitive c
+//let private literalTokenToParsingValue isPrecededByMinus (primitiveLiteral : PrimitiveLiteral) =
+//    match primitiveLiteral with
+//    | PrimitiveLiteral.UintLiteral num ->
+//        num
+//        |> int
+//        |> if isPrecededByMinus then (*) -1 else id
+//        |> IntLiteral
+//        |> NumberPrimitive
+//    | PrimitiveLiteral.UfloatLiteral num -> FloatLiteral num |> NumberPrimitive
+//    | StringLiteral str -> StringPrimitive str
+//    | CharLiteral c -> CharPrimitive c
 
 
+let private parseChoosePrimitiveLiteral chooser =
+    matchSingleToken (function
+        | Token.PrimitiveLiteral prim ->
+            match chooser prim with
+            | Some x -> Some x
+            | None -> None
+        | _ -> None)
 
+//let private parseChooseOperator chooser =
+//    matchSingleToken (function
+//        | Token.Operator op->
+//            match op with
+//            | Some x -> Some x
+//            | None -> None
+//        | _ -> None)
 
 let inline negate (n : ^a) = n * -LanguagePrimitives.GenericOne
 
@@ -32,13 +46,7 @@ let parseUnaryNegationOpFloat : Parser<float -> float> =
     parseToken (Token.Operator Operator.MinusOp) negate
 
 
-let parseChoosePrimitiveLiteral chooser =
-    matchSingleToken (function
-        | Token.PrimitiveLiteral prim ->
-            match chooser prim with
-            | Some x -> Some x
-            | None -> None
-        | _ -> None)
+
 
 let parseUint =
     parseChoosePrimitiveLiteral (function
@@ -65,8 +73,7 @@ let parseUnit =
         | _ -> None)
 
 let parsePrimitiveLiteral =
-    oneOf [ oneOf [ parseInt; parseFloat ]
-            |> map NumberPrimitive
+    oneOf [ either parseInt parseFloat |> map NumberPrimitive
 
             parseChoosePrimitiveLiteral (function
                 | StringLiteral str -> StringPrimitive str |> Some
@@ -78,6 +85,12 @@ let parsePrimitiveLiteral =
 
 
 
+let parseOperator =
+    matchSingleToken (function
+        | Token.Operator op -> Some op
+        | _ -> None)
+
+
 let parseSingleParam =
     matchSingleToken (function
         | ValueIdentifier str -> Some <| Named str
@@ -86,6 +99,9 @@ let parseSingleParam =
 
 let parseParamList = oneOrMore (parseSingleParam |. spaces)
 
+
+
+//let parseOperatorExpression
 
 let rec parseLambda =
     succeed (fun params_ body -> { params_ = params_; body = body })
@@ -96,12 +112,27 @@ let rec parseLambda =
     |. symbol Token.Arrow
     |. spaces
     |= lazyParser (fun _ -> parseSingleLineExpression)
+    |. spaces
 
+and parseOperatorExpression =
+    succeed (fun left op right -> Expression.Operator (op, left, right))
+    |. lookAhead (fun t ->
+        match t.token with
+        | Token.Operator op -> true
+        | t -> false)
+    |= lazyParser (fun _ -> parseSingleLineExpression)
+    |. spaces
+    |= parseOperator
+    |. spaces
+    |= lazyParser (fun _ -> parseSingleLineExpression)
+    |. spaces
 
 and parseSingleLineExpression =
     oneOf [ parseLambda |> map (Function >> ExplicitValue)
+            parseOperatorExpression
             parsePrimitiveLiteral
             |> map (Primitive >> ExplicitValue) ]
+//|. isEnd
 
 
 
