@@ -3,7 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.2.32516.85
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "YlangYlang", "YlangYlang\YlangYlang.fsproj", "{FA995A68-FAE0-4C12-8ED3-B060B2834D5D}"
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "YlangYlang", "YlangYlang\YlangYlang.fsproj", "{FA995A68-FAE0-4C12-8ED3-B060B2834D5D}"
+EndProject
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "YlangYlang.Tests", "YlangYlang.Tests\YlangYlang.Tests.fsproj", "{0C91AA97-9785-465A-9EC5-F941657A15AE}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,6 +17,10 @@ Global
 		{FA995A68-FAE0-4C12-8ED3-B060B2834D5D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FA995A68-FAE0-4C12-8ED3-B060B2834D5D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FA995A68-FAE0-4C12-8ED3-B060B2834D5D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0C91AA97-9785-465A-9EC5-F941657A15AE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0C91AA97-9785-465A-9EC5-F941657A15AE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0C91AA97-9785-465A-9EC5-F941657A15AE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0C91AA97-9785-465A-9EC5-F941657A15AE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
