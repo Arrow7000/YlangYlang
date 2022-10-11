@@ -125,7 +125,7 @@ type CompoundTypeValues =
 // Not sure yet if it makes sense to have this as a separate type
 and CustomTypeValues =
     { label : IdentifierName
-      values : AnyValue list }
+      values : ExplicitValue list }
 
 // lambas and named funcs have different syntaxes but i think they can both be treated as the same thing
 and FunctionValue =
@@ -133,7 +133,7 @@ and FunctionValue =
       body : Expression }
 
 
-and AnyValue =
+and ExplicitValue =
     | Compound of CompoundTypeValues
     | Primitive of PrimitiveLiteralValue
     | CustomTypeVariant of CustomTypeValues
@@ -147,13 +147,21 @@ and LetBinding =
       value : Expression }
 
 
-and Expression =
-    | ExplicitValue of AnyValue
+
+and SingleValueExpression =
+    | ExplicitValue of ExplicitValue
     | Identifier of IdentifierName // referencing some other expression...
-    | Operator of (Operator * Expression * Expression)
-    | NamedFunctionApplication of (IdentifierName * Expression list) // might only be a partial application
-    | LambdaFunctionApplication of (FunctionValue * Expression list)
+
+and CompoundExpression =
+    | Operator of (Expression * (Operator * Expression)) // Multiple operators in a row are in right nested expressions
+    //| NamedFunctionApplication of (IdentifierName * Expression list) // might only be a partial application
+    //| LambdaFunctionApplication of (FunctionValue * Expression list)
+    | FunctionApplication of (Expression list)
     | LetExpression of (LetBinding list * Expression) // can't have lets outside of an expression
+
+and Expression =
+    | SingleValueExpression of SingleValueExpression
+    | CompoundExpression of CompoundExpression
 
 
 // Not sure if it makes sense to have these yet, when we haven't yet enforced that the types are consistent...

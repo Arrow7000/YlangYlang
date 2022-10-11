@@ -100,8 +100,10 @@ let parseSingleParam =
 let parseParamList = oneOrMore (parseSingleParam |. spaces)
 
 
-
-//let parseOperatorExpression
+let parseIdentifier =
+    matchSingleToken (function
+        | Token.ValueIdentifier n -> Some <| IdentifierName n
+        | _ -> None)
 
 let rec parseLambda =
     succeed (fun params_ body -> { params_ = params_; body = body })
@@ -111,31 +113,56 @@ let rec parseLambda =
     |. spaces
     |. symbol Token.Arrow
     |. spaces
-    |= lazyParser (fun _ -> parseSingleLineExpression)
+    |= lazyParser (fun _ -> parseExpression)
     |. spaces
 
-and parseOperatorExpression =
-    succeed (fun left op right -> Expression.Operator (op, left, right))
-    |. lookAhead (fun t ->
-        match t.token with
-        | Token.Operator op -> true
-        | t -> false)
-    |= lazyParser (fun _ -> parseSingleLineExpression)
+//and parseOperatorExpression =
+//    succeed (fun left opsAndParams -> Expression.Operator (left, opsAndParams))
+//    |= lazyParser (fun _ -> parseSingleLineExpression)
+//    |. spaces
+//    |= oneOrMore (
+//        succeed (fun op right -> (op, right))
+//        |= parseOperator
+//        |. spaces
+//        |= lazyParser (fun _ -> parseSingleLineExpression)
+//        |. spaces
+//    )
+
+and parseParensExpression =
+    succeed id |. symbol ParensOpen |. spaces
+    |= lazyParser (fun _ -> parseExpression)
     |. spaces
-    |= parseOperator
-    |. spaces
-    |= lazyParser (fun _ -> parseSingleLineExpression)
+    |. symbol ParensClose
     |. spaces
 
-and parseSingleLineExpression =
-    oneOf [ parseLambda |> map (Function >> ExplicitValue)
-            parseOperatorExpression
-            parsePrimitiveLiteral
-            |> map (Primitive >> ExplicitValue) ]
-//|. isEnd
+//and functionApplication =
+//    oneOrMore (lazyParser (fun _ -> parseSingleLineExpression))
+
+
+and parseSingleLineExpression : Parser<Expression> =
+    succeed (fun (expr : SingleValueExpression) opExprOpt ->
+        match opExprOpt with
+        | Some opExpr ->
+            Operator (SingleValueExpression expr, opExpr)
+            |> CompoundExpression
+        | None -> SingleValueExpression expr)
+    |= (oneOf [ parseIdentifier |> map Identifier
+                parseLambda |> map (Function >> ExplicitValue)
+                parsePrimitiveLiteral
+                |> map (Primitive >> ExplicitValue) ])
+    |. spaces
+    |= opt (
+        succeed (fun op expr -> (op, expr))
+        |= parseOperator
+        |. spaces
+        |= lazyParser (fun _ -> parseExpression)
+    )
 
 
 
+
+
+and parseExpression = either parseParensExpression parseSingleLineExpression
 
 
 

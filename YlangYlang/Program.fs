@@ -11,10 +11,10 @@ let main argv =
     let fileText = readFile "Expression.yl"
 
 
-    justKeepLexing allMatchersInOrder fileText
+    tokeniseString fileText
     |> Result.map (
         tee (fun thing -> printfn "%A" <| List.map (fun t -> t.token) thing)
-        >> Parser.run parseSingleLineExpression
+        >> Parser.run parseExpression
     )
     |> printfn "%A"
 

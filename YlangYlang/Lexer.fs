@@ -26,9 +26,9 @@ type WhitespaceChar =
     | Space
     | NewLineChar
 
-type Whitespace =
-    | Spaces of int // i.e. combine all non-newline whitespace chars into a single item so they are easier to handle
-    | NewLine
+//type Whitespace =
+//    | Spaces of int // i.e. combine all non-newline whitespace chars into a single item so they are easier to handle
+//    | NewLine
 
 
 
@@ -57,7 +57,7 @@ type Operator =
     | OtherOp of string
 
 type Token =
-    | Whitespace of Whitespace list
+    | Whitespace of WhitespaceChar
     | SingleLineComment of string
     | PrimitiveLiteral of PrimitiveLiteral
     | LetKeyword
@@ -286,7 +286,7 @@ module Matchers =
 
     let whitespaceMatcher cursor allFileChars =
         match allFileChars with
-        | MultiCharRegex "\s+" chars ->
+        | SingleCharRegex "\s" char ->
             // Need to handle CRLF files so that we don't think there's double the newlines than there actually are
             let mapWhitespaceChar c =
                 match c with
@@ -297,37 +297,41 @@ module Matchers =
                 | c' -> failwithf "Couldn't match whitespace char in whitespace matcher: '%c'" c'
 
             let tokensResult =
-                chars
-                |> Seq.map mapWhitespaceChar
-                |> Seq.toList
-                |> Result.anyErrors
-                |> Result.map (function
-                    | [] -> []
-                    | head :: tail ->
-                        let headState =
-                            match head with
-                            | Space -> Spaces 1
-                            | NewLineChar -> NewLine
+                //chars
+                //|> Seq.map mapWhitespaceChar
+                //|> Seq.toList
+                //|> Result.anyErrors
+                char |> mapWhitespaceChar
+            //|> Result.map (function Space -> Spaces)
+            //|> Result.map (fun c ->                            makeTokenWithCtx cursor (Whitespace c) chars)
+            //        | [] -> []
+            //        | head :: tail ->
+            //            let headState =
+            //                match head with
+            //                | Space -> Spaces 1
+            //                | NewLineChar -> NewLine
 
-                        tail
-                        |> List.fold
-                            (fun (list, state) thisChar ->
+            //            tail
+            //            |> List.fold
+            //                (fun (list, state) thisChar ->
 
-                                match state with
-                                | Spaces count ->
-                                    match thisChar with
-                                    | Space -> (list, Spaces (count + 1))
-                                    | NewLineChar -> (list @ [ state ], NewLine)
-                                | NewLine ->
-                                    match thisChar with
-                                    | Space -> (list @ [ state ], Spaces 1)
-                                    | NewLineChar -> (list @ [ state ], NewLine))
-                            ([], headState)
-                        |> fun (list, state) -> list @ [ state ])
+            //                    match state with
+            //                    | Spaces count ->
+            //                        match thisChar with
+            //                        | Space -> (list, Spaces (count + 1))
+            //                        | NewLineChar -> (list @ [ state ], NewLine)
+            //                    | NewLine ->
+            //                        match thisChar with
+            //                        | Space -> (list @ [ state ], Spaces 1)
+            //                        | NewLineChar -> (list @ [ state ], NewLine))
+            //                ([], headState)
+            //            |> fun (list, state) -> list @ [ state ])
 
             match tokensResult with
-            | Ok tokens' -> makeTokenWithCtx cursor (Whitespace tokens') chars
-            | Error errs -> Err errs
+            | Ok token ->
+                makeTokenWithCtx cursor (Whitespace token)
+                <| Char.ToString char
+            | Error errs -> Err <| NEL.make errs
         | _ -> NoMatch
 
 
@@ -456,9 +460,6 @@ module Matchers =
         | MultiCharRegex "--[^\\r\\n]*" str -> makeTokenWithCtx cursor (SingleLineComment str) str
         | _ -> NoMatch
 
-    let minus = singleCharMatcher "\\-" (Operator MinusOp)
-
-
     let unit = simpleMatch Unit "\(\)"
     let arrow = simpleMatch Arrow "\-\>"
     let doubleDot = simpleMatch DoubleDot "\.\."
@@ -477,6 +478,9 @@ module Matchers =
     let orOp = simpleMatch (Operator OrOp) "\|\|"
 
     let plus = singleCharMatcher "\+" (Operator PlusOp)
+    let minus = singleCharMatcher "\\-" (Operator MinusOp)
+    let mult = singleCharMatcher "\\*" (Operator MultOp)
+    let div = singleCharMatcher "\/" (Operator DivOp)
     let exp = singleCharMatcher "\^" (Operator ExpOp)
     let pipe = singleCharMatcher "\|" PipeChar
     let colon = singleCharMatcher "\:" Colon
@@ -540,6 +544,8 @@ module Matchers =
           bracesClose
           comma
           minus
+          mult
+          div
           andOp
           orOp
           plus
@@ -550,3 +556,7 @@ module Matchers =
           underscore
           valueIdentifier
           otherOp ]
+
+
+
+let tokeniseString = justKeepLexing Matchers.allMatchersInOrder

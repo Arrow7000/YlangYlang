@@ -14,7 +14,6 @@ type ParserError =
 
 
 type ParseResult<'a> =
-    private
     | ParsingSuccess of ('a * TokenWithContext list)
     /// Where this branch didn't match but you could try other parsers (i.e. it's backtrackable)
     | NoParsingMatch
@@ -175,6 +174,12 @@ let oneOrMore (parser : Parser<_>) : Parser<_> =
     map2 NEL.consFromList parser (repeat parser)
 
 
+let opt parser =
+    Parser
+    <| fun tokens ->
+        match run parser tokens with
+        | ParsingSuccess (s, t) -> ParsingSuccess (Some s, t)
+        | NoParsingMatch -> ParsingSuccess (None, tokens)
 
 
 
@@ -185,3 +190,58 @@ let spaces : Parser<unit> =
             | _ -> None)
     )
     |> ignore
+
+
+
+type PartitionedTokens =
+    { includedTokens : TokenWithContext list
+      tokensLeft : TokenWithContext list }
+
+let getTilLineBreak (tokens : TokenWithContext list) =
+    let rec traverser tokensGatheredSoFar tokensLeft =
+        match tokensLeft with
+        | [] ->
+            { includedTokens = tokensGatheredSoFar
+              tokensLeft = tokensLeft }
+        | head :: rest ->
+            match head.token with
+            | Whitespace char ->
+                match char with
+                | NewLineChar ->
+                    { includedTokens = tokensGatheredSoFar
+                      tokensLeft = tokensLeft }
+                | Space -> traverser (head :: tokensGatheredSoFar) rest
+            | _ -> traverser (head :: tokensGatheredSoFar) rest
+
+    traverser List.empty tokens
+
+
+//let rec getBlock (tokens : TokenWithContext list) =
+//    match tokens with
+//    | [] -> []
+//    | head :: _ ->
+//        let startingCol = head.startCol
+//        let partitioned = getTilLineBreak tokens
+
+//        let rec traverser tokensGathered tokensLeft =
+
+
+//        partitioned.includedTokens
+//        @ getBlock partitioned.tokensLeft
+
+///// Parse block with parserA and then the rest with parserB
+//let parseBlock parserA parserB =
+//    Parser <|
+//        fun tokens ->
+
+
+
+
+
+//let rec skipIfAlreadyTried alreadyTriedTokens parser =
+//    Parser
+//    <| fun tokens ->
+//        if tokens = alreadyTriedTokens then
+//            NoParsingMatch
+//        else
+//            inspectTokens (skipIfAlreadyTried alreadyTriedTokens) parser
