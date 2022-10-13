@@ -1,7 +1,7 @@
 ﻿module ParserStates
 
 open Lexer
-open ParserTypes
+open ConcreteSyntaxTree
 
 
 

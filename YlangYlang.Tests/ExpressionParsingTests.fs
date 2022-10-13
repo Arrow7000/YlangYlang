@@ -2,13 +2,15 @@
 
 open Expecto
 open Lexer
-open ParserTypes
+open ConcreteSyntaxTree
 open Parser
 open ExpressionParsing
 
 
 let private makeSuccess v = ParsingSuccess (v, List.empty)
 
+let private makeNumberExpression n =
+    SingleValueExpression (ExplicitValue (Primitive (NumberPrimitive n)))
 
 
 let testParensExpression =
@@ -20,11 +22,17 @@ let testParensExpression =
             |> fun res ->
                 Expect.equal
                     res
-                    (Operator (
-                        NumberPrimitive (IntLiteral 34),
-                        NEL.consFromList
-                            (PlusOp, NumberPrimitive (FloatLiteral -4.6))
-                            [ DivOp, NumberPrimitive (IntLiteral 7) ]
+                    (CompoundExpression (
+                        Operator (
+                            makeNumberExpression (IntLiteral 34),
+                            (PlusOp,
+                             (CompoundExpression (
+                                 Operator (
+                                     makeNumberExpression (FloatLiteral -4.6),
+                                     (DivOp, makeNumberExpression (IntLiteral 7))
+                                 )
+                             )))
+                        )
                      )
                      |> makeSuccess)
                     "Parse parenthesised expression")

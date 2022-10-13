@@ -3,7 +3,7 @@
 
 open System.Numerics
 open Lexer
-open ParserTypes
+open ConcreteSyntaxTree
 open ParserStates
 open Parser
 
@@ -105,6 +105,9 @@ let parseIdentifier =
         | Token.ValueIdentifier n -> Some <| IdentifierName n
         | _ -> None)
 
+
+#nowarn "40"
+
 let rec parseLambda =
     succeed (fun params_ body -> { params_ = params_; body = body })
     |. symbol Backslash
@@ -142,9 +145,16 @@ and parseParensExpression =
 and parseSingleLineExpression : Parser<Expression> =
     succeed (fun (expr : SingleValueExpression) opExprOpt ->
         match opExprOpt with
-        | Some opExpr ->
-            Operator (SingleValueExpression expr, opExpr)
-            |> CompoundExpression
+        | Some (opOpt, expr') ->
+            match opOpt with
+            | Some op ->
+                Operator (SingleValueExpression expr, (op, expr'))
+                |> CompoundExpression
+
+            | None ->
+                FunctionApplication (SingleValueExpression expr, expr')
+                |> CompoundExpression
+
         | None -> SingleValueExpression expr)
     |= (oneOf [ parseIdentifier |> map Identifier
                 parseLambda |> map (Function >> ExplicitValue)
@@ -152,11 +162,13 @@ and parseSingleLineExpression : Parser<Expression> =
                 |> map (Primitive >> ExplicitValue) ])
     |. spaces
     |= opt (
-        succeed (fun op expr -> (op, expr))
-        |= parseOperator
+        succeed (fun opOpt expr -> opOpt, expr)
+        |= opt parseOperator
         |. spaces
         |= lazyParser (fun _ -> parseExpression)
+        |. spaces
     )
+
 
 
 

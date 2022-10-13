@@ -216,23 +216,47 @@ let getTilLineBreak (tokens : TokenWithContext list) =
     traverser List.empty tokens
 
 
-//let rec getBlock (tokens : TokenWithContext list) =
-//    match tokens with
-//    | [] -> []
-//    | head :: _ ->
-//        let startingCol = head.startCol
-//        let partitioned = getTilLineBreak tokens
+let getBlock (tokens : TokenWithContext list) =
+    match tokens with
+    | [] ->
+        { includedTokens = List.empty
+          tokensLeft = List.empty }
 
-//        let rec traverser tokensGathered tokensLeft =
+    | head :: _ ->
+        let startingCol = head.startCol
+
+        let rec traverser tokensGathered (tokensLeft : TokenWithContext list) =
+            match tokensLeft with
+            | [] ->
+                { includedTokens = tokensGathered
+                  tokensLeft = List.empty }
+
+            | head :: rest ->
+                if head.startCol <= startingCol then
+                    { includedTokens = tokensGathered
+                      tokensLeft = rest }
+
+                else
+                    traverser (tokensGathered @ [ head ]) rest
+
+        traverser List.empty tokens
 
 
-//        partitioned.includedTokens
-//        @ getBlock partitioned.tokensLeft
+/// Parse block with parserA and then the rest with parserB
+let parseBlock (combine : 'a -> 'b -> 'c) (parserA : Parser<'a>) (parserB : Parser<'b>) : Parser<'c> =
+    Parser
+    <| fun tokens ->
+        let partitioned = getBlock tokens
 
-///// Parse block with parserA and then the rest with parserB
-//let parseBlock parserA parserB =
-//    Parser <|
-//        fun tokens ->
+        let parserA' =
+            Parser
+            <| fun _ -> run parserA partitioned.includedTokens
+
+        let parserB' =
+            Parser
+            <| fun _ -> run parserB partitioned.tokensLeft
+
+        run (map2 combine parserA' parserB') tokens
 
 
 

@@ -2,7 +2,7 @@
 
 
 open Lexer
-open ParserTypes
+open ConcreteSyntaxTree
 open ParserStates
 open ExpressionParsing
 
