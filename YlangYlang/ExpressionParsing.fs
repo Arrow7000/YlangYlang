@@ -8,19 +8,6 @@ open ParserStates
 open Parser
 
 
-//let private literalTokenToParsingValue isPrecededByMinus (primitiveLiteral : PrimitiveLiteral) =
-//    match primitiveLiteral with
-//    | PrimitiveLiteral.UintLiteral num ->
-//        num
-//        |> int
-//        |> if isPrecededByMinus then (*) -1 else id
-//        |> IntLiteral
-//        |> NumberPrimitive
-//    | PrimitiveLiteral.UfloatLiteral num -> FloatLiteral num |> NumberPrimitive
-//    | StringLiteral str -> StringPrimitive str
-//    | CharLiteral c -> CharPrimitive c
-
-
 let private parseChoosePrimitiveLiteral chooser =
     matchSingleToken (function
         | Token.PrimitiveLiteral prim ->
@@ -28,19 +15,15 @@ let private parseChoosePrimitiveLiteral chooser =
             | Some x -> Some x
             | None -> None
         | _ -> None)
+    |> setLabel "primitive literal"
 
-//let private parseChooseOperator chooser =
-//    matchSingleToken (function
-//        | Token.Operator op->
-//            match op with
-//            | Some x -> Some x
-//            | None -> None
-//        | _ -> None)
+
 
 let inline negate (n : ^a) = n * -LanguagePrimitives.GenericOne
 
 let parseUnaryNegationOpInt : Parser<uint -> int> =
     parseToken (Token.Operator Operator.MinusOp) (int >> negate)
+
 
 let parseUnaryNegationOpFloat : Parser<float -> float> =
     parseToken (Token.Operator Operator.MinusOp) negate
@@ -55,15 +38,20 @@ let parseUint =
 
 let parseInt : Parser<NumberLiteralValue> =
     fork parseUnaryNegationOpInt (succeed int) (fun op -> succeed op |= parseUint |> map IntLiteral)
+    |> setLabel "int"
+
 
 
 let parseUfloat =
     parseChoosePrimitiveLiteral (function
         | UfloatLiteral n -> Some n
         | _ -> None)
+    |> setLabel "ufloat"
+
 
 let parseFloat : Parser<NumberLiteralValue> =
     fork parseUnaryNegationOpFloat (succeed id) (fun op -> succeed op |= parseUfloat |> map FloatLiteral)
+    |> setLabel "float"
 
 
 
@@ -71,6 +59,8 @@ let parseUnit =
     matchSingleToken (function
         | Token.Unit -> Some UnitPrimitive
         | _ -> None)
+    |> setLabel "unit"
+
 
 let parsePrimitiveLiteral =
     oneOf [ either parseInt parseFloat |> map NumberPrimitive
@@ -81,6 +71,8 @@ let parsePrimitiveLiteral =
                 | _ -> None)
 
             parseUnit ]
+    |> setLabel "primitive literal"
+
 
 
 
@@ -89,6 +81,8 @@ let parseOperator =
     matchSingleToken (function
         | Token.Operator op -> Some op
         | _ -> None)
+    |> setLabel "operator"
+
 
 
 let parseSingleParam =
@@ -97,13 +91,18 @@ let parseSingleParam =
         | Underscore -> Some <| Ignored
         | _ -> None)
 
-let parseParamList = oneOrMore (parseSingleParam |. spaces)
+let parseParamList =
+    oneOrMore (parseSingleParam |. spaces)
+    |> setLabel "param list"
+
 
 
 let parseIdentifier =
     matchSingleToken (function
         | Token.ValueIdentifier n -> Some <| IdentifierName n
         | _ -> None)
+    |> setLabel "identifier"
+
 
 
 #nowarn "40"
@@ -118,31 +117,26 @@ let rec parseLambda =
     |. spaces
     |= lazyParser (fun _ -> parseExpression)
     |. spaces
-
-//and parseOperatorExpression =
-//    succeed (fun left opsAndParams -> Expression.Operator (left, opsAndParams))
-//    |= lazyParser (fun _ -> parseSingleLineExpression)
-//    |. spaces
-//    |= oneOrMore (
-//        succeed (fun op right -> (op, right))
-//        |= parseOperator
-//        |. spaces
-//        |= lazyParser (fun _ -> parseSingleLineExpression)
-//        |. spaces
-//    )
-
-and parseParensExpression =
-    succeed id |. symbol ParensOpen |. spaces
-    |= lazyParser (fun _ -> parseExpression)
-    |. spaces
-    |. symbol ParensClose
-    |. spaces
-
-//and functionApplication =
-//    oneOrMore (lazyParser (fun _ -> parseSingleLineExpression))
+    |> setLabel "lambda"
 
 
-and parseSingleLineExpression : Parser<Expression> =
+
+
+
+and parseSingleValueExpressions : Parser<SingleValueExpression> =
+    oneOf [ parseIdentifier |> map Identifier
+            parseLambda |> map (Function >> ExplicitValue)
+            parsePrimitiveLiteral
+            |> map (Primitive >> ExplicitValue) ]
+    |> setLabel "single value expression"
+
+
+
+
+
+
+
+and parseCompoundExpressions =
     succeed (fun (expr : SingleValueExpression) opExprOpt ->
         match opExprOpt with
         | Some (opOpt, expr') ->
@@ -156,10 +150,7 @@ and parseSingleLineExpression : Parser<Expression> =
                 |> CompoundExpression
 
         | None -> SingleValueExpression expr)
-    |= (oneOf [ parseIdentifier |> map Identifier
-                parseLambda |> map (Function >> ExplicitValue)
-                parsePrimitiveLiteral
-                |> map (Primitive >> ExplicitValue) ])
+    |= parseSingleValueExpressions
     |. spaces
     |= opt (
         succeed (fun opOpt expr -> opOpt, expr)
@@ -168,13 +159,30 @@ and parseSingleLineExpression : Parser<Expression> =
         |= lazyParser (fun _ -> parseExpression)
         |. spaces
     )
+    |> setLabel "compound expression"
+
+/// This has to be separate because this returns a full expression
+and parseParensExpression =
+    (succeed id
+
+     |. symbol ParensOpen
+     |. spaces
+     |= parseUntilToken ParensClose (lazyParser (fun _ -> parseExpression))
+     |. spaces
+     |. symbol ParensClose
+     |. spaces)
+    |> setLabel "parenthesised expression"
 
 
+and parseExpression =
+    parseBlock
+        (fun a () -> a)
+        (tee (fun tokens ->
 
-
-
-
-and parseExpression = either parseParensExpression parseSingleLineExpression
+            (printTokensAsText >> printfn "%A") tokens)
+         <| either parseParensExpression parseCompoundExpressions)
+        spaces
+    |> setLabel "full expression"
 
 
 
