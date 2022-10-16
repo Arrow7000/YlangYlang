@@ -12,9 +12,7 @@ type ParserError =
     | ExpectedToken of Token
     | ExpectedString of string
     | NoParsersLeft
-
     | TokenNotValidHere of TokenWithContext
-
     | PredicateDidntMatch
 
     /// but there were yet more tokens
@@ -28,11 +26,7 @@ type ParseResult<'a> =
     | ParsingSuccess of ('a * TokenWithContext list)
     | NoParsingMatch of (Label * ParserError)
 
-/// Where the branch matched but threw a fatal parsing error (i.e. non-backtrackable)
-/// Add this back in when we make the parsing more like Parser.Advanced than Parser.Simple
-/// although even then the result isn't a separate variant, but we carry the errors with us in the parser! (I think)
-/// well, running the parser does result in a Result type (heheh), but we accumulate the lists of dead ends along with us, I think
-//| ParsingError of ParserError
+
 
 type private ParserRecord<'a> =
     { parseFn : (TokenWithContext list -> ParseResult<'a>)
@@ -292,18 +286,15 @@ let getBlock (tokens : TokenWithContext list) =
         traverser List.empty tokens
 
 
-/// Parse block with parserA and then the rest with parserB
-let parseBlock (combine : 'a -> 'b -> 'c) (parserA : Parser<'a>) (parserB : Parser<'b>) : Parser<'c> =
+let parseBlock (parser : Parser<'a>) =
     makeWithLabel UnknownLabel (fun tokens ->
         let partitioned = getBlock tokens
 
-        let parserA' =
-            makeWithLabel UnknownLabel (fun _ -> run parserA partitioned.includedTokens)
+        match run parser partitioned.includedTokens with
+        | ParsingSuccess (s, tokensLeft) -> ParsingSuccess (s, tokensLeft @ partitioned.tokensLeft)
+        | NoParsingMatch x -> NoParsingMatch x)
 
-        let parserB' =
-            makeWithLabel UnknownLabel (fun _ -> run parserB partitioned.tokensLeft)
 
-        run (map2 combine parserA' parserB') List.empty)
 
 
 
@@ -320,20 +311,4 @@ let parseUntilToken token (Parser p as parser) =
                 else
                     traverser (tokensChomped @ [ head ]) rest
 
-
-        traverser List.empty tokens
-
-    )
-
-
-
-
-
-
-//let rec skipIfAlreadyTried alreadyTriedTokens parser =
-//    Parser
-//    <| fun tokens ->
-//        if tokens = alreadyTriedTokens then
-//            NoParsingMatch
-//        else
-//            inspectTokens (skipIfAlreadyTried alreadyTriedTokens) parser
+        traverser List.empty tokens)

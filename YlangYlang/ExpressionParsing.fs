@@ -175,28 +175,12 @@ and parseParensExpression =
 
 
 and parseExpression =
-    parseBlock
-        (fun a () -> a)
-        (tee (fun tokens ->
-
-            (printTokensAsText >> printfn "%A") tokens)
-         <| either parseParensExpression parseCompoundExpressions)
-        spaces
-    |> setLabel "full expression"
+    succeed id
+    |= parseBlock (either parseParensExpression parseCompoundExpressions)
+    |. spaces
 
 
 
-////let rec singleLineExpressionParser ctx (state : ExpressionParsingState) (tokens : TokenWithContext list) =
-//let rec singleLineExpressionParser (stateCtx : ExpressionParsingStateWithContext) (tokens : TokenWithContext list) =
-//    let onlyUpdateState state = { stateCtx with state = state }
-
-//    match tokens with
-//    | [] ->
-//        match stateCtx.isParens with
-//        | Parens innerParens ->
-//            { isParens = innerParens
-//              state = SyntaxError ExpectingClosingParens }
-//        | NoParens -> stateCtx
 
 //    | head :: rest ->
 //        match head.token with
