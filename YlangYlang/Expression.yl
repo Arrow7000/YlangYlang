@@ -1,6 +1,9 @@
-﻿\ _ tels _   blah ->
+﻿( \ _ tels _   blah ->
+    let
+        test = "hello"
 
-  "sdf"
-    ++ (  34 + 4 / 7 ) 
+        bla v _ =(  34 + 4 / 7 ) 
+    in bla
+        )
 
 \_ -> ()

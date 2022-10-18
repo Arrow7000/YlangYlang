@@ -151,16 +151,13 @@ and LetBinding =
 and SingleValueExpression =
     | ExplicitValue of ExplicitValue
     | Identifier of IdentifierName // referencing some other expression...
-
+    | LetExpression of (NEL<LetBinding> * Expression) // can't have lets outside of an expression
 
 
 /// @TODO: would be good to flatten these constructors in the abstract syntax tree so we can represent the operators and function applications as a list, not a tree with heavy right hand side children
 and CompoundExpression =
     | Operator of (Expression * (Operator * Expression)) // Multiple operators in a row are in right nested expressions
-    //| NamedFunctionApplication of (IdentifierName * Expression list) // might only be a partial application
-    //| LambdaFunctionApplication of (FunctionValue * Expression list)
     | FunctionApplication of (Expression * Expression)
-//| LetExpression of (LetBinding list * Expression) // can't have lets outside of an expression
 
 and Expression =
     | SingleValueExpression of SingleValueExpression

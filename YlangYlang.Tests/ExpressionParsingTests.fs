@@ -58,21 +58,36 @@ let testOperatorExpression =
 let testParensExpressionWithSimpleExpressions =
     (fun _ ->
         (tokeniseString "(  34) ")
-        |> Result.map (Parser.run parseParensExpression)
+        |> Result.map (Parser.run parseSingleValueExpressions)
         |> fun res ->
             Expect.wantOk res "Should succeed"
             |> fun res ->
                 Expect.equal
                     res
-                    (makeNumberExpression (IntLiteral 34)
+                    (makeNumberSingleExpression (IntLiteral 34)
                      |> makeSuccess)
                     "Parse parenthesised simple expression")
     |> testCase "Parse parenthesised simple expression"
 
+
+let testNestedParensExpressionWithSimpleExpression =
+    (fun _ ->
+        (tokeniseString "( (  34) ) ")
+        |> Result.map (Parser.run parseSingleValueExpressions)
+        |> fun res ->
+            Expect.wantOk res "Should succeed"
+            |> fun res ->
+                Expect.equal
+                    res
+                    (makeNumberSingleExpression (IntLiteral 34)
+                     |> makeSuccess)
+                    "Parse nested parenthesised simple expression")
+    |> testCase "Parse nested parenthesised simple expression"
+
 let testParensExpressionWithMultiOperators =
     (fun _ ->
         (tokeniseString "(  34 + -4.6 / 7 ) ")
-        |> Result.map (Parser.run parseParensExpression)
+        |> Result.map (Parser.run parseCompoundExpressions)
         |> fun res ->
             Expect.wantOk res "Should succeed"
             |> fun res ->
@@ -103,4 +118,5 @@ let tests =
         [ testParensExpressionWithMultiOperators
           testSimpleExpression
           testOperatorExpression
-          testParensExpressionWithSimpleExpressions ]
+          testParensExpressionWithSimpleExpressions
+          testNestedParensExpressionWithSimpleExpression ]

@@ -16,6 +16,9 @@ let flip f b a = f a b
 type NonEmptyList<'a> =
     | NEL of first : 'a * rest : 'a list
 
+    static member head(NEL (head', _)) = head'
+    static member tail(NEL (_, tail')) = tail'
+
     static member map f (NEL (first, rest)) = NEL (f first, List.map f rest)
     static member make(a : 'a) : NEL<'a> = NEL (a, List.empty)
 

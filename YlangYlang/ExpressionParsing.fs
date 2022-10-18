@@ -64,7 +64,6 @@ let parseUnit =
 
 let parsePrimitiveLiteral =
     oneOf [ either parseInt parseFloat |> map NumberPrimitive
-
             parseChoosePrimitiveLiteral (function
                 | StringLiteral str -> StringPrimitive str |> Some
                 | CharLiteral c -> CharPrimitive c |> Some
@@ -105,6 +104,23 @@ let parseIdentifier =
 
 
 
+
+
+
+
+
+/// Create a parser and a version of the parser also matching a parenthesised version of the parser
+let rec parensifyParser parser =
+    either
+        parser
+        (succeed id |. symbol ParensOpen |. spaces
+         |= lazyParser (fun _ -> parensifyParser parser)
+         |. spaces
+         |. symbol ParensClose)
+    |. spaces
+
+
+
 #nowarn "40"
 
 let rec parseLambda =
@@ -121,13 +137,51 @@ let rec parseLambda =
 
 
 
+and singleAssignment =
+    succeed (fun name params' (expr : Expression) ->
+        { name = name
+          value =
+            match params' with
+            | [] -> expr
+            | head :: tail ->
+                ({ params_ = NEL.consFromList head tail
+                   body = expr })
+                |> Function
+                |> ExplicitValue
+                |> SingleValueExpression })
+    |= parseIdentifier
+    |= (repeat (parseSingleParam |. spaces))
+    |. spaces
+    |. symbol Token.AssignmentEquals
+    |. spaces
+    |= lazyParser (fun _ -> parseExpression)
+    |. spaces
+    |> setLabel "single let assignment"
+
+
+
+
+and assignmentList =
+    succeed (fun letBindings expr -> LetExpression (letBindings, expr))
+    |. symbol LetKeyword
+    |. spaces
+    |= oneOrMore singleAssignment
+    |. spaces
+    |. symbol InKeyword
+    |. spaces
+    |= lazyParser (fun _ -> parseExpression)
+    |> setLabel "let bindings assignment list"
+
 
 
 and parseSingleValueExpressions : Parser<SingleValueExpression> =
-    oneOf [ parseIdentifier |> map Identifier
-            parseLambda |> map (Function >> ExplicitValue)
-            parsePrimitiveLiteral
-            |> map (Primitive >> ExplicitValue) ]
+    parensifyParser (
+        oneOf [ parseIdentifier |> map Identifier
+                parseLambda |> map (Function >> ExplicitValue)
+                parsePrimitiveLiteral
+                |> map (Primitive >> ExplicitValue)
+                assignmentList ]
+    )
     |> setLabel "single value expression"
 
 
@@ -135,108 +189,37 @@ and parseSingleValueExpressions : Parser<SingleValueExpression> =
 
 
 
-
 and parseCompoundExpressions =
-    succeed (fun (expr : SingleValueExpression) opExprOpt ->
-        match opExprOpt with
-        | Some (opOpt, expr') ->
-            match opOpt with
-            | Some op ->
-                Operator (SingleValueExpression expr, (op, expr'))
-                |> CompoundExpression
+    parensifyParser (
+        succeed (fun (expr : SingleValueExpression) opExprOpt ->
+            match opExprOpt with
+            | Some (opOpt, expr') ->
+                match opOpt with
+                | Some op ->
+                    Operator (SingleValueExpression expr, (op, expr'))
+                    |> CompoundExpression
 
-            | None ->
-                FunctionApplication (SingleValueExpression expr, expr')
-                |> CompoundExpression
+                | None ->
+                    FunctionApplication (SingleValueExpression expr, expr')
+                    |> CompoundExpression
 
-        | None -> SingleValueExpression expr)
-    |= parseSingleValueExpressions
-    |. spaces
-    |= opt (
-        succeed (fun opOpt expr -> opOpt, expr)
-        |= opt parseOperator
+            | None -> SingleValueExpression expr)
+        |= parseSingleValueExpressions
         |. spaces
-        |= lazyParser (fun _ -> parseExpression)
-        |. spaces
+        |= opt (
+            succeed (fun opOpt expr -> opOpt, expr)
+            |= opt parseOperator
+            |. spaces
+            |= lazyParser (fun _ -> parseExpression)
+            |. spaces
+        )
     )
     |> setLabel "compound expression"
 
-/// This has to be separate because this returns a full expression
-and parseParensExpression =
-    (succeed id
-
-     |. symbol ParensOpen
-     |. spaces
-     |= parseUntilToken ParensClose (lazyParser (fun _ -> parseExpression))
-     |. spaces
-     |. symbol ParensClose
-     |. spaces)
-    |> setLabel "parenthesised expression"
 
 
 and parseExpression =
     succeed id
-    |= parseBlock (either parseParensExpression parseCompoundExpressions)
+
+    |= parseBlock parseCompoundExpressions
     |. spaces
-
-
-
-
-//    | head :: rest ->
-//        match head.token with
-//        | Whitespace _ -> singleLineExpressionParser stateCtx rest
-
-//        | ParensOpen ->
-//            singleLineExpressionParser
-//                { stateCtx with
-//                    isParens = Parens stateCtx.isParens
-//                    state = ExpressionParsingState.Start }
-//                rest
-
-//        | ParensClose ->
-//            match stateCtx.isParens with
-//            | Parens innerParens -> { stateCtx with isParens = innerParens } // i.e. unnest a level
-//            | NoParens -> onlyUpdateState (SyntaxError UnexpectedClosingParens)
-
-//        | Token.Operator MinusOp ->
-
-//            singleLineExpressionParser (onlyUpdateState MinusOperator) rest
-
-
-//        | Token.PrimitiveLiteral literal ->
-//            match stateCtx.state with
-//            | MinusOperator ->
-//                literalTokenToParsingValue true literal
-//                |> PrimitiveLiteral
-//                |> onlyUpdateState
-
-//            | _ ->
-//                literalTokenToParsingValue false literal
-//                |> PrimitiveLiteral
-//                |> onlyUpdateState
-
-//        | _ -> onlyUpdateState <| UnexpectedToken head
-
-
-
-
-
-///// Only making this parse one-line expressions to begin with for simplicity.
-///// `isInImmediateParens` parameter is so that we can determine whether the contents should be parsed as a tuple, which need to be wrapped in parentheses
-//let expressionParser (tokensLeft : TknCtx list) =
-//    let (thisLineTokens, remainingTokens) =
-//        tokensLeft
-//        |> List.takeWhilePartition (fun tokenCtx ->
-//            match tokenCtx.token with
-//            | Whitespace list -> not <| List.contains NewLine list
-//            | _ -> true)
-
-
-//    let stateWithCtx =
-//        singleLineExpressionParser
-//            { isParens = NoParens
-//              state = ExpressionParsingState.Start }
-//            thisLineTokens
-
-//    // I'm pretty sure we don't need to check whether we're in parens cos we should have already done it inside singleLineExpressionParser
-//    stateWithCtx.state
