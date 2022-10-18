@@ -312,3 +312,34 @@ let parseUntilToken token (Parser p as parser) =
                     traverser (tokensChomped @ [ head ]) rest
 
         traverser List.empty tokens)
+
+
+type SequenceConfig<'a> =
+    { startToken : Token
+      endToken : Token
+      separator : Token
+      spaces : Parser<unit>
+      item : Parser<'a> }
+
+
+let rec private postStartListParser config =
+    (succeed (fun x xs -> x :: xs)
+
+     |= config.item
+     |. config.spaces
+     |= either
+         (succeed id
+          |. symbol config.separator
+          |. config.spaces
+          |= postStartListParser config)
+
+         (succeed List.empty
+          |. symbol config.endToken
+          |. config.spaces))
+
+
+let rec sequence config =
+    succeed id
+    |. symbol config.startToken
+    |. config.spaces
+    |= postStartListParser config
