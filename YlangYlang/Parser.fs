@@ -22,18 +22,42 @@ type ParserError =
     | UnexpectedEndOfExpression of expected : Token option
 
 
+//type ParsingContext<'ctx> =
+
+
+
+
+type ParsingSuccess<'a> =
+    { tokensChomped : TokenWithContext list
+      result : 'a
+      tokensLeft : TokenWithContext list }
+
+type ParseFailure =
+    { tokensChomped : TokenWithContext list
+      label : Label
+      error : ParserError }
+
 type ParseResult<'a> =
-    | ParsingSuccess of ('a * TokenWithContext list)
-    | NoParsingMatch of (Label * ParserError)
+    | ParsingSuccess of ParsingSuccess<'a>
+    | NoParsingMatch of ParseFailure
 
 
+
+/// First param is tokens left to chomp, second params is the tokens already chomped
+//type ParseFn<'a> = TokenWithContext list -> TokenWithContext list -> ParseResult<'a>
+type ParseFn<'a> = TokenWithContext list -> ParseResult<'a>
 
 type private ParserRecord<'a> =
-    { parseFn : (TokenWithContext list -> ParseResult<'a>)
-      label : Label }
+    { parseFn : ParseFn<'a>
+      tokensChomped : TokenWithContext list
+    //label : Label
+     }
 
-type Parser<'a> = private Parser of ParserRecord<'a>
+type Parser<'a> = private | Parser of ParserRecord<'a>
 
+
+
+let setLabelOnFailure label (failure : ParseFailure) = { failure with label = Label label }
 
 let setLabel newLabel (Parser parser) =
     let newInnerFn input =
@@ -41,20 +65,29 @@ let setLabel newLabel (Parser parser) =
 
         match result with
         | ParsingSuccess s -> ParsingSuccess s
-        | NoParsingMatch (_, err) -> NoParsingMatch (Label newLabel, err)
+        | NoParsingMatch e -> NoParsingMatch (setLabelOnFailure newLabel e)
 
     Parser
         { parseFn = newInnerFn
-          label = Label newLabel }
+          tokensChomped = parser.tokensChomped
+        //label = Label newLabel
+        }
 
-let getLabel (Parser parser) = parser.label
 
 let setParseFn fn (Parser parser) =
-    Parser { label = parser.label; parseFn = fn }
+    Parser
+        {
+          //label = parser.label
+          tokensChomped = parser.tokensChomped
+          parseFn = fn }
 
-let setParseFnFlip p f = setParseFn f p
 
-let makeWithLabel label fn = Parser { label = label; parseFn = fn }
+let makeWithLabel label fn =
+    Parser
+        {
+          // label = label
+          tokensChomped = List.empty
+          parseFn = fn }
 
 
 let run (Parser parser) tokens = parser.parseFn tokens
@@ -64,16 +97,20 @@ let bind (f : 'a -> Parser<'b>) (parser : Parser<'a>) : Parser<'b> =
     (fun tokens ->
         run parser tokens
         |> function
-            | ParsingSuccess (s, tokens) -> run (f s) tokens
+            | ParsingSuccess s -> run (f s.result) tokens
             | NoParsingMatch x -> NoParsingMatch x)
     |> makeWithLabel UnknownLabel
 
 
 
-let map (f : 'a -> 'b) (parser : Parser<'a>) : Parser<'b> =
+let map (f : 'a -> 'b) (Parser p as parser : Parser<'a>) : Parser<'b> =
     parser
-    |> bind (fun s ->
-        (fun tokens -> ParsingSuccess (f s, tokens))
+    |> bind (fun (s : 'a) ->
+        (fun tokens ->
+            ParsingSuccess
+                { tokensChomped = p.tokensChomped
+                  result = f s
+                  tokensLeft = tokens })
         |> makeWithLabel UnknownLabel)
 
 let flatten : Parser<Parser<'a>> -> Parser<'a> = fun parser -> parser |> bind id
@@ -97,15 +134,29 @@ let either (parserA : Parser<'a>) (parserB : Parser<'a>) : Parser<'a> =
 
 let rec oneOf (parsers : Parser<'a> list) : Parser<'a> =
     match parsers with
-    | [] -> makeWithLabel UnknownLabel (fun _ -> NoParsingMatch (UnknownLabel, NoParsersLeft))
+    | [] ->
+        makeWithLabel UnknownLabel (fun _ ->
+            NoParsingMatch
+                { tokensChomped = List.empty
+                  label = UnknownLabel
+                  error = NoParsersLeft })
     | head :: rest -> either head (oneOf rest)
 
 /// Parser that always succeeds
 let succeed a : Parser<'a> =
-    makeWithLabel UnknownLabel (fun tokens -> ParsingSuccess (a, tokens))
+    makeWithLabel UnknownLabel (fun tokens ->
+        ParsingSuccess
+            { tokensChomped = List.empty
+              result = a
+              tokensLeft = tokens })
 
 let fail : ParserError -> Parser<'a> =
-    fun err -> makeWithLabel UnknownLabel (fun _ -> NoParsingMatch (UnknownLabel, err))
+    fun err ->
+        makeWithLabel UnknownLabel (fun _ ->
+            NoParsingMatch
+                { tokensChomped = List.empty
+                  label = UnknownLabel
+                  error = err })
 
 let lazyParser thunk =
     makeWithLabel UnknownLabel (fun tokens ->
@@ -135,21 +186,36 @@ let fork parserA parserB finalParser =
 let isEnd =
     makeWithLabel UnknownLabel (fun tokens ->
         match tokens with
-        | [] -> ParsingSuccess ((), List.empty)
-        | _ -> NoParsingMatch (UnknownLabel, ExpectedEndOfExpression))
+        | [] ->
+            ParsingSuccess
+                { tokensChomped = List.empty
+                  result = ()
+                  tokensLeft = List.empty }
+        | _ ->
+            NoParsingMatch
+                { tokensChomped = List.empty
+                  label = UnknownLabel
+                  error = ExpectedEndOfExpression })
 
 
-let rec chompWhileHelper predicate tokens =
-    match tokens with
-    | [] -> ParsingSuccess ((), List.empty)
+let rec chompWhileHelper predicate tokensChomped tokensLeft =
+    match tokensLeft with
+    | [] ->
+        ParsingSuccess
+            { tokensChomped = tokensChomped
+              result = ()
+              tokensLeft = List.empty }
     | head :: rest ->
         if predicate head then
-            chompWhileHelper predicate rest
+            chompWhileHelper predicate (tokensChomped @ [ head ]) rest
         else
-            ParsingSuccess ((), head :: rest)
+            ParsingSuccess
+                { tokensChomped = tokensChomped
+                  result = ()
+                  tokensLeft = head :: rest }
 
 let rec chompWhile predicate : Parser<unit> =
-    chompWhileHelper predicate
+    chompWhileHelper predicate List.empty
     |> makeWithLabel UnknownLabel
 
 
@@ -169,12 +235,23 @@ let tee f parser =
 
 let symbol expectedToken : Parser<unit> =
     makeWithLabel UnknownLabel (function
-        | [] -> NoParsingMatch (UnknownLabel, UnexpectedEndOfExpression <| Some expectedToken)
+        | [] ->
+            NoParsingMatch
+                { tokensChomped = List.empty
+                  label = UnknownLabel
+                  error = UnexpectedEndOfExpression <| Some expectedToken }
         | nextToken :: rest ->
             if expectedToken = nextToken.token then
-                ParsingSuccess ((), rest)
+                ParsingSuccess
+                    { tokensChomped = List.singleton nextToken
+                      result = ()
+                      tokensLeft = rest }
+
             else
-                NoParsingMatch (UnknownLabel, ExpectedToken expectedToken))
+                NoParsingMatch
+                    { tokensChomped = List.empty
+                      label = UnknownLabel
+                      error = ExpectedToken expectedToken })
 
 
 let ifMatches predicate : Parser<unit> = chompWhile predicate
@@ -182,11 +259,26 @@ let ifMatches predicate : Parser<unit> = chompWhile predicate
 /// Matches and maps over single token
 let matchCtxToken chooser =
     makeWithLabel UnknownLabel (function
-        | [] -> NoParsingMatch (UnknownLabel, UnexpectedEndOfExpression None)
+        | [] ->
+            NoParsingMatch
+                { tokensChomped = List.empty
+                  label = UnknownLabel
+                  error = UnexpectedEndOfExpression None }
+        //(UnknownLabel, UnexpectedEndOfExpression None)
         | nextToken :: rest ->
             match chooser nextToken with
-            | Some x -> ParsingSuccess (x, rest)
-            | None -> NoParsingMatch (UnknownLabel, PredicateDidntMatch))
+            | Some x ->
+                ParsingSuccess
+                    { tokensChomped = List.singleton nextToken
+                      result = x
+                      tokensLeft = rest }
+            //(x, rest)
+            | None ->
+                NoParsingMatch
+                    { tokensChomped = List.empty
+                      label = UnknownLabel
+                      error = PredicateDidntMatch })
+//(UnknownLabel, PredicateDidntMatch))
 
 let matchSingleToken f = matchCtxToken (fun t -> f t.token)
 
@@ -201,17 +293,22 @@ let parseToken expectedToken f =
 
 
 
-let rec repeat (parser : Parser<'a>) : Parser<'a list> =
+let rec repeat (Parser p as parser : Parser<'a>) : Parser<'a list> =
     makeWithLabel UnknownLabel (fun tokens ->
-        let rec traverser state tokensRemaining =
+        let rec traverser state tokensChomped tokensRemaining =
             tokensRemaining
             |> run parser
             |> function
-                | ParsingSuccess (s, remainingTokens) -> traverser (s :: state) remainingTokens
-                | NoParsingMatch _ -> ParsingSuccess (state, tokensRemaining)
+                | ParsingSuccess s -> traverser (s.result :: state) s.tokensChomped s.tokensLeft
+                | NoParsingMatch _ ->
+                    ParsingSuccess
+                        { tokensChomped = tokensChomped
+                          result = state
+                          tokensLeft = tokensRemaining }
+        //(state, tokensRemaining)
 
 
-        traverser List.empty tokens)
+        traverser List.empty p.tokensChomped tokens)
     |> map List.rev
 
 let oneOrMore (parser : Parser<_>) : Parser<_> =
@@ -221,8 +318,18 @@ let oneOrMore (parser : Parser<_>) : Parser<_> =
 let opt parser =
     makeWithLabel UnknownLabel (fun tokens ->
         match run parser tokens with
-        | ParsingSuccess (s, t) -> ParsingSuccess (Some s, t)
-        | NoParsingMatch _ -> ParsingSuccess (None, tokens))
+        | ParsingSuccess s ->
+            ParsingSuccess
+                { tokensLeft = s.tokensLeft
+                  result = Some s.result
+                  tokensChomped = s.tokensChomped }
+        | NoParsingMatch e ->
+            ParsingSuccess
+                { result = None
+                  tokensLeft = tokens
+                  tokensChomped = List.empty }
+    //(None, tokens)
+    )
 
 
 let spaces : Parser<unit> =
@@ -291,7 +398,12 @@ let parseBlock (parser : Parser<'a>) =
         let partitioned = getBlock tokens
 
         match run parser partitioned.includedTokens with
-        | ParsingSuccess (s, tokensLeft) -> ParsingSuccess (s, tokensLeft @ partitioned.tokensLeft)
+        //| ParsingSuccess (s, tokensLeft) -> ParsingSuccess (s, tokensLeft @ partitioned.tokensLeft)
+        | ParsingSuccess s ->
+            ParsingSuccess
+                { s with
+                    tokensLeft = s.tokensLeft @ partitioned.tokensLeft
+                    tokensChomped = s.tokensChomped @ partitioned.includedTokens }
         | NoParsingMatch x -> NoParsingMatch x)
 
 
@@ -306,7 +418,8 @@ let parseUntilToken token (Parser p as parser) =
             | head :: rest ->
                 if head.token = token then
                     match run parser tokensChomped with
-                    | ParsingSuccess (s, tokensLeft') -> ParsingSuccess (s, tokensLeft @ tokensLeft')
+                    //| ParsingSuccess (s, tokensLeft') -> ParsingSuccess (s, tokensLeft @ tokensLeft')
+                    | ParsingSuccess s -> ParsingSuccess { s with tokensLeft = tokensLeft @ s.tokensLeft }
                     | NoParsingMatch x -> NoParsingMatch x
                 else
                     traverser (tokensChomped @ [ head ]) rest
