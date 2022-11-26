@@ -38,7 +38,7 @@ let parseUint =
 
 let parseInt : Parser<NumberLiteralValue> =
     fork parseUnaryNegationOpInt (succeed int) (fun op -> succeed op |= parseUint |> map IntLiteral)
-    |> setLabel "int"
+    |> addCtxToStack "int"
 
 
 
@@ -46,12 +46,12 @@ let parseUfloat =
     parseChoosePrimitiveLiteral (function
         | UfloatLiteral n -> Some n
         | _ -> None)
-    |> setLabel "ufloat"
+    |> addCtxToStack "ufloat"
 
 
 let parseFloat : Parser<NumberLiteralValue> =
     fork parseUnaryNegationOpFloat (succeed id) (fun op -> succeed op |= parseUfloat |> map FloatLiteral)
-    |> setLabel "float"
+    |> addCtxToStack "float"
 
 
 
@@ -59,7 +59,7 @@ let parseUnit =
     matchSingleToken (function
         | Token.Unit -> Some UnitPrimitive
         | _ -> None)
-    |> setLabel "unit"
+    |> addCtxToStack "unit"
 
 
 let parsePrimitiveLiteral =
@@ -70,7 +70,7 @@ let parsePrimitiveLiteral =
                 | _ -> None)
 
             parseUnit ]
-    |> setLabel "primitive literal"
+    |> addCtxToStack "primitive literal"
 
 
 
@@ -80,7 +80,7 @@ let parseOperator =
     matchSingleToken (function
         | Token.Operator op -> Some op
         | _ -> None)
-    |> setLabel "operator"
+    |> addCtxToStack "operator"
 
 
 
@@ -92,7 +92,7 @@ let parseSingleParam =
 
 let parseParamList =
     oneOrMore (parseSingleParam |. spaces)
-    |> setLabel "param list"
+    |> addCtxToStack "param list"
 
 
 
@@ -100,13 +100,14 @@ let parseIdentifier =
     matchSingleToken (function
         | Token.ValueIdentifier n -> Some <| IdentifierName n
         | _ -> None)
-    |> setLabel "identifier"
+    |> addCtxToStack "identifier"
 
 
 
 
 
 
+#nowarn "40"
 
 
 /// Create a parser and a version of the parser also matching a parenthesised version of the parser
@@ -121,7 +122,6 @@ let rec parensifyParser parser =
 
 
 
-#nowarn "40"
 
 let rec parseLambda =
     succeed (fun params_ body -> { params_ = params_; body = body })
@@ -133,7 +133,7 @@ let rec parseLambda =
     |. spaces
     |= lazyParser (fun _ -> parseExpression)
     |. spaces
-    |> setLabel "lambda"
+    |> addCtxToStack "lambda"
 
 
 
@@ -156,12 +156,12 @@ and singleAssignment =
     |. spaces
     |= lazyParser (fun _ -> parseExpression)
     |. spaces
-    |> setLabel "single let assignment"
+    |> addCtxToStack "single let assignment"
 
 
 
 
-and assignmentList =
+and parseLetBindingsList =
     succeed (fun letBindings expr -> LetExpression (letBindings, expr))
     |. symbol LetKeyword
     |. spaces
@@ -170,7 +170,7 @@ and assignmentList =
     |. symbol InKeyword
     |. spaces
     |= lazyParser (fun _ -> parseExpression)
-    |> setLabel "let bindings assignment list"
+    |> addCtxToStack "let bindings assignment list"
 
 
 
@@ -180,9 +180,9 @@ and parseSingleValueExpressions : Parser<SingleValueExpression> =
                 parseLambda |> map (Function >> ExplicitValue)
                 parsePrimitiveLiteral
                 |> map (Primitive >> ExplicitValue)
-                assignmentList ]
+                parseLetBindingsList ]
     )
-    |> setLabel "single value expression"
+    |> addCtxToStack "single value expression"
 
 
 
@@ -214,12 +214,15 @@ and parseCompoundExpressions =
             |. spaces
         )
     )
-    |> setLabel "compound expression"
+    |> addCtxToStack "compound expression"
 
 
 
 and parseExpression =
     succeed id
 
+    |. spaces
     |= parseBlock parseCompoundExpressions
     |. spaces
+    |. isEnd
+    |> addCtxToStack "whole expression"

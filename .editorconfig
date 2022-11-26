@@ -1,6 +1,9 @@
 [*.{fs,fsx}]
+fsharp_keep_max_number_of_blank_lines=2
 fsharp_space_before_uppercase_invocation=true
 fsharp_space_before_lowercase_invocation=true
 fsharp_space_before_class_constructor=true
+fsharp_space_before_member=true
 fsharp_space_before_colon=true
-fsharp_keep_max_number_of_blank_lines=2
+fsharp_max_array_or_list_number_of_items=5
+fsharp_bar_before_discriminated_union_declaration=true
