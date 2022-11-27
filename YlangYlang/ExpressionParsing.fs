@@ -15,7 +15,7 @@ let private parseChoosePrimitiveLiteral chooser =
             | Some x -> Some x
             | None -> None
         | _ -> None)
-    |> setLabel "primitive literal"
+    |> addCtxToStack PrimitiveLiteral
 
 
 
@@ -38,7 +38,7 @@ let parseUint =
 
 let parseInt : Parser<NumberLiteralValue> =
     fork parseUnaryNegationOpInt (succeed int) (fun op -> succeed op |= parseUint |> map IntLiteral)
-    |> addCtxToStack "int"
+    |> addCtxToStack Int
 
 
 
@@ -46,12 +46,12 @@ let parseUfloat =
     parseChoosePrimitiveLiteral (function
         | UfloatLiteral n -> Some n
         | _ -> None)
-    |> addCtxToStack "ufloat"
+    |> addCtxToStack Ufloat
 
 
 let parseFloat : Parser<NumberLiteralValue> =
     fork parseUnaryNegationOpFloat (succeed id) (fun op -> succeed op |= parseUfloat |> map FloatLiteral)
-    |> addCtxToStack "float"
+    |> addCtxToStack Float
 
 
 
@@ -59,7 +59,7 @@ let parseUnit =
     matchSingleToken (function
         | Token.Unit -> Some UnitPrimitive
         | _ -> None)
-    |> addCtxToStack "unit"
+    |> addCtxToStack Unit
 
 
 let parsePrimitiveLiteral =
@@ -70,7 +70,7 @@ let parsePrimitiveLiteral =
                 | _ -> None)
 
             parseUnit ]
-    |> addCtxToStack "primitive literal"
+    |> addCtxToStack PrimitiveLiteral
 
 
 
@@ -80,7 +80,7 @@ let parseOperator =
     matchSingleToken (function
         | Token.Operator op -> Some op
         | _ -> None)
-    |> addCtxToStack "operator"
+    |> addCtxToStack Operator
 
 
 
@@ -92,7 +92,7 @@ let parseSingleParam =
 
 let parseParamList =
     oneOrMore (parseSingleParam |. spaces)
-    |> addCtxToStack "param list"
+    |> addCtxToStack ParamList
 
 
 
@@ -100,7 +100,7 @@ let parseIdentifier =
     matchSingleToken (function
         | Token.ValueIdentifier n -> Some <| IdentifierName n
         | _ -> None)
-    |> addCtxToStack "identifier"
+    |> addCtxToStack Identifier
 
 
 
@@ -113,12 +113,13 @@ let parseIdentifier =
 /// Create a parser and a version of the parser also matching a parenthesised version of the parser
 let rec parensifyParser parser =
     either
-        parser
         (succeed id |. symbol ParensOpen |. spaces
          |= lazyParser (fun _ -> parensifyParser parser)
          |. spaces
          |. symbol ParensClose)
+        parser
     |. spaces
+    |> addCtxToStack ParensExpression
 
 
 
@@ -133,7 +134,7 @@ let rec parseLambda =
     |. spaces
     |= lazyParser (fun _ -> parseExpression)
     |. spaces
-    |> addCtxToStack "lambda"
+    |> addCtxToStack Lambda
 
 
 
@@ -148,7 +149,7 @@ and singleAssignment =
                    body = expr })
                 |> Function
                 |> ExplicitValue
-                |> SingleValueExpression })
+                |> Expression.SingleValueExpression })
     |= parseIdentifier
     |= (repeat (parseSingleParam |. spaces))
     |. spaces
@@ -156,7 +157,7 @@ and singleAssignment =
     |. spaces
     |= lazyParser (fun _ -> parseExpression)
     |. spaces
-    |> addCtxToStack "single let assignment"
+    |> addCtxToStack SingleLetAssignment
 
 
 
@@ -170,19 +171,23 @@ and parseLetBindingsList =
     |. symbol InKeyword
     |. spaces
     |= lazyParser (fun _ -> parseExpression)
-    |> addCtxToStack "let bindings assignment list"
+    |> addCtxToStack LetBindingsAssignmentList
 
 
 
 and parseSingleValueExpressions : Parser<SingleValueExpression> =
     parensifyParser (
-        oneOf [ parseIdentifier |> map Identifier
+        oneOf [ parseIdentifier
+                |> map SingleValueExpression.Identifier
+
                 parseLambda |> map (Function >> ExplicitValue)
+
                 parsePrimitiveLiteral
                 |> map (Primitive >> ExplicitValue)
+
                 parseLetBindingsList ]
+        |> addCtxToStack SingleValueExpression
     )
-    |> addCtxToStack "single value expression"
 
 
 
@@ -196,14 +201,14 @@ and parseCompoundExpressions =
             | Some (opOpt, expr') ->
                 match opOpt with
                 | Some op ->
-                    Operator (SingleValueExpression expr, (op, expr'))
-                    |> CompoundExpression
+                    CompoundExpression.Operator (Expression.SingleValueExpression expr, (op, expr'))
+                    |> Expression.CompoundExpression
 
                 | None ->
-                    FunctionApplication (SingleValueExpression expr, expr')
-                    |> CompoundExpression
+                    FunctionApplication (Expression.SingleValueExpression expr, expr')
+                    |> Expression.CompoundExpression
 
-            | None -> SingleValueExpression expr)
+            | None -> Expression.SingleValueExpression expr)
         |= parseSingleValueExpressions
         |. spaces
         |= opt (
@@ -214,7 +219,7 @@ and parseCompoundExpressions =
             |. spaces
         )
     )
-    |> addCtxToStack "compound expression"
+    |> addCtxToStack CompoundExpression
 
 
 
@@ -225,4 +230,4 @@ and parseExpression =
     |= parseBlock parseCompoundExpressions
     |. spaces
     |. isEnd
-    |> addCtxToStack "whole expression"
+    |> addCtxToStack WholeExpression
