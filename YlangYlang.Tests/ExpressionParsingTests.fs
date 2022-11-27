@@ -7,14 +7,16 @@ open Parser
 open ExpressionParsing
 
 
-let private makeSuccess v = ParsingSuccess (v, List.empty)
+let private makeSuccess v =
+    blankParseCtx
+    |> makeParseResultWithCtx (ParsingSuccess v)
 
 let private makeNumberSingleExpression n =
     ExplicitValue (Primitive (NumberPrimitive n))
 
 let private makeNumberExpression =
     makeNumberSingleExpression
-    >> SingleValueExpression
+    >> Expression.SingleValueExpression
 
 
 let testSimpleExpression =
@@ -25,9 +27,9 @@ let testSimpleExpression =
             Expect.wantOk res "Should succeed"
             |> fun res ->
                 Expect.equal
-                    res
-                    (makeNumberSingleExpression (FloatLiteral -4.6)
-                     |> makeSuccess)
+                    res.parseResult
+                    (ParsingSuccess
+                     <| makeNumberSingleExpression (FloatLiteral -4.6))
                     "Parse single value expression")
     |> testCase "Parse single value expression"
 
@@ -43,10 +45,11 @@ let testOperatorExpression =
             |> fun res ->
                 Expect.equal
                     res
-                    (CompoundExpression (
-                        Operator (
+                    (Expression.CompoundExpression (
+                        CompoundExpression.Operator (
                             makeNumberExpression (FloatLiteral -4.6),
-                            (AppendOp, SingleValueExpression (ExplicitValue (Primitive (StringPrimitive "test"))))
+                            (AppendOp,
+                             Expression.SingleValueExpression (ExplicitValue (Primitive (StringPrimitive "test"))))
                         )
                      )
                      |> makeSuccess)
@@ -63,9 +66,9 @@ let testParensExpressionWithSimpleExpressions =
             Expect.wantOk res "Should succeed"
             |> fun res ->
                 Expect.equal
-                    res
-                    (makeNumberSingleExpression (IntLiteral 34)
-                     |> makeSuccess)
+                    res.parseResult
+                    (ParsingSuccess
+                     <| makeNumberSingleExpression (IntLiteral 34))
                     "Parse parenthesised simple expression")
     |> testCase "Parse parenthesised simple expression"
 
@@ -78,9 +81,9 @@ let testNestedParensExpressionWithSimpleExpression =
             Expect.wantOk res "Should succeed"
             |> fun res ->
                 Expect.equal
-                    res
-                    (makeNumberSingleExpression (IntLiteral 34)
-                     |> makeSuccess)
+                    res.parseResult
+                    (ParsingSuccess
+                     <| makeNumberSingleExpression (IntLiteral 34))
                     "Parse nested parenthesised simple expression")
     |> testCase "Parse nested parenthesised simple expression"
 
@@ -93,23 +96,37 @@ let testParensExpressionWithMultiOperators =
             |> fun res ->
                 Expect.equal
                     res
-                    (CompoundExpression (
-                        Operator (
+                    ((Expression.CompoundExpression (
+                        CompoundExpression.Operator (
                             makeNumberExpression (IntLiteral 34),
                             (PlusOp,
-                             (CompoundExpression (
-                                 Operator (
+                             (Expression.CompoundExpression (
+                                 CompoundExpression.Operator (
                                      makeNumberExpression (FloatLiteral -4.6),
                                      (DivOp, makeNumberExpression (IntLiteral 7))
                                  )
                              )))
                         )
-                     )
+                     ))
                      |> makeSuccess)
+                    //res.parseResult
+                    //(ParsingSuccess (
+                    //    Expression.CompoundExpression (
+                    //        CompoundExpression.Operator (
+                    //            makeNumberExpression (IntLiteral 34),
+                    //            (PlusOp,
+                    //             (Expression.CompoundExpression (
+                    //                 CompoundExpression.Operator (
+                    //                     makeNumberExpression (FloatLiteral -4.6),
+                    //                     (DivOp, makeNumberExpression (IntLiteral 7))
+                    //                 )
+                    //             )))
+                    //        )
+                    //    )
+                    //))
                     "Parse parenthesised expression")
     |> testCase "Parse parenthesised expression"
 
-let f = testFixture
 
 [<Tests>]
 let tests =
