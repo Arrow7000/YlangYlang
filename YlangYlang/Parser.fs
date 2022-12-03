@@ -40,6 +40,7 @@ type Context =
     | CompoundExpression
     | WholeExpression
     | ParensExpression
+    | MaybeParensExpression
 
 
 //type ParsingSuccess<'a> = 'a
@@ -49,36 +50,38 @@ type Context =
 
 type ParseResult<'a> =
     | ParsingSuccess of 'a
-    | NoParsingMatch of ParserError
+    | NoParsingMatch of ParserError list
 
 
-type ParseContext =
-    { prevTokens : TokenWithContext list
-      tokensLeft : TokenWithContext list
-      contextStack : Context list }
-
-type ParseResultWithContext<'a> =
-    { parseResult : ParseResult<'a>
+type ParseContext<'ctx> =
+    { contextStack : 'ctx list
       prevTokens : TokenWithContext list
-      tokensLeft : TokenWithContext list
-      contextStack : Context list }
+      //parsedSoFar :
+      tokensLeft : TokenWithContext list }
+
+type ParseResultWithContext<'a, 'ctx> =
+    { parseResult : ParseResult<'a>
+      //parsedSoFar : 'a list
+      contextStack : 'ctx list
+      prevTokens : TokenWithContext list
+      tokensLeft : TokenWithContext list }
 
 
-type ParseFn<'a> = ParseContext -> ParseResultWithContext<'a>
+type ParseFn<'a, 'ctx> = ParseContext<'ctx> -> ParseResultWithContext<'a, 'ctx>
 
 
 
 
-type Parser<'a> = private | Parser of ParseFn<'a>
+type Parser<'a, 'ctx> = private | Parser of ParseFn<'a, 'ctx>
 
 
 
-let blankParseCtx : ParseContext =
+let blankParseCtx : ParseContext<'ctx> =
     { prevTokens = List.empty
       tokensLeft = List.empty
       contextStack = List.empty }
 
-let makeParseResultWithCtx result (record : ParseContext) =
+let makeParseResultWithCtx result (record : ParseContext<'ctx>) =
     { parseResult = result
       prevTokens = record.prevTokens
       tokensLeft = record.tokensLeft
@@ -90,13 +93,13 @@ let makeCtxFromParseResult resultWithCtx =
       tokensLeft = resultWithCtx.tokensLeft
       contextStack = resultWithCtx.contextStack }
 
-let replaceParseResultWithCtx result (record : ParseResultWithContext<'a>) : ParseResultWithContext<'b> =
+let replaceParseResultWithCtx result (record : ParseResultWithContext<'a, 'ctx>) : ParseResultWithContext<'b, 'ctx> =
     { parseResult = result
       prevTokens = record.prevTokens
       tokensLeft = record.tokensLeft
       contextStack = record.contextStack }
 
-let addCtxToStack ctx (Parser parseFn) : Parser<'a> =
+let addCtxToStack ctx (Parser parseFn) : Parser<'a, 'ctx> =
     Parser (fun record ->
         let newRecord = { record with contextStack = ctx :: record.contextStack }
         parseFn newRecord)
@@ -104,12 +107,12 @@ let addCtxToStack ctx (Parser parseFn) : Parser<'a> =
 
 
 
-let makeWithCtx ctx (parseFn : ParseFn<'a>) = addCtxToStack ctx (Parser parseFn)
+//let makeWithCtx ctx (parseFn : ParseFn<'a, 'ctx>) = addCtxToStack ctx (Parser parseFn)
 
 
-let runWithCtx (Parser parseFn) parseCtx : ParseResultWithContext<'a> = parseFn parseCtx
+let runWithCtx (Parser parseFn) parseCtx : ParseResultWithContext<'a, 'ctx> = parseFn parseCtx
 
-let run (parser) (tokens : TokenWithContext list) : ParseResultWithContext<'a> =
+let run parser (tokens : TokenWithContext list) : ParseResultWithContext<'a, 'ctx> =
     runWithCtx
         parser
         // @TODO: not sure if I need to allow for existing previous tokens and context stack or not...
@@ -120,38 +123,38 @@ let run (parser) (tokens : TokenWithContext list) : ParseResultWithContext<'a> =
 
 
 
-let private bindHelper
-    (bind' : ParseResultWithContext<'a> -> ParseResultWithContext<'b>)
-    (parser : Parser<'a>)
-    (record : ParseContext)
-    =
-    let parseResult = run parser record.tokensLeft
+//let private bindHelper
+//    (bind' : ParseResultWithContext<'a, 'ctx> -> ParseResultWithContext<'b, 'ctx>)
+//    (parser : Parser<'a, 'ctx>)
+//    (record : ParseContext<'ctx>)
+//    =
+//    let parseResult = run parser record.tokensLeft
 
-    match parseResult.parseResult with
-    | NoParsingMatch e ->
-        { parseResult = NoParsingMatch e
-          prevTokens = parseResult.prevTokens
-          tokensLeft = parseResult.tokensLeft
-          contextStack = parseResult.contextStack }
+//    match parseResult.parseResult with
+//    | NoParsingMatch e ->
+//        { parseResult = NoParsingMatch e
+//          prevTokens = parseResult.prevTokens
+//          tokensLeft = parseResult.tokensLeft
+//          contextStack = parseResult.contextStack }
 
-    | ParsingSuccess _ ->
-        let bindResult = bind' parseResult
+//    | ParsingSuccess _ ->
+//        let bindResult = bind' parseResult
 
-        match bindResult.parseResult with
-        | NoParsingMatch e ->
-            { parseResult = NoParsingMatch e
-              prevTokens = bindResult.prevTokens
-              tokensLeft = bindResult.tokensLeft
-              contextStack = bindResult.contextStack }
-        | ParsingSuccess s ->
-            { parseResult = ParsingSuccess s
-              prevTokens = bindResult.prevTokens
-              tokensLeft = bindResult.tokensLeft
-              contextStack = bindResult.contextStack }
+//        match bindResult.parseResult with
+//        | NoParsingMatch e ->
+//            { parseResult = NoParsingMatch e
+//              prevTokens = bindResult.prevTokens
+//              tokensLeft = bindResult.tokensLeft
+//              contextStack = bindResult.contextStack }
+//        | ParsingSuccess s ->
+//            { parseResult = ParsingSuccess s
+//              prevTokens = bindResult.prevTokens
+//              tokensLeft = bindResult.tokensLeft
+//              contextStack = bindResult.contextStack }
 
 
 
-//let bind (f : 'a -> Parser<'b>) (Parser p as parser : Parser<'a>) : Parser<'b> =
+//let bind (f : 'a -> Parser<'b, 'ctx>) (Parser p as parser : Parser<'a, 'ctx>) : Parser<'b, 'ctx> =
 
 //    let (Parser newParser) =
 //        bindHelper
@@ -166,8 +169,8 @@ let private bindHelper
 //          contextStack = newParser.contextStack }
 
 
-let bind (f : 'a -> Parser<'b>) (Parser parseFn : Parser<'a>) : Parser<'b> =
-    Parser (fun (context : ParseContext) ->
+let bind (f : 'a -> Parser<'b, 'ctx>) (Parser parseFn : Parser<'a, 'ctx>) : Parser<'b, 'ctx> =
+    Parser (fun (context : ParseContext<'ctx>) ->
         let firstResult = parseFn context
 
         match firstResult.parseResult with
@@ -182,7 +185,13 @@ let bind (f : 'a -> Parser<'b>) (Parser parseFn : Parser<'a>) : Parser<'b> =
             runWithCtx (f result) (makeCtxFromParseResult firstResult))
 
 
-//let bind (f : 'a -> Parser<'b>) (parser : Parser<'a>) : Parser<'b> =
+
+let kleisli (aToB : 'a -> Parser<'b, 'ctx>) (bToC : 'b -> Parser<'c, 'ctx>) : 'a -> Parser<'c, 'ctx> = aToB >> bind bToC
+
+
+let (>=>) = kleisli
+
+//let bind (f : 'a -> Parser<'b, 'ctx>) (parser : Parser<'a, 'ctx>) : Parser<'b, 'ctx> =
 //    Parser (
 //        bindHelper
 //            (fun resultWithCtx ->
@@ -227,7 +236,7 @@ let bind (f : 'a -> Parser<'b>) (Parser parseFn : Parser<'a>) : Parser<'b> =
 
 
 
-//let map (f : 'a -> 'b) (Parser p as parser : Parser<'a>) : Parser<'b> =
+//let map (f : 'a -> 'b) (Parser p as parser : Parser<'a, 'ctx>) : Parser<'b, 'ctx> =
 //    parser
 //    |> bind (fun (s : 'a) ->
 //        (fun tokens ctxs ->
@@ -235,7 +244,7 @@ let bind (f : 'a -> Parser<'b>) (Parser parseFn : Parser<'a>) : Parser<'b> =
 //              contextList = ctxs })
 //        |> makeWithCtx UnknownLabel)
 
-let map (f : 'a -> 'b) (parser : Parser<'a>) : Parser<'b> =
+let map (f : 'a -> 'b) (parser : Parser<'a, 'ctx>) : Parser<'b, 'ctx> =
     parser
     |> bind (fun (s : 'a) ->
         Parser (fun record ->
@@ -249,39 +258,40 @@ let map (f : 'a -> 'b) (parser : Parser<'a>) : Parser<'b> =
 
 
 
-let flatten : Parser<Parser<'a>> -> Parser<'a> = fun parser -> bind id parser
+let flatten : Parser<Parser<'a, 'ctx>, 'ctx> -> Parser<'a, 'ctx> =
+    fun parser -> bind id parser
 
 
 
 
 
 
-let map2 (f : 'a -> 'b -> 'c) (parserA : Parser<'a>) (parserB : Parser<'b>) : Parser<'c> =
+let map2 (f : 'a -> 'b -> 'c) (parserA : Parser<'a, 'ctx>) (parserB : Parser<'b, 'ctx>) : Parser<'c, 'ctx> =
     parserA
     |> map (fun a -> map (f a) parserB)
     |> flatten
 
-let either (parserA : Parser<'a>) (parserB : Parser<'a>) : Parser<'a> =
+let either (parserA : Parser<'a, 'ctx>) (parserB : Parser<'a, 'ctx>) : Parser<'a, 'ctx> =
     Parser (fun record ->
         let result = runWithCtx parserA record
 
         match result.parseResult with
         | ParsingSuccess _ -> result
-        | NoParsingMatch _ -> runWithCtx parserB record)
+        | NoParsingMatch _ -> runWithCtx parserB (makeCtxFromParseResult result))
 
 //|> makeWithCtx UnknownLabel
 
-let rec oneOf (parsers : Parser<'a> list) : Parser<'a> =
-    let rec oneOfHelper errorsSoFar parsersLeft record : ParseResultWithContext<'a> =
+let rec oneOf (parsers : Parser<'a, 'ctx> list) : Parser<'a, 'ctx> =
+    let rec oneOfHelper errorsSoFar parsersLeft record : ParseResultWithContext<'a, 'ctx> =
 
         match parsersLeft with
         | [] ->
             makeParseResultWithCtx
                 (NoParsingMatch (
                     match errorsSoFar with
-                    | [] -> NoParsersLeft
-                    | x :: [] -> x
-                    | others -> MultipleErrors others
+                    | [] -> [ NoParsersLeft ]
+                    | x :: [] -> [ x ]
+                    | others -> others
                 ))
                 record
 
@@ -290,32 +300,32 @@ let rec oneOf (parsers : Parser<'a> list) : Parser<'a> =
 
             match result.parseResult with
             | ParsingSuccess _ -> result
-            | NoParsingMatch e -> oneOfHelper (e :: errorsSoFar) rest record
+            | NoParsingMatch e -> oneOfHelper (e @ errorsSoFar) rest record
 
     Parser (fun record -> oneOfHelper List.empty parsers record)
 
 
 
 /// Parser that always succeeds
-let succeed a : Parser<'a> =
+let succeed a : Parser<'a, 'ctx> =
     Parser (makeParseResultWithCtx (ParsingSuccess a))
 
-let fail : ParserError -> Parser<'a> =
-    fun err -> Parser (makeParseResultWithCtx (NoParsingMatch err))
+let fail : ParserError -> Parser<'a, 'ctx> =
+    fun err -> Parser (makeParseResultWithCtx (NoParsingMatch [ err ]))
 
-let lazyParser thunk : Parser<'a> =
+let lazyParser thunk : Parser<'a, 'ctx> =
     Parser (fun tokens ->
         let (Parser parse) = thunk ()
         parse tokens)
 
 
 
-let keep (parserA : Parser<'a -> 'b>) (parserB : Parser<'a>) : Parser<'b> = map2 apply parserA parserB
+let keep (parserA : Parser<'a -> 'b, 'ctx>) (parserB : Parser<'a, 'ctx>) : Parser<'b, 'ctx> = map2 apply parserA parserB
 
 let (|=) a b = keep a b
 
 
-let skip (parserA : Parser<'keep>) (parserB : Parser<'ignore>) = map2 (fun a _ -> a) parserA parserB
+let skip (parserA : Parser<'keep, 'ctx>) (parserB : Parser<'ignore, 'ctx>) = map2 (fun a _ -> a) parserA parserB
 
 let (|.) a b = skip a b
 
@@ -328,14 +338,14 @@ let fork parserA parserB finalParser =
     either parserA parserB |> bind finalParser
 
 /// `end` is a keyword in F# so have to use `isEnd`
-let isEnd : Parser<unit> =
+let isEnd : Parser<unit, 'ctx> =
     Parser (fun { tokensLeft = tokensLeft } ->
         match tokensLeft with
         | [] -> makeParseResultWithCtx (ParsingSuccess ()) blankParseCtx
-        | _ -> makeParseResultWithCtx (NoParsingMatch ExpectedEndOfExpression) blankParseCtx)
+        | _ -> makeParseResultWithCtx (NoParsingMatch [ ExpectedEndOfExpression ]) blankParseCtx)
 
 
-let rec chompWhileHelper contextList predicate tokensChomped tokensLeft : ParseResultWithContext<unit> =
+let rec chompWhileHelper contextList predicate tokensChomped tokensLeft : ParseResultWithContext<unit, 'ctx> =
     match tokensLeft with
     | [] ->
         { prevTokens = tokensChomped
@@ -351,7 +361,7 @@ let rec chompWhileHelper contextList predicate tokensChomped tokensLeft : ParseR
               tokensLeft = head :: rest
               contextStack = contextList }
 
-//let rec chompWhileHelper predicate tokensChomped record : ParseResultWithContext<unit> =
+//let rec chompWhileHelper predicate tokensChomped record : ParseResultWithContext<unit, 'ctx> =
 //    match record.tokensLeft with
 //    | [] ->
 //        { prevTokens = tokensChomped
@@ -369,12 +379,12 @@ let rec chompWhileHelper contextList predicate tokensChomped tokensLeft : ParseR
 
 
 
-let rec chompWhile predicate : Parser<unit> =
+let rec chompWhile predicate : Parser<unit, 'ctx> =
     Parser (fun record -> chompWhileHelper record.contextStack predicate record.prevTokens record.tokensLeft)
 
 
 
-let any : Parser<unit> = chompWhile (always true)
+let any () = chompWhile (always true)
 
 
 let printTokensAsText (tokens : TokenWithContext list) =
@@ -387,17 +397,13 @@ let tee f parser =
         runWithCtx parser record)
 
 
-let symbol expectedToken : Parser<unit> =
+let symbol expectedToken : Parser<unit, 'ctx> =
     Parser (fun record ->
         match record.tokensLeft with
         | [] ->
             record
-            |> makeParseResultWithCtx (NoParsingMatch (UnexpectedEndOfExpression <| Some expectedToken))
+            |> makeParseResultWithCtx (NoParsingMatch ([ UnexpectedEndOfExpression <| Some expectedToken ]))
 
-        //NoParsingMatch
-        //    { tokensChomped = List.empty
-        //      label = UnknownLabel
-        //      error = UnexpectedEndOfExpression <| Some expectedToken }
         | nextToken :: rest ->
             if expectedToken = nextToken.token then
                 { parseResult = ParsingSuccess ()
@@ -406,24 +412,25 @@ let symbol expectedToken : Parser<unit> =
                   contextStack = record.contextStack }
 
             else
-                { parseResult = NoParsingMatch <| ExpectedToken expectedToken
+                { parseResult = NoParsingMatch <| [ ExpectedToken expectedToken ]
                   prevTokens = record.prevTokens
                   tokensLeft = record.tokensLeft
                   contextStack = record.contextStack })
 
 
-let ifMatches predicate : Parser<unit> = chompWhile predicate
+let ifMatches predicate : Parser<unit, 'ctx> = chompWhile predicate
 
 /// Matches and maps over single token
-let matchCtxToken chooser =
+let matchCtxToken err chooser =
     Parser (fun record ->
         match record.tokensLeft with
         | [] ->
-            { parseResult = NoParsingMatch <| UnexpectedEndOfExpression None
+            { parseResult =
+                NoParsingMatch
+                <| [ UnexpectedEndOfExpression None ]
               prevTokens = record.prevTokens
               tokensLeft = record.tokensLeft
               contextStack = record.contextStack }
-        //(UnknownLabel, UnexpectedEndOfExpression None)
         | nextToken :: rest ->
             match chooser nextToken with
             | Some x ->
@@ -432,17 +439,16 @@ let matchCtxToken chooser =
                   tokensLeft = rest
                   contextStack = record.contextStack }
             | None ->
-                { parseResult = NoParsingMatch PredicateDidntMatch
+                { parseResult = NoParsingMatch err
                   prevTokens = record.prevTokens
                   tokensLeft = record.tokensLeft
                   contextStack = record.contextStack })
-//(UnknownLabel, PredicateDidntMatch))
 
-let matchSingleToken f = matchCtxToken (fun t -> f t.token)
+let matchSingleToken err f = matchCtxToken err (fun t -> f t.token)
 
 /// If you need access to the matched token itself use `matchSingleToken`
 let parseToken expectedToken f =
-    matchSingleToken (fun token ->
+    matchSingleToken ([ ExpectedToken expectedToken ]) (fun token ->
         if token = expectedToken then
             Some f
         else
@@ -451,25 +457,25 @@ let parseToken expectedToken f =
 
 
 
-let rec repeat (parser : Parser<'a>) : Parser<'a list> =
+let rec repeat (parser : Parser<'a, 'ctx>) : Parser<'a list, 'ctx> =
     Parser (fun record ->
-        let rec traverser state tokensChomped tokensRemaining =
-            tokensRemaining
-            |> run parser
+        let rec traverser state parseCtx =
+            parseCtx
+            |> runWithCtx parser
             |> fun result ->
                 match result.parseResult with
-                | ParsingSuccess s -> traverser (s :: state) result.prevTokens result.tokensLeft
+                | ParsingSuccess s -> traverser (s :: state) (makeCtxFromParseResult result)
 
                 | NoParsingMatch _ ->
                     { parseResult = ParsingSuccess state
-                      prevTokens = tokensChomped
-                      tokensLeft = tokensRemaining
-                      contextStack = result.contextStack }
+                      prevTokens = parseCtx.prevTokens
+                      tokensLeft = parseCtx.tokensLeft
+                      contextStack = parseCtx.contextStack }
 
-        traverser List.empty record.prevTokens record.tokensLeft)
+        traverser List.empty record)
     |> map List.rev
 
-let oneOrMore (parser : Parser<'a>) : Parser<NEL<'a>> =
+let oneOrMore (parser : Parser<'a, 'ctx>) : Parser<NEL<'a>, 'ctx> =
     map2 NEL.consFromList parser (repeat parser)
 
 
@@ -479,12 +485,12 @@ let opt parser =
 
         match result.parseResult with
         | ParsingSuccess s -> replaceParseResultWithCtx (ParsingSuccess <| Some s) result
-        | NoParsingMatch _ -> makeParseResultWithCtx (ParsingSuccess None) record)
+        | NoParsingMatch _ -> makeParseResultWithCtx (ParsingSuccess None) (makeCtxFromParseResult result))
 
 
-let spaces : Parser<unit> =
+let spaces () : Parser<unit, 'ctx> =
     repeat (
-        matchSingleToken (function
+        matchSingleToken ([ ExpectedString "whitespace" ]) (function
             | Whitespace _ -> Some ()
             | _ -> None)
     )
@@ -543,7 +549,7 @@ let getBlock (tokens : TokenWithContext list) =
         traverser List.empty tokens
 
 
-let parseBlock (parser : Parser<'a>) =
+let parseBlock (parser : Parser<'a, 'ctx>) =
     Parser (fun record ->
         let partitioned = getBlock record.tokensLeft
 
@@ -570,40 +576,40 @@ let parseBlock (parser : Parser<'a>) =
 
 
 
-let parseUntilToken token (Parser p as parser) =
-    Parser (fun record ->
-        let rec traverser tokensChomped tokensLeft =
-            match tokensLeft with
-            | [] -> run parser tokensChomped
-            | head :: rest ->
-                if head.token = token then
-                    let result = run parser tokensChomped
+//let parseUntilToken token (Parser p as parser) =
+//    Parser (fun record ->
+//        let rec traverser parseCtx =
+//            match parseCtx.tokensLeft with
+//            | [] -> runWithCtx parser parseCtx
+//            | head :: rest ->
+//                if head.token = token then
+//                    let result = run parser tokensChomped
 
-                    match result.parseResult with
-                    //| ParsingSuccess (s, tokensLeft') -> ParsingSuccess (s, tokensLeft @ tokensLeft')
-                    | ParsingSuccess s ->
-                        { parseResult = ParsingSuccess s
-                          prevTokens = result.prevTokens
-                          tokensLeft = tokensLeft @ s.tokensLeft
-                          contextStack = result.contextStack }
-                    | NoParsingMatch x ->
-                        { parseResult = NoParsingMatch x
-                          prevTokens = result.prevTokens
-                          tokensLeft = tokensLeft
-                          contextStack = result.contextStack }
+//                    match result.parseResult with
+//                    //| ParsingSuccess (s, tokensLeft') -> ParsingSuccess (s, tokensLeft @ tokensLeft')
+//                    | ParsingSuccess s ->
+//                        { parseResult = ParsingSuccess s
+//                          prevTokens = result.prevTokens
+//                          tokensLeft = tokensLeft @ s.tokensLeft
+//                          contextStack = result.contextStack }
+//                    | NoParsingMatch x ->
+//                        { parseResult = NoParsingMatch x
+//                          prevTokens = result.prevTokens
+//                          tokensLeft = tokensLeft
+//                          contextStack = result.contextStack }
 
-                else
-                    traverser (tokensChomped @ [ head ]) rest
+//                else
+//                    traverser (tokensChomped @ [ head ]) rest
 
-        traverser List.empty record.tokensLeft)
+//        traverser List.empty record.tokensLeft)
 
 
-type SequenceConfig<'a> =
+type SequenceConfig<'a, 'ctx> =
     { startToken : Token
       endToken : Token
       separator : Token
-      spaces : Parser<unit>
-      item : Parser<'a> }
+      spaces : Parser<unit, 'ctx>
+      item : Parser<'a, 'ctx> }
 
 
 let rec private postStartListParser config =

@@ -20,10 +20,23 @@ let makeDummyCtx t : TokenWithContext =
 
 
 
+//let parserMonadTests =
+//    testList
+//        "Parser monad tests"
+//        [ testList "Left identity"
+//            [ testCase "bind" (fun _ ->
+//                    Expect.equal
+//                        (id >=> succeed (1 (+)))
+//                        (succeed (1 (+))))
+//            ]
+
+//          ]
+
+
 
 let testSettingCtx =
     let origParser =
-        spaces |. symbol ParensOpen |. spaces
+        spaces () |. symbol ParensOpen |. spaces ()
         |> addCtxToStack PrimitiveLiteral
         |> addCtxToStack Int
 
@@ -49,7 +62,7 @@ let testSettingCtx =
 
 let testBind =
     let origParser =
-        spaces |. symbol ParensOpen |. spaces
+        spaces () |. symbol ParensOpen |. spaces ()
         |> addCtxToStack PrimitiveLiteral
         |> addCtxToStack Int
 
