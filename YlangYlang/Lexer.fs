@@ -11,7 +11,7 @@ type CharacterClass =
     | AlphaNumeric
     | Whitespace
 
-type ParseError =
+type LexingError =
     | WrongCharacterClass of expectedChar : CharacterClass
     | TabsNotAllowed
     | UnknownCharacter of char
@@ -19,7 +19,7 @@ type ParseError =
     | NoMatchOnRestOfString of line : string
 
 // @TODO: at some point include the line and col numbers along with the errors, or even just with the tokens tbh
-type ParseErrors = NonEmptyList<ParseError>
+type LexingErrors = NonEmptyList<LexingError>
 
 
 type WhitespaceChar =
@@ -41,7 +41,6 @@ type PrimitiveLiteral =
 type Operator =
     | EqualityOp
     | InequalityOp
-    //| UnaryNegationOp // I think this one has to go, it's too context dependent, should only use the MinusOp and infer whether it's unary from the surrounding context
     | AppendOp
     | PlusOp
     | MinusOp
@@ -120,11 +119,11 @@ type LexingState =
     | Success of TokenWithContext
     // In case we encounter a error even at the lexing stage, e.g. we've found a tab character.
     // @TODO: might be a good idea to thread errors through the lexing state, so that we can keep parsing the rest of the file even if we encounter an error locally!
-    | Err of ParseErrors
+    | Err of LexingErrors
 
 
 
-type LexingResult = Result<TokenWithContext list, ParseErrors>
+type LexingResult = Result<TokenWithContext list, LexingErrors>
 
 
 type Matcher = FileCursor -> string -> LexingState
