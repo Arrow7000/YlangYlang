@@ -37,7 +37,7 @@ type ParserError =
     | PredicateDidntMatch
 
     /// but there were yet more tokens
-    | ExpectedEndOfExpression
+    | ExpectedEndOfExpression of Token list
 
     /// but there were no tokens left
     | UnexpectedEndOfExpression of expected : Token option
@@ -91,6 +91,7 @@ type PartitionedTokens =
     { includedTokens : TokenWithContext list
       tokensLeft : TokenWithContext list }
 
+
 let getTilLineBreak (tokens : TokenWithContext list) =
     let rec traverser tokensGatheredSoFar tokensLeft =
         match tokensLeft with
@@ -109,68 +110,68 @@ let getTilLineBreak (tokens : TokenWithContext list) =
 
     traverser List.empty tokens
 
+type BlockInclusion =
+    | IncludeSameCol
+    | OnlyIncludeIndenteds
 
-
-let getBlock (tokens : TokenWithContext list) : PartitionedTokens =
+let getBlock (inclusion : BlockInclusion) (tokens : TokenWithContext list) : TokenWithContext list =
     match tokens with
-    | [] ->
-        { includedTokens = List.empty
-          tokensLeft = List.empty }
+    | [] -> List.empty
 
     | blockHead :: _ ->
         let rec traverser tokensGathered tokensLeft =
             match tokensLeft with
-            | [] ->
-                { includedTokens = tokensGathered
-                  tokensLeft = List.empty }
+            | [] -> tokensGathered
 
             | head :: rest ->
                 match head.token with
                 | Token.Whitespace _ -> traverser (tokensGathered @ [ head ]) rest
                 | _ ->
-                    if head.startLine <> blockHead.startLine // to ensure we're skipping the blockHead itself
-                       && head.startCol <= blockHead.startCol then
-                        { includedTokens = tokensGathered
-                          tokensLeft = head :: rest }
+                    let comparisonOp =
+                        match inclusion with
+                        | IncludeSameCol -> (<=)
+                        | OnlyIncludeIndenteds -> (<)
+
+
+                    if head.startLine = blockHead.startLine
+                       || comparisonOp blockHead.startCol head.startCol then
+                        traverser (tokensGathered @ [ head ]) rest
 
                     else
-                        traverser (tokensGathered @ [ head ]) rest
+                        tokensGathered
 
         traverser List.empty tokens
 
-///// Parse a block at a time. Takes an expression parser as input.
-//let parseBlock (blockParser : ExpressionParser<'a>) : ExpressionParser<'a> =
-//    Parser (fun record ->
-//        let partitioned = getBlock record.tokensLeft
 
-//        let result =
-//            runWithCtx
-//                blockParser
-//                { prevTokens = record.prevTokens
-//                  tokensLeft = partitioned.includedTokens
-//                  contextStack = record.contextStack }
 
-//        match result.parseResult with
-//        | ParsingSuccess s ->
-//            { parseResult = ParsingSuccess s
-//              prevTokens = result.prevTokens @ partitioned.includedTokens
-//              tokensLeft = result.tokensLeft @ partitioned.tokensLeft
-//              contextStack = record.contextStack }
-//        | NoParsingMatch x -> replaceParseResultWithCtx (NoParsingMatch x) result)
+let private parseSameColBlock parser =
+    splitParser
+        (fun ctx ->
+            let includedTokens = getBlock IncludeSameCol ctx.tokensLeft
 
+            printfn "\nIncluded in sameCol block: %A" (includedTokens |> List.map (fun t -> t.token))
+
+            includedTokens)
+        parser
+
+/// Parse a block at a time. Takes an expression parser as input.
+let private parseIndentedColBlock parser =
+    splitParser
+        (fun ctx ->
+            let includedTokens = getBlock OnlyIncludeIndenteds ctx.tokensLeft
+
+            printfn "\nIncluded in indented block: %A" (includedTokens |> List.map (fun t -> t.token))
+
+            includedTokens)
+        parser
 
 /// `end` is a keyword in F# so have to use `isEnd`
 let isEnd : ExpressionParser<unit> =
     parseSimple (fun tokensLeft ->
         match tokensLeft with
         | [] -> Ok (), List.empty
-        | _ -> Error ExpectedEndOfExpression, List.empty)
+        | _ -> Error (ExpectedEndOfExpression (tokensLeft |> List.map (fun t -> t.token))), List.empty)
 
-
-//Parser (fun { tokensLeft = tokensLeft } ->
-//    match tokensLeft with
-//    | [] -> makeParseResultWithCtx (ParsingSuccess ()) blankParseCtx
-//    | _ -> makeParseResultWithCtx (NoParsingMatch [ ExpectedEndOfExpression ]) blankParseCtx)
 
 
 
@@ -321,39 +322,43 @@ let rec parseLambda =
 
 
 and singleAssignment =
-    succeed (fun name params' (expr : Expression) ->
-        { name = name
-          value =
-            match params' with
-            | [] -> expr
-            | head :: tail ->
-                ({ params_ = NEL.consFromList head tail
-                   body = expr })
-                |> Function
-                |> ExplicitValue
-                |> Expression.SingleValueExpression })
-    |= parseIdentifier
-    |= (repeat (parseSingleParam |. spaces))
-    |. spaces
-    |. symbol Token.AssignmentEquals
-    |. spaces
-    |= lazyParser (fun _ -> parseExpression)
-    |. spaces
+    parseIndentedColBlock (
+        succeed (fun name params' (expr : Expression) ->
+            { name = name
+              value =
+                match params' with
+                | [] -> expr
+                | head :: tail ->
+                    ({ params_ = NEL.consFromList head tail
+                       body = expr })
+                    |> Function
+                    |> ExplicitValue
+                    |> Expression.SingleValueExpression })
+        |= parseIdentifier
+        |. spaces
+        |= repeat (parseSingleParam |. spaces)
+        |. spaces
+        |. symbol Token.AssignmentEquals
+        |. spaces
+        |= lazyParser (fun _ -> parseExpression)
+        |. spaces
+    )
     |> addCtxToStack SingleLetAssignment
 
 
 
-
+/// @TODO: need to ensure that it's ok for the in to be on the same indentation level as the let
+/// @TODO: also, for some reason it only looks for one assignment and then throws an error if it doesn't find an in keyword right after... not sure why. I think it's because there's something wrong with the blockParser, that it doesn't really work correctly, cos of how it handles whitespace and so on.
 and parseLetBindingsList =
-    succeed (fun letBindings expr -> LetExpression (letBindings, expr))
-    |. symbol LetKeyword
-    |. spaces
-    |= oneOrMore singleAssignment
-    |. spaces
-    |. symbol InKeyword
-    |. spaces
-    |= lazyParser (fun _ -> parseExpression)
-    |> addCtxToStack LetBindingsAssignmentList
+    (succeed (fun letBindings expr -> LetExpression (letBindings, expr))
+     |. symbol LetKeyword
+     |. spaces
+     |= oneOrMore singleAssignment
+     |. spaces
+     |. symbol InKeyword
+     |. spaces
+     |= lazyParser (fun _ -> parseExpression)
+     |> addCtxToStack LetBindingsAssignmentList)
 
 
 
@@ -410,10 +415,8 @@ and parseExpression : ExpressionParser<Expression> =
     succeed id
 
     |. spaces
-    //|= parseBlock parseCompoundExpressions
     |= parseCompoundExpressions
     |. spaces
-    //|. isEnd // Only add this back in once we're only trying to parse a block at a time!
     |> addCtxToStack WholeExpression
 
 

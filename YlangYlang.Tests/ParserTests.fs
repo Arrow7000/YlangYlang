@@ -222,12 +222,7 @@ let testKeepAndIgnoreOperators =
 
               |= parseA
               |. parseManyW
-              |= repeat (
-                  succeed id
-
-                  |= parseB
-                  |. parseManyW
-              )
+              |= repeat (parseB |. parseManyW)
               |. parseManyW
               |. parseC
               |. parseManyW
@@ -241,7 +236,29 @@ let testKeepAndIgnoreOperators =
           let expected = makeResult (Ok [ B; B; B; B ]) allTokens List.empty
 
           Expect.equal result expected "Match with 4 Bs")
-      |> testCase "Match with 4 Bs" ]
+      |> testCase "Match with 4 Bs"
+      (fun _ ->
+          let parser =
+              succeed (fun _ bList -> bList)
+
+              |= parseA
+              |. parseManyW
+              |= oneOrMore (parseB |. parseManyW)
+              |. parseManyW
+              |. parseC
+              |. parseManyW
+
+
+          let runParser = run parser
+          let allTokens = [ A; W; W; B; B; W; W; B; W; B; C; W ]
+
+          let result = runParser allTokens
+
+          let expected =
+              makeResult (Ok <| NEL.consFromList B [ B; B; B ]) allTokens List.empty
+
+          Expect.equal result expected "Match 4 Bs with oneOrMore")
+      |> testCase "Match 4 Bs with oneOrMore" ]
     |> testList "Test complex parser with optional whitespace in the middle"
 
 

@@ -385,6 +385,26 @@ let tee f parser =
 
 
 
+let splitParser chomper parser : Parser<'a, 'token, 'ctx, 'err> =
+    Parser (fun ctx ->
+        let chomped = chomper ctx
+        let newCtx = { ctx with tokensLeft = chomped }
+        let parseResult = runWithCtx parser newCtx
+
+        let diff =
+            List.length parseResult.prevTokens
+            - List.length ctx.prevTokens
+
+        { parseResult with
+            tokensLeft =
+                parseResult.tokensLeft
+                @ List.skip diff ctx.tokensLeft }
+
+    )
+
+
+
+
 let parseWhile
     (combine : 'a -> 'a -> 'a)
     (chomper : 'token list -> (ParseResult<'a, 'token, 'ctx, 'err> * 'token list))
@@ -392,13 +412,14 @@ let parseWhile
     let rec traverser (ctx : ParseContext<'token, 'ctx, 'err>) : ParseResultWithContext<'a, 'token, 'ctx, 'err> =
         let (result, chomped) = chomper ctx.tokensLeft
 
-        let newCtx =
-            { contextStack = ctx.contextStack
-              prevTokens = ctx.prevTokens @ chomped
-              tokensLeft = List.skip (List.length chomped) ctx.tokensLeft }
-
         match result with
-        | ParsingSuccess success -> mapResult (combine success) (traverser newCtx)
+        | ParsingSuccess success ->
+            let newCtx =
+                { contextStack = ctx.contextStack
+                  prevTokens = ctx.prevTokens @ chomped
+                  tokensLeft = List.skip (List.length chomped) ctx.tokensLeft }
+
+            mapResult (combine success) (traverser newCtx)
         | NoParsingMatch errs -> makeParseResultWithCtx (NoParsingMatch errs) ctx
 
     Parser traverser
@@ -463,7 +484,9 @@ let rec repeat (Parser parseFn : Parser<'a, 'token, 'ctx, 'err>) : Parser<'a lis
 
 
 let oneOrMore (parser : Parser<'a, 'token, 'ctx, 'err>) : Parser<NEL<'a>, 'token, 'ctx, 'err> =
-    map2 NEL.consFromList parser (repeat parser)
+    succeed NEL.consFromList
+    |= parser
+    |= repeat parser
 
 
 
