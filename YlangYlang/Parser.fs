@@ -43,14 +43,16 @@ let blankParseCtx : ParseContext<'token, 'ctx, 'err> =
       tokensLeft = List.empty
       contextStack = List.empty }
 
-let makeParseResultWithCtx result (record : ParseContext<'token, 'ctx, 'err>) =
+let makeParseResultWithCtx (result : ParseResult<'a, 'token, 'ctx, 'b>) (record : ParseContext<'token, 'ctx, 'err>) =
     { parseResult = result
       prevTokens = record.prevTokens
       tokensLeft = record.tokensLeft
       contextStack = record.contextStack }
 
 /// For continuing to parse from result
-let private makeCtxFromParseResult resultWithCtx : ParseContext<'token, 'ctx, 'err> =
+let private makeCtxFromParseResult
+    (resultWithCtx : ParseResultWithContext<'a, 'token, 'ctx, 'b>)
+    : ParseContext<'token, 'ctx, 'err> =
     { prevTokens = resultWithCtx.prevTokens
       tokensLeft = resultWithCtx.tokensLeft
       contextStack = resultWithCtx.contextStack }
@@ -64,7 +66,7 @@ let private replaceParseResultWithCtx
       tokensLeft = record.tokensLeft
       contextStack = record.contextStack }
 
-let addCtxToStack ctx (Parser parseFn) : Parser<'a, 'token, 'ctx, 'err> =
+let addCtxToStack (ctx : 'ctx) (Parser parseFn) : Parser<'a, 'token, 'ctx, 'err> =
     Parser (fun record ->
         let newRecord = { record with contextStack = ctx :: record.contextStack }
         parseFn newRecord)
@@ -244,12 +246,12 @@ let map f parser : Parser<'b, 'token, 'ctx, 'err> =
 let join : Parser<Parser<'a, 'token, 'ctx, 'err>, 'token, 'ctx, 'err> -> Parser<'a, 'token, 'ctx, 'err> =
     fun (Parser parseFn) ->
         Parser (fun context ->
-            let firstResult = parseFn context
-            let newCtx = makeCtxFromParseResult firstResult
+            let result = parseFn context
+            let newCtx = makeCtxFromParseResult result
 
-            match firstResult.parseResult with
-            | ParsingSuccess innerParser -> runWithCtx innerParser newCtx
-            | NoParsingMatch errs -> makeParseResultWithCtx (NoParsingMatch errs) newCtx)
+            match result with
+            | { parseResult = ParsingSuccess innerParser } -> runWithCtx innerParser newCtx
+            | { parseResult = NoParsingMatch errs } -> makeParseResultWithCtx (NoParsingMatch errs) newCtx)
 
 
 let bind f parser = map f parser |> join
@@ -274,6 +276,17 @@ let map2
     parserA
     |> map (fun a -> map (f a) parserB)
     |> join
+
+let map3
+    (f : 'a -> 'b -> 'c -> 'd)
+    (parserA : Parser<'a, 'token, 'ctx, 'err>)
+    (parserB : Parser<'b, 'token, 'ctx, 'err>)
+    (parserC : Parser<'c, 'token, 'ctx, 'err>)
+    : Parser<'d, 'token, 'ctx, 'err> =
+    parserB
+    |> map2 (fun a b -> map (f a b) parserC) parserA
+    |> join
+
 
 let either
     (parserA : Parser<'a, 'token, 'ctx, 'err>)
@@ -338,6 +351,17 @@ let fork parserA parserB finalParser =
 
 
 
+
+let getOffset : Parser<int, 'token, 'ctx, 'err> =
+    Parser (fun ctx -> makeParseResultWithCtx (ParsingSuccess <| List.length ctx.prevTokens) ctx)
+
+let getSourceTokens : Parser<'token list, 'token, 'ctx, 'err> =
+    Parser (fun ctx -> makeParseResultWithCtx (ParsingSuccess <| ctx.prevTokens @ ctx.tokensLeft) ctx)
+
+
+let getSourceString tokenToString : Parser<string, 'token, 'ctx, 'err> =
+    getSourceTokens
+    |> map (List.map tokenToString >> String.ofSeq)
 
 
 
