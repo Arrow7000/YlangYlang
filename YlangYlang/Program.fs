@@ -11,9 +11,9 @@ let main argv =
 
     tokeniseString fileText
     |> Result.map (
-        tee (fun thing -> printfn "%A" <| List.map (fun t -> t.token) thing)
+        tee (List.map (fun t -> t.token) >> printfn "%A")
         >> Parser.run parseExpression
-        >> formatErrors
+        >> DebugHelpers.formatErrors
     )
     |> printfn "%A"
 
