@@ -44,19 +44,26 @@ let makeResult parseResult prevTokens tokensLeft =
         | Ok res -> ParsingSuccess res
         | Error errs ->
             NoParsingMatch (
-                errs
-                |> List.map (fun err ->
-                    OneErr
-                        { err = err
-                          prevTokens = List.empty
-                          contextStack = List.empty })
-                |> MultipleErrs
+                let errors =
+                    errs
+                    |> List.map (fun err ->
+                        OneErr
+                            { err = err
+                              prevTokens = List.empty
+                              contextStack = List.empty
+                            //committed = false
+                            })
+
+                match errors with
+                | [ e ] -> e
+                | _ -> MultipleErrs errors
             )
 
     { parseResult = result
       contextStack = List.empty
       prevTokens = prevTokens
-      tokensLeft = tokensLeft }
+      tokensLeft = tokensLeft
+      committed = false }
 
 
 let parseSingleTestToken token : TestParser<TestToken> =
@@ -263,6 +270,164 @@ let testKeepAndIgnoreOperators =
 
 
 
+[<Tests>]
+let testCommitment =
+
+    let oneCommitParser =
+        either
+            (succeed (fun a _ _ -> a)
+
+             |= parseA
+             |. commit
+             |= parseB
+             |= parseC)
+            (parseD |. parseC)
+
+
+    let doubleCommitParser =
+        either
+            (succeed (fun a _ _ -> a)
+
+             |= parseA
+             |. commit
+             |= parseB
+             |= (either
+                     (succeed (fun _ a -> a)
+
+                      |= parseC
+                      |. commit
+                      |= parseA)
+                     parseD))
+            (parseD |. parseC)
+
+
+
+    [ makeTestCase "Once we get past commit point we no longer backtrack" (fun _ ->
+          let tokens = [ A; C ]
+
+          let actual = run oneCommitParser tokens
+
+          let coreExpected = makeResult (Error [ makeExpectedToken B C ]) [ A ] [ C ]
+
+          let expected =
+              { coreExpected with
+                  parseResult =
+                      NoParsingMatch (
+                          OneErr
+                              { err = makeExpectedToken B C
+                                prevTokens = [ A ]
+                                contextStack = List.empty }
+                      ) }
+
+          expectEqual actual expected None)
+
+      makeTestCase "Get another token past commit and still don't backtrack" (fun _ ->
+          let tokens = [ A; B; D ]
+
+          let actual = run oneCommitParser tokens
+
+          let coreExpected = makeResult (Error [ makeExpectedToken C D ]) [ A; B ] [ D ]
+
+          let expected =
+              { coreExpected with
+                  parseResult =
+                      NoParsingMatch (
+                          OneErr
+                              { err = makeExpectedToken C D
+                                prevTokens = [ A; B ]
+                                contextStack = List.empty }
+                      ) }
+
+          expectEqual actual expected None)
+
+      makeTestCase "If not past commit point should still backtrack" (fun _ ->
+          let tokens = [ D; B ]
+
+          let actual = run oneCommitParser tokens
+
+          let coreExpected =
+              makeResult
+                  (Error [ makeExpectedToken A D
+                           makeExpectedToken C B ])
+                  List.empty
+                  tokens
+
+          let expected =
+              { coreExpected with
+                  parseResult =
+                      NoParsingMatch (
+                          MultipleErrs[
+
+                          OneErr
+                              { err = makeExpectedToken A D
+                                prevTokens = List.empty
+                                contextStack = List.empty }
+
+                          OneErr
+                              { err = makeExpectedToken C B
+                                prevTokens = [ D ]
+                                contextStack = List.empty }]
+                      ) }
+
+          expectEqual actual expected None)
+
+      makeTestCase "Commit twice still doesn't backtrack" (fun _ ->
+          let tokens = [ A; B; C; D ]
+
+          let actual = run doubleCommitParser tokens
+
+          let coreExpected = makeResult (Error [ makeExpectedToken A D ]) [ A; B; C ] [ D ]
+
+          let expected =
+              { coreExpected with
+                  parseResult =
+                      NoParsingMatch (
+                          OneErr
+                              { err = makeExpectedToken A D
+                                prevTokens = [ A; B; C ]
+                                contextStack = List.empty }
+                      ) }
+
+          expectEqual actual expected None)
+
+      makeTestCase "Fail parser before it commits to anything and pass on a different branch" (fun _ ->
+          let tokens = [ D; C ]
+
+          let actual = run doubleCommitParser tokens
+
+          let expected = makeResult (Ok D) tokens List.empty
+
+
+          expectEqual actual expected None)
+
+      makeTestCase "Fail parser before it commits to anything and so return both branch errors" (fun _ ->
+          let tokens = [ D; B; D ]
+
+          let actual = run doubleCommitParser tokens
+
+          let coreExpected =
+              makeResult
+                  (Error [ makeExpectedToken A D
+                           makeExpectedToken C B ])
+                  List.empty
+                  tokens
+
+          let expected =
+              { coreExpected with
+                  parseResult =
+                      NoParsingMatch (
+                          MultipleErrs [ OneErr
+                                             { err = makeExpectedToken A D
+                                               prevTokens = List.empty
+                                               contextStack = List.empty }
+                                         OneErr
+                                             { err = makeExpectedToken C B
+                                               prevTokens = [ D ]
+                                               contextStack = List.empty } ]
+                      ) }
+
+          expectEqual actual expected None) ]
+    |> testList "Test committing"
 
 
 

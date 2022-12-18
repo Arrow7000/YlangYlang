@@ -5,7 +5,7 @@ open Expecto
 
 type ActualAndExpected<'a> = { actual : 'a; expected : 'a }
 
-let expectEqual actual expected =
+let expectEqual actual expected maybeMsg =
     { actual = actual; expected = expected }
 
 

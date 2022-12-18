@@ -108,9 +108,11 @@ let getTilLineBreak (tokens : TokenWithContext list) =
 
     traverser List.empty tokens
 
+
 type BlockInclusion =
     | IncludeSameCol
     | OnlyIncludeIndenteds
+
 
 let getBlock (inclusion : BlockInclusion) (tokens : TokenWithContext list) : TokenWithContext list =
     match tokens with
@@ -308,6 +310,7 @@ let rec parensifyParser parser =
 let rec parseLambda =
     succeed (fun params_ body -> { params_ = params_; body = body })
     |. symbol Backslash
+    |. commit
     |. spaces
     |= parseParamList
     |. spaces
@@ -350,6 +353,7 @@ and singleAssignment =
 and parseLetBindingsList =
     (succeed (fun letBindings expr -> LetExpression (letBindings, expr))
      |. symbol LetKeyword
+     |. commit
      |. spaces
      |= oneOrMore singleAssignment
      |. spaces
@@ -362,15 +366,16 @@ and parseLetBindingsList =
 
 and parseSingleValueExpressions : ExpressionParser<SingleValueExpression> =
     parensifyParser (
-        oneOf [ parseIdentifier
+        oneOf [ parseLambda |> map (Function >> ExplicitValue)
+
+                parseLetBindingsList
+
+                parseIdentifier
                 |> map SingleValueExpression.Identifier
 
-                parseLambda |> map (Function >> ExplicitValue)
 
                 parsePrimitiveLiteral
-                |> map (Primitive >> ExplicitValue)
-
-                parseLetBindingsList ]
+                |> map (Primitive >> ExplicitValue) ]
         |> addCtxToStack SingleValueExpression
     )
 
@@ -416,3 +421,7 @@ and parseExpression : ExpressionParser<Expression> =
     |= parseCompoundExpressions
     |. spaces
     |> addCtxToStack WholeExpression
+
+
+/// Just a simple re-export for easier running
+let run = Parser.run
