@@ -186,18 +186,19 @@ let either
         // @TODO: actually figure out the logic for committing to a path or not
         let isCurrentlyCommitted = record.committed
 
-        match runWithCtx parserA record with
-        | { parseResult = ParsingSuccess _ } as result -> { result with committed = isCurrentlyCommitted }
+        match runWithCtx parserA { record with committed = false } with
+        | { parseResult = ParsingSuccess _ } as result -> result
         | { parseResult = NoParsingMatch firstErrs } as result ->
             if result.committed then
-                { result with committed = isCurrentlyCommitted }
+                result
             else
-                match runWithCtx parserB record with
+                match runWithCtx parserB { record with committed = false } with
                 | { parseResult = ParsingSuccess _ } as result -> result
                 | { parseResult = NoParsingMatch sndErrs } ->
                     let errs =
                         match firstErrs, sndErrs with
-                        | MultipleErrs [], _ -> sndErrs
+                        | MultipleErrs [], errs'
+                        | errs', MultipleErrs [] -> errs'
                         | MultipleErrs list1, MultipleErrs list2 -> MultipleErrs (list1 @ list2)
                         | OneErr err, MultipleErrs list -> MultipleErrs (OneErr err :: list)
                         | MultipleErrs list, OneErr err -> MultipleErrs (list @ [ OneErr err ])

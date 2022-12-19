@@ -50,9 +50,7 @@ let makeResult parseResult prevTokens tokensLeft =
                         OneErr
                             { err = err
                               prevTokens = List.empty
-                              contextStack = List.empty
-                            //committed = false
-                            })
+                              contextStack = List.empty })
 
                 match errors with
                 | [ e ] -> e
@@ -317,7 +315,8 @@ let testCommitment =
                               { err = makeExpectedToken B C
                                 prevTokens = [ A ]
                                 contextStack = List.empty }
-                      ) }
+                      )
+                  committed = true }
 
           expectEqual actual expected None)
 
@@ -336,7 +335,8 @@ let testCommitment =
                               { err = makeExpectedToken C D
                                 prevTokens = [ A; B ]
                                 contextStack = List.empty }
-                      ) }
+                      )
+                  committed = true }
 
           expectEqual actual expected None)
 
@@ -386,7 +386,37 @@ let testCommitment =
                               { err = makeExpectedToken A D
                                 prevTokens = [ A; B; C ]
                                 contextStack = List.empty }
-                      ) }
+                      )
+                  committed = true }
+
+          expectEqual actual expected None)
+
+      makeTestCase "Only get past one commit in a two commit parser" (fun _ ->
+          let tokens = [ A; B; W ]
+
+          let actual = run doubleCommitParser tokens
+
+          let coreExpected =
+              makeResult
+                  (Error [ makeExpectedToken C W
+                           makeExpectedToken D W ])
+                  [ A; B ]
+                  [ W ]
+
+          let expected =
+              { coreExpected with
+                  parseResult =
+                      NoParsingMatch (
+                          MultipleErrs [ OneErr
+                                             { err = makeExpectedToken C W
+                                               prevTokens = [ A; B ]
+                                               contextStack = List.empty }
+                                         OneErr
+                                             { err = makeExpectedToken D W
+                                               prevTokens = [ A; B ]
+                                               contextStack = List.empty } ]
+                      )
+                  committed = true }
 
           expectEqual actual expected None)
 
@@ -426,60 +456,76 @@ let testCommitment =
                                                contextStack = List.empty } ]
                       ) }
 
+          expectEqual actual expected None)
+
+      makeTestCase "Committing also works to stop alternative paths in oneOf" (fun _ ->
+
+          let parser =
+              oneOf [ (succeed (fun a _ _ -> a)
+
+                       |= parseA
+                       |. commit
+                       |= parseB
+                       |= (oneOf [ (succeed (fun _ a -> a)
+
+                                    |= parseC
+                                    |. commit
+                                    |= parseA)
+                                   parseD ]))
+                      (parseD |. parseC)
+                      (parseB |. parseA) ]
+
+          let tokens = [ A; B; C; D ]
+
+          let actual = run parser tokens
+
+          let coreExpected = makeResult (Error [ makeExpectedToken A D ]) [ A; B; C ] [ D ]
+
+          let expected =
+              { coreExpected with
+                  parseResult =
+                      NoParsingMatch (
+                          OneErr
+                              { err = makeExpectedToken A D
+                                prevTokens = [ A; B; C ]
+                                contextStack = List.empty }
+                      )
+                  committed = true }
+
+          expectEqual actual expected None)
+
+      makeTestCase "Only one commit inside two nested oneOfs should still commit across the entire tree" (fun _ ->
+
+          let parser =
+              oneOf [ (succeed (fun a _ _ -> a)
+
+                       |= parseA
+                       |= parseB
+                       |= (oneOf [ (succeed (fun _ a -> a)
+
+                                    |= parseC
+                                    |. commit
+                                    |= parseA)
+                                   parseD ]))
+                      (parseD |. parseC)
+                      (parseB |. parseA) ]
+
+          let tokens = [ A; B; C; D ]
+
+          let actual = run parser tokens
+
+          let coreExpected = makeResult (Error [ makeExpectedToken A D ]) [ A; B; C ] [ D ]
+
+          let expected =
+              { coreExpected with
+                  parseResult =
+                      NoParsingMatch (
+                          OneErr
+                              { err = makeExpectedToken A D
+                                prevTokens = [ A; B; C ]
+                                contextStack = List.empty }
+                      )
+                  committed = true }
+
           expectEqual actual expected None) ]
     |> testList "Test committing"
-
-
-
-//let testSettingCtx =
-//    let origParser =
-//        spaces |. symbol ParensOpen |. spaces
-//        |> addCtxToStack PrimitiveLiteral
-//        |> addCtxToStack Int
-
-//    (fun _ ->
-//        let result =
-//            Parser.run
-//                origParser
-//                ([ BracesClose
-//                   BracketsClose
-//                   Whitespace NewLineChar ]
-//                 |> List.map makeDummyCtx)
-
-//        Expect.equal
-//            result
-//            ({ parseResult = NoParsingMatch (ExpectedToken ParensOpen)
-//               prevTokens = List.empty
-//               tokensLeft = List.empty
-//               contextStack = [ Int; PrimitiveLiteral ] })
-//            "Parse single value expression")
-//    |> testCase "Parse single value expression"
-
-
-
-//let testBind =
-//    let origParser =
-//        spaces () |. symbol ParensOpen |. spaces ()
-//        |> addCtxToStack PrimitiveLiteral
-//        |> addCtxToStack Int
-
-//    (fun _ ->
-//        let result =
-//            Parser.run
-//                origParser
-//                ([ BracesClose
-//                   BracketsClose
-//                   Whitespace NewLineChar ]
-//                 |> List.map makeDummyCtx)
-
-//        Expect.equal
-//            result
-//            ({ parseResult = NoParsingMatch (ExpectedToken ParensOpen)
-//               prevTokens = List.empty
-//               tokensLeft = List.empty
-//               contextStack = [ Int; PrimitiveLiteral ] })
-//            "Test parser bind")
-//    |> testCase "Test parser bind"
-
-//[<Tests>]
-//let tests = testList "Parser tests" [ testSettingCtx; testBind ]
