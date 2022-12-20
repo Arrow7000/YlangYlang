@@ -20,14 +20,16 @@ type ParseContext<'token, 'ctx, 'err> =
     { contextStack : 'ctx list
       prevTokens : 'token list
       tokensLeft : 'token list
-      committed : bool }
+      /// Commit stack
+      committed : bool list }
 
 type ParseResultWithContext<'a, 'token, 'ctx, 'err> =
     { parseResult : ParseResult<'a, 'token, 'ctx, 'err>
       contextStack : 'ctx list
       prevTokens : 'token list
       tokensLeft : 'token list
-      committed : bool }
+      /// Commit stack
+      committed : bool list }
 
 
 type ParseFn<'a, 'token, 'ctx, 'err> =
@@ -44,7 +46,7 @@ let blankParseCtx : ParseContext<'token, 'ctx, 'err> =
     { prevTokens = List.empty
       tokensLeft = List.empty
       contextStack = List.empty
-      committed = false }
+      committed = List.empty }
 
 let makeParseResultWithCtx (result : ParseResult<'a, 'token, 'ctx, 'b>) (record : ParseContext<'token, 'ctx, 'err>) =
     { parseResult = result
@@ -89,7 +91,7 @@ let run parser (tokens : 'token list) : ParseResultWithContext<'a, 'token, 'ctx,
         { prevTokens = List.empty
           tokensLeft = tokens
           contextStack = List.empty
-          committed = false }
+          committed = List.empty }
 
 
 let getCtxFromStack (Parser parseFn : Parser<'a, 'token, 'ctx, 'err>) : 'ctx list =
@@ -184,17 +186,23 @@ let either
     : Parser<'a, 'token, 'ctx, 'err> =
     Parser (fun record ->
         // @TODO: actually figure out the logic for committing to a path or not
-        let isCurrentlyCommitted = record.committed
 
-        match runWithCtx parserA { record with committed = false } with
+        match runWithCtx parserA { record with committed = List.empty } with
         | { parseResult = ParsingSuccess _ } as result -> result
         | { parseResult = NoParsingMatch firstErrs } as result ->
-            if result.committed then
-                result
+            let didCommitEvenMore =
+                result.committed
+                |> List.tryHead
+                |> Option.defaultValue false
+
+            if didCommitEvenMore then
+                printfn "didCommitEvenMore: %A" didCommitEvenMore
+                { result with committed = result.committed @ record.committed }
             else
-                match runWithCtx parserB { record with committed = false } with
-                | { parseResult = ParsingSuccess _ } as result -> result
-                | { parseResult = NoParsingMatch sndErrs } ->
+                match runWithCtx parserB { record with committed = List.empty } with
+                | { parseResult = ParsingSuccess _ } as result ->
+                    { result with committed = result.committed @ record.committed }
+                | { parseResult = NoParsingMatch sndErrs } as result ->
                     let errs =
                         match firstErrs, sndErrs with
                         | MultipleErrs [], errs'
@@ -206,7 +214,7 @@ let either
                             MultipleErrs [ OneErr err1
                                            OneErr err2 ]
 
-                    makeParseResultWithCtx (NoParsingMatch errs) record)
+                    makeParseResultWithCtx (NoParsingMatch errs) { record with committed = result.committed })
 
 
 let rec oneOf (parsers : Parser<'a, 'token, 'ctx, 'err> list) : Parser<'a, 'token, 'ctx, 'err> =
@@ -428,11 +436,11 @@ let opt (parser : Parser<'a, 'token, 'ctx, 'err>) : Parser<'a option, 'token, 'c
 
 
 let commit =
-    Parser (fun ctx -> makeParseResultWithCtx (ParsingSuccess ()) { ctx with committed = true })
+    Parser (fun ctx -> makeParseResultWithCtx (ParsingSuccess ()) { ctx with committed = true :: ctx.committed })
 
 
 let uncommit =
-    Parser (fun ctx -> makeParseResultWithCtx (ParsingSuccess ()) { ctx with committed = false })
+    Parser (fun ctx -> makeParseResultWithCtx (ParsingSuccess ()) { ctx with committed = false :: ctx.committed })
 
 
 //let parseUntilToken token (Parser p as parser) =

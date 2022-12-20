@@ -61,7 +61,7 @@ let makeResult parseResult prevTokens tokensLeft =
       contextStack = List.empty
       prevTokens = prevTokens
       tokensLeft = tokensLeft
-      committed = false }
+      committed = List.empty }
 
 
 let parseSingleTestToken token : TestParser<TestToken> =
@@ -316,7 +316,7 @@ let testCommitment =
                                 prevTokens = [ A ]
                                 contextStack = List.empty }
                       )
-                  committed = true }
+                  committed = [ true ] }
 
           expectEqual actual expected None)
 
@@ -336,7 +336,7 @@ let testCommitment =
                                 prevTokens = [ A; B ]
                                 contextStack = List.empty }
                       )
-                  committed = true }
+                  committed = [ true ] }
 
           expectEqual actual expected None)
 
@@ -387,7 +387,7 @@ let testCommitment =
                                 prevTokens = [ A; B; C ]
                                 contextStack = List.empty }
                       )
-                  committed = true }
+                  committed = [ true; true ] }
 
           expectEqual actual expected None)
 
@@ -399,9 +399,10 @@ let testCommitment =
           let coreExpected =
               makeResult
                   (Error [ makeExpectedToken C W
-                           makeExpectedToken D W ])
-                  [ A; B ]
-                  [ W ]
+                           makeExpectedToken D W
+                           makeExpectedToken D A ])
+                  List.empty
+                  tokens
 
           let expected =
               { coreExpected with
@@ -414,9 +415,15 @@ let testCommitment =
                                          OneErr
                                              { err = makeExpectedToken D W
                                                prevTokens = [ A; B ]
-                                               contextStack = List.empty } ]
+                                               contextStack = List.empty }
+                                         OneErr
+                                             { err = makeExpectedToken D A
+                                               prevTokens = List.empty
+                                               contextStack = List.empty }
+
+                                          ]
                       )
-                  committed = true }
+                  committed = List.empty }
 
           expectEqual actual expected None)
 
@@ -490,7 +497,7 @@ let testCommitment =
                                 prevTokens = [ A; B; C ]
                                 contextStack = List.empty }
                       )
-                  committed = true }
+                  committed = [ true; true ] }
 
           expectEqual actual expected None)
 
@@ -525,7 +532,7 @@ let testCommitment =
                                 prevTokens = [ A; B; C ]
                                 contextStack = List.empty }
                       )
-                  committed = true }
+                  committed = [ true ] }
 
           expectEqual actual expected None) ]
     |> testList "Test committing"
