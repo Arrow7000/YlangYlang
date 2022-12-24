@@ -300,7 +300,10 @@ let rec parensifyParser parser =
          |= lazyParser (fun _ -> parensifyParser parser)
          |. spaces
          |. symbol ParensClose
-         |> addCtxToStack ParensExpression)
+         |> map ParensedExpression
+         |> addCtxToStack ParensExpression
+
+        )
         parser
     |. spaces
 
@@ -364,7 +367,7 @@ and parseLetBindingsList =
 
 
 
-and parseSingleValueExpressions : ExpressionParser<SingleValueExpression> =
+and parseSingleValueExpressions : ExpressionParser<Expression> =
     parensifyParser (
         oneOf [ parseLambda |> map (Function >> ExplicitValue)
 
@@ -376,6 +379,7 @@ and parseSingleValueExpressions : ExpressionParser<SingleValueExpression> =
 
                 parsePrimitiveLiteral
                 |> map (Primitive >> ExplicitValue) ]
+        |> map Expression.SingleValueExpression
         |> addCtxToStack SingleValueExpression
     )
 
@@ -384,21 +388,21 @@ and parseSingleValueExpressions : ExpressionParser<SingleValueExpression> =
 
 
 
-and parseCompoundExpressions =
+and parseCompoundExpressions : ExpressionParser<Expression> =
     parensifyParser (
-        succeed (fun (expr : SingleValueExpression) opExprOpt ->
+        succeed (fun expr opExprOpt ->
             match opExprOpt with
             | Some (opOpt, expr') ->
                 match opOpt with
                 | Some op ->
-                    CompoundExpression.Operator (Expression.SingleValueExpression expr, (op, expr'))
+                    CompoundExpression.Operator (expr, (op, expr'))
                     |> Expression.CompoundExpression
 
                 | None ->
-                    FunctionApplication (Expression.SingleValueExpression expr, expr')
+                    FunctionApplication (expr, expr')
                     |> Expression.CompoundExpression
 
-            | None -> Expression.SingleValueExpression expr)
+            | None -> expr)
         |= parseSingleValueExpressions
         |. spaces
         |= opt (

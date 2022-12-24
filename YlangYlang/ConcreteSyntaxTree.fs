@@ -162,6 +162,7 @@ and CompoundExpression =
 and Expression =
     | SingleValueExpression of SingleValueExpression
     | CompoundExpression of CompoundExpression
+    | ParensedExpression of Expression
 
 
 // Not sure if it makes sense to have these yet, when we haven't yet enforced that the types are consistent...
