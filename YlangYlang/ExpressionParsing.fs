@@ -301,9 +301,7 @@ let rec parensifyParser parser =
          |. spaces
          |. symbol ParensClose
          |> map ParensedExpression
-         |> addCtxToStack ParensExpression
-
-        )
+         |> addCtxToStack ParensExpression)
         parser
     |. spaces
 
@@ -366,12 +364,38 @@ and parseLetBindingsList =
      |> addCtxToStack LetBindingsAssignmentList)
 
 
+and parseRecordKeyValue =
+    succeed (fun key expression -> (key, expression))
+
+    |= parseIdentifier
+    |. spaces
+    |. symbol Colon
+    |. spaces
+    |= parseExpression
+
+
+and parseRecord =
+    sequence
+        { symbol = symbol
+          startToken = BracesOpen
+          endToken = BracesClose
+          separator = Comma
+          spaces = spaces
+          item = lazyParser (fun _ -> parseRecordKeyValue)
+          supportsTrailingSeparator = false }
+
+
+
+
 
 and parseSingleValueExpressions : ExpressionParser<Expression> =
     parensifyParser (
         oneOf [ parseLambda |> map (Function >> ExplicitValue)
 
                 parseLetBindingsList
+
+                parseRecord
+                |> map (Record >> Compound >> ExplicitValue)
 
                 parseIdentifier
                 |> map SingleValueExpression.Identifier

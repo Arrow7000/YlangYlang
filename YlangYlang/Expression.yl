@@ -1,7 +1,2 @@
-﻿
-( \ _ tels _   blah ->
-    let
-        test = "hello"
-
-        bla v _ =(  34 + 4 / 7 ) 
-      in bla    )
+﻿let x = {testExpr : true }
+in x

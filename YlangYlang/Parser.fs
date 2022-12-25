@@ -440,63 +440,56 @@ let commit =
 
 
 let uncommit =
-    Parser (fun ctx -> makeParseResultWithCtx (ParsingSuccess ()) { ctx with committed = false :: ctx.committed })
+    Parser (fun ctx ->
+        makeParseResultWithCtx
+            (ParsingSuccess ())
+            { ctx with
+                committed =
+                    match ctx.committed with
+                    | [] -> ctx.committed
+                    | true :: rest -> rest // remove one layer I guess...
+                    | false :: rest -> false :: rest })
 
 
-//let parseUntilToken token (Parser p as parser) =
-//    Parser (fun record ->
-//        let rec traverser parseCtx =
-//            match parseCtx.tokensLeft with
-//            | [] -> runWithCtx parser parseCtx
-//            | head :: rest ->
-//                if head.token = token then
-//                    let result = run parser tokensChomped
 
-//                    match result.parseResult with
-//                    //| ParsingSuccess (s, tokensLeft') -> ParsingSuccess (s, tokensLeft @ tokensLeft')
-//                    | ParsingSuccess s ->
-//                        { parseResult = ParsingSuccess s
-//                          prevTokens = result.prevTokens
-//                          tokensLeft = tokensLeft @ s.tokensLeft
-//                          contextStack = result.contextStack }
-//                    | NoParsingMatch x ->
-//                        { parseResult = NoParsingMatch x
-//                          prevTokens = result.prevTokens
-//                          tokensLeft = tokensLeft
-//                          contextStack = result.contextStack }
-
-//                else
-//                    traverser (tokensChomped @ [ head ]) rest
-
-//        traverser List.empty record.tokensLeft)
+type SequenceConfig<'a, 'token, 'simpleToken, 'ctx, 'err> =
+    { symbol : 'simpleToken -> Parser<unit, 'token, 'ctx, 'err>
+      startToken : 'simpleToken
+      endToken : 'simpleToken
+      separator : 'simpleToken
+      spaces : Parser<unit, 'token, 'ctx, 'err>
+      item : Parser<'a, 'token, 'ctx, 'err>
+      supportsTrailingSeparator : bool }
 
 
-//type SequenceConfig<'a, 'token, 'ctx, 'err> =
-//    { startToken : 'token
-//      endToken : 'token
-//      separator : 'token
-//      spaces : Parser<unit, 'token, 'ctx, 'err>
-//      item : Parser<'a, 'token, 'ctx, 'err> }
+#nowarn "40"
 
 
-//let rec private postStartListParser config =
-//    (succeed (fun x xs -> x :: xs)
+let sequence config : Parser<'a list, 'token, 'ctx, 'err> =
+    let { symbol = symbol; spaces = spaces } = config
 
-//     |= config.item
-//     |. config.spaces
-//     |= either
-//         (succeed id
-//          |. symbol config.separator
-//          |. config.spaces
-//          |= postStartListParser config)
+    let rec postStartParser =
+        (succeed (fun x xs -> x :: xs)
 
-//         (succeed List.empty
-//          |. symbol config.endToken
-//          |. config.spaces))
+         |= config.item
+         |. spaces
+         |= either
+             (succeed List.empty
+              |. (if config.supportsTrailingSeparator then
+                      (opt (symbol config.separator) |> ignore)
+                  else
+                      succeed ())
+              |. spaces
+              |. symbol config.endToken)
 
+             (succeed id
 
-//let rec sequence config =
-//    succeed id
-//    |. symbol config.startToken
-//    |. config.spaces
-//    |= postStartListParser config
+              |. symbol config.separator
+              |. spaces
+              |= lazyParser (fun _ -> postStartParser)))
+
+    succeed id
+
+    |. symbol config.startToken
+    |. spaces
+    |= postStartParser
