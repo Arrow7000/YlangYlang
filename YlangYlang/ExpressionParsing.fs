@@ -264,14 +264,14 @@ let parseOperator =
 
 
 
-let parseSingleParam =
+let parseAssignmentValue =
     parseExpectedToken (ExpectedString "single param") (function
         | ValueIdentifier str -> Some <| Named str
         | Underscore -> Some <| Ignored
         | _ -> None)
 
 let parseParamList =
-    oneOrMore (parseSingleParam |. spaces)
+    oneOrMore (parseAssignmentValue |. spaces)
     |> addCtxToStack ParamList
 
 
@@ -283,6 +283,10 @@ let parseIdentifier =
     |> addCtxToStack Identifier
 
 
+let parseDotGetter : ExpressionParser<IdentifierName> =
+    parseExpectedToken (ExpectedString "dot accessed field") (function
+        | DotGetter field -> Some field
+        | _ -> None)
 
 
 
@@ -336,9 +340,9 @@ and singleAssignment =
                     |> Function
                     |> ExplicitValue
                     |> Expression.SingleValueExpression })
-        |= parseIdentifier
+        |= parseAssignmentValue
         |. spaces
-        |= repeat (parseSingleParam |. spaces)
+        |= repeat (parseAssignmentValue |. spaces)
         |. spaces
         |. symbol Token.AssignmentEquals
         |. spaces
@@ -387,7 +391,6 @@ and parseRecord =
 
 
 
-
 and parseSingleValueExpressions : ExpressionParser<Expression> =
     parensifyParser (
         oneOf [ parseLambda |> map (Function >> ExplicitValue)
@@ -409,36 +412,59 @@ and parseSingleValueExpressions : ExpressionParser<Expression> =
 
 
 
+/// Parses valid expression suffixes and returns a function that, given a 'preceding' expression, generates a compound expression
+and parseSuffixes : ExpressionParser<Expression -> CompoundExpression> =
+    succeed (fun suffixExpr ->
+        fun precedingExpression ->
+            match suffixExpr with
+            | Left field -> DotAccess (precedingExpression, field)
+            | Right (opOpt, expr') ->
+                (match opOpt with
+                 | Some op -> CompoundExpression.Operator (precedingExpression, (op, expr'))
 
+                 | None -> FunctionApplication (precedingExpression, expr')))
 
+    |= either
+        (parseDotGetter |> map Left)
+        (succeed (fun opOpt expr -> Right (opOpt, expr))
+         |. spaces
+         |= opt parseOperator
+         |. spaces
+         |= lazyParser (fun _ -> parseExpression)
+         |. spaces)
 
 and parseCompoundExpressions : ExpressionParser<Expression> =
     parensifyParser (
-        succeed (fun expr opExprOpt ->
-            match opExprOpt with
-            | Some (opOpt, expr') ->
-                match opOpt with
-                | Some op ->
-                    CompoundExpression.Operator (expr, (op, expr'))
-                    |> Expression.CompoundExpression
+        succeed (fun expr dotGetterOrOtherExprOpt ->
+            match dotGetterOrOtherExprOpt with
+            | Some suffixExpr ->
+                (match suffixExpr with
+                 | Left field -> DotAccess (expr, field)
 
-                | None ->
-                    FunctionApplication (expr, expr')
-                    |> Expression.CompoundExpression
+                 | Right (opOpt, expr') ->
+                     (match opOpt with
+                      | Some op -> CompoundExpression.Operator (expr, (op, expr'))
+
+                      | None -> FunctionApplication (expr, expr')))
+                |> Expression.CompoundExpression
 
             | None -> expr)
         |= parseSingleValueExpressions
-        |. spaces
+
         |= opt (
-            succeed (fun opOpt expr -> opOpt, expr)
-            |= opt parseOperator
-            |. spaces
-            |= lazyParser (fun _ -> parseExpression)
-            |. spaces
+            (either
+                (parseDotGetter |> map Left)
+
+                (succeed (fun opOpt expr -> Right (opOpt, expr))
+                 |. spaces
+                 |= opt parseOperator
+                 |. spaces
+                 |= lazyParser (fun _ -> parseExpression)
+                 |. spaces))
         )
         |. spaces
-        |> addCtxToStack CompoundExpression
     )
+    |> addCtxToStack CompoundExpression
 
 
 

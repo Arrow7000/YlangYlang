@@ -3,7 +3,7 @@
 
 [<EntryPoint>]
 let main argv =
-    let fileText = readFile "Expression.yl"
+    let fileText = readFileSync "Expression.yl"
 
     Lexer.tokeniseString fileText
     |> Result.map (

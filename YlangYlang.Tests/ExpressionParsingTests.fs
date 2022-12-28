@@ -15,12 +15,13 @@ let private makeSuccess tokensParsed v =
     |> makeParseResultWithCtx (ParsingSuccess v)
     |> fun ctx -> { ctx with prevTokens = tokensParsed }
 
-let private makeNumberSingleExpression n =
-    ExplicitValue (Primitive (NumberPrimitive n))
 
 let private makeNumberExpression =
-    makeNumberSingleExpression
+    NumberPrimitive
+    >> Primitive
+    >> ExplicitValue
     >> Expression.SingleValueExpression
+
 
 [<Tests>]
 let testSimpleExpression =
@@ -33,7 +34,7 @@ let testSimpleExpression =
                 Expect.equal
                     res.parseResult
                     (ParsingSuccess
-                     <| makeNumberSingleExpression (FloatLiteral -4.6))
+                     <| makeNumberExpression (FloatLiteral -4.6))
                     "Parse single value expression")
     |> testCase "Parse single value expression"
 
@@ -76,7 +77,7 @@ let testParensExpressionWithSimpleExpressions =
                 Expect.equal
                     res'.parseResult
                     (ParsingSuccess
-                     <| makeNumberSingleExpression (IntLiteral 34))
+                     <| makeNumberExpression (IntLiteral 34))
                     "Parse parenthesised simple expression")
     |> testCase "Parse parenthesised simple expression"
 
@@ -93,7 +94,7 @@ let testNestedParensExpressionWithSimpleExpression =
                 Expect.equal
                     res.parseResult
                     (ParsingSuccess
-                     <| makeNumberSingleExpression (IntLiteral 34))
+                     <| makeNumberExpression (IntLiteral 34))
                     "Parse nested parenthesised simple expression")
     |> testCase "Parse nested parenthesised simple expression"
 

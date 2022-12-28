@@ -128,3 +128,20 @@ module List =
         let lastPart = List.skipWhile predicate list
 
         firstPart, lastPart
+
+
+
+
+type Either<'a, 'b> =
+    | Left of 'a
+    | Right of 'b
+
+    static member mapLeft f either =
+        match either with
+        | Left l -> Left <| f l
+        | Right r -> Right r
+
+    static member mapRight f either =
+        match either with
+        | Left l -> Left l
+        | Right r -> Right <| f r

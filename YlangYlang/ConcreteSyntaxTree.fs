@@ -5,21 +5,17 @@ open Lexer
 
 // NAMES AND IDENTIFIERS
 
+/// @TODO: Maybe wrap this in a newtype so that we can unambigiously differentiate between declared identifiers and referenced identifiers?
 type IdentifierName = string
 
-// maybe should be char list to symbolise that it's a list of symbols? idk
-//type Operator =
-//    | BuiltInOp of Lexer.Operator
-//    | CustomOp of IdentifierName
 
+type TypeName = NEL<IdentifierName> // to account for fact that it could be direct or qualified reference
+type ModuleName = NEL<IdentifierName> // to account for fact that it could be top level or submodule
 
-type TypeName = NEL<string> // to account for fact that it could be direct or qualified reference
-type ModuleName = NEL<string> // to account for fact that it could be top level or submodule
+type MaybeQualifiedValue = NEL<IdentifierName>
 
-type MaybeQualifiedValue = NEL<string>
-
-
-type FunctionParam =
+/// Named - or ignored - variables to be declared, like an identifier name, function parameter, destructured field, etc.
+type AssignmentValue =
     | Named of IdentifierName
     | Ignored // i.e. the underscore
 
@@ -44,13 +40,13 @@ and MentionableType =
 
 
 and RecordType =
-    { fields : Map<string, MentionableType> }
+    { fields : Map<IdentifierName, MentionableType> }
 
 
 
 and AliasType =
     { referent : MentionableType
-      specifiedTypeParams : string list } // in case the underlying type needs it
+      specifiedTypeParams : IdentifierName list } // in case the underlying type needs it
 
 and TupleType = { types : MentionableType list } // could process into pairs and triples once we've eliminated the quads (although they should be recognised by the compiler, they are still forbidden). Should we account for single entry tuples? Well no because those are just the same as the type in the single tuple. What about zero case tuples? Well no because those are just the same as Unit.
 
@@ -74,11 +70,6 @@ type TypeDeclaration =
     { typeParams : IdentifierName list // generic params, could be empty
       typeOfTypeDeclaration : TypeOfTypeDeclaration }
 
-// not sure if this is fully right yet... or relevant
-//type TypeOfFunction =
-//    | Named of MaybeQualifiedValue
-//    | Lambda of (MentionableType * MentionableType)
-
 
 
 
@@ -94,7 +85,7 @@ type BuiltInPrimitiveTypes =
 // Not sure if this is useful yet
 type BuiltInCompoundTypes =
     | List of MentionableType // or of it makes sense to have these subtypes on the compound type variants yet
-    | Record of (string * MentionableType) list
+    | Record of (IdentifierName * MentionableType) list
     | Tuple of TupleType
 
 
@@ -119,7 +110,7 @@ type PrimitiveLiteralValue =
 
 type CompoundTypeValues =
     | List of Expression list
-    | Record of (string * Expression) list
+    | Record of (IdentifierName * Expression) list
     | Tuple of Expression list
 
 // Not sure yet if it makes sense to have this as a separate type
@@ -129,7 +120,7 @@ and CustomTypeValues =
 
 // lambas and named funcs have different syntaxes but i think they can both be treated as the same thing
 and FunctionValue =
-    { params_ : NEL<FunctionParam> // cos if it didn't have any then it would just be a regular value
+    { params_ : NEL<AssignmentValue> // cos if it didn't have any then it would just be a regular value
       body : Expression }
 
 
@@ -143,7 +134,7 @@ and ExplicitValue =
 
 /// @TODO: allow for destructured params here at some point
 and LetBinding =
-    { name : IdentifierName
+    { name : AssignmentValue
       value : Expression }
 
 
@@ -158,6 +149,7 @@ and SingleValueExpression =
 and CompoundExpression =
     | Operator of (Expression * (Operator * Expression)) // Multiple operators in a row are in right nested expressions
     | FunctionApplication of (Expression * Expression)
+    | DotAccess of Expression * IdentifierName
 
 and Expression =
     | SingleValueExpression of SingleValueExpression
