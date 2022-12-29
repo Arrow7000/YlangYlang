@@ -50,6 +50,11 @@ type ExpressionParser<'a> = Parser<'a, TokenWithContext, Context, ParserError>
 type ExpressionParserResult<'a> = ParseResultWithContext<'a, TokenWithContext, Context, ParserError>
 
 
+type SuffixType =
+    | NoEnd
+    | DotEnd of fieldName : string
+    | FuncAppEnd of Expression
+    | OpEnd of (Operator * Expression)
 
 
 
@@ -291,7 +296,16 @@ let parseDotGetter : ExpressionParser<IdentifierName> =
 
 
 
+let parensedParser parser =
+    succeed id
 
+    |. symbol ParensOpen
+    |. spaces
+    |= parser
+    |. spaces
+    |. symbol ParensClose
+    |> map ParensedExpression
+    |> addCtxToStack ParensExpression
 
 
 /// Create a parser and a version of the parser also matching a parenthesised version of the parser
@@ -310,20 +324,21 @@ let rec parensifyParser parser =
     |. spaces
 
 
+let combineEndParser expr end' : Expression =
+    match end' with
+    | NoEnd -> expr
+    | DotEnd fieldName ->
+        DotAccess (expr, fieldName)
+        |> Expression.CompoundExpression
 
+    | FuncAppEnd paramExpr ->
+        FunctionApplication (expr, paramExpr)
+        |> Expression.CompoundExpression
 
+    | OpEnd (op, operand) ->
+        CompoundExpression.Operator (expr, (op, operand))
+        |> Expression.CompoundExpression
 
-
-/// A parser that accumulates expressions and adds subexpressions onto them
-let snowballParser
-    (origParser : ExpressionParser<'a>)
-    (parserToSnowball : ExpressionParser<'a -> 'a>)
-    : ExpressionParser<'a> =
-    let combine : 'a -> ('a -> 'a) -> 'a = fun expr suffix -> suffix expr
-
-    succeed (List.fold combine)
-    |= origParser
-    |= repeat parserToSnowball
 
 
 
@@ -412,77 +427,56 @@ and parseRecord =
 
 
 and parseSingleValueExpressions : ExpressionParser<Expression> =
-    parensifyParser (
-        oneOf [ parseLambda |> map (Function >> ExplicitValue)
+    oneOf [ parseLambda |> map (Function >> ExplicitValue)
 
-                parseLetBindingsList
+            parseLetBindingsList
 
-                parseRecord
-                |> map (Record >> Compound >> ExplicitValue)
+            parseRecord
+            |> map (Record >> Compound >> ExplicitValue)
 
-                parseIdentifier
-                |> map SingleValueExpression.Identifier
+            parseIdentifier
+            |> map SingleValueExpression.Identifier
 
-                parsePrimitiveLiteral
-                |> map (Primitive >> ExplicitValue) ]
-        |> map Expression.SingleValueExpression
-        |> addCtxToStack SingleValueExpression
-    )
+            parsePrimitiveLiteral
+            |> map (Primitive >> ExplicitValue) ]
+    |> map Expression.SingleValueExpression
+    |> addCtxToStack SingleValueExpression
 
 
 
-/// Parses valid single expression suffixes and returns a function that, given the preceding expression, generates a compound expression
-and parseSuffixes : ExpressionParser<Expression -> Expression> =
-    succeed (fun fieldOpt opAndExprOpt ->
-        fun precedingExpression ->
-            let prevExpr =
-                match fieldOpt with
-                | None -> precedingExpression
-                | Some fieldName ->
-                    DotAccess (precedingExpression, fieldName)
-                    |> Expression.CompoundExpression
+and groupParser =
+    either
+        (succeed combineEndParser
+         |= parseSingleValueExpressions
+         |= endParser)
+        (parensedParser (lazyParser (fun _ -> parseExpression)))
 
-            match opAndExprOpt with
-            | None -> prevExpr
 
-            | Some (None, expr) ->
-                FunctionApplication (prevExpr, expr)
-                |> Expression.CompoundExpression
+and startParser = either parseSingleValueExpressions groupParser
 
-            | Some (Some op, expr) ->
-                CompoundExpression.Operator (prevExpr, (op, expr))
-                |> Expression.CompoundExpression)
 
-    |= opt parseDotGetter // No spaces allowed between object and dot
+and endParser =
+    succeed (Option.defaultValue NoEnd)
     |= opt (
-        succeed (fun opMaybe expr -> (opMaybe, expr))
-
-        |. spaces
-        |= opt parseOperator
-        |. spaces
-        |= lazyParser (fun _ -> parseExpression)
+        either
+            (parseDotGetter |> map DotEnd)
+            (succeed (fun opMaybe expr ->
+                match opMaybe with
+                | Some op -> OpEnd (op, expr)
+                | None -> FuncAppEnd expr)
+             |. spaces
+             |= opt parseOperator
+             |. spaces
+             |= lazyParser (fun _ -> parseExpression))
     )
     |. spaces
 
-
-and parseSimpleCompoundExpressons =
-    parensifyParser (
-        snowballParser parseSingleValueExpressions parseSuffixes
-        |. spaces
-    )
-
-and parseCompoundsOfCompoundExpressions : ExpressionParser<Expression> =
-    parensifyParser (
-        snowballParser (lazyParser (fun _ -> parseSimpleCompoundExpressons)) parseSuffixes
-        |. spaces
-    )
+and parseCompoundExpressions : ExpressionParser<Expression> =
+    succeed combineEndParser
+    |= startParser
+    |= endParser
     |. spaces
     |> addCtxToStack CompoundExpression
-
-//and parseCompoundExpressions : ExpressionParser<Expression> =
-//    (snowballParser (parensifyParser (snowballParser parseSingleValueExpressions parseSuffixes)) parseSuffixes)
-//    |. spaces
-//    |> addCtxToStack CompoundExpression
 
 
 
@@ -491,7 +485,7 @@ and parseExpression : ExpressionParser<Expression> =
     succeed id
 
     |. spaces
-    |= parseCompoundsOfCompoundExpressions
+    |= parseCompoundExpressions
     |. spaces
     |> addCtxToStack WholeExpression
 
