@@ -407,9 +407,15 @@ let rec repeat (Parser parseFn : Parser<'a, 'token, 'ctx, 'err>) : Parser<'a lis
     let rec traverser (ctx : ParseContext<'token, 'ctx, 'err>) : ParseResultWithContext<'a list, 'token, 'ctx, 'err> =
         match parseFn ctx with
         | { parseResult = ParsingSuccess success } as result ->
-            makeCtxFromParseResult result
-            |> traverser
-            |> mapResult (fun list -> success :: list)
+            result
+            |> (if List.length ctx.prevTokens
+                   <> List.length result.prevTokens then
+                    // This conditional stops parsing when no progress was made
+                    makeCtxFromParseResult
+                    >> traverser
+                    >> mapResult (fun list -> success :: list)
+                else
+                    mapResult List.singleton)
 
         | { parseResult = NoParsingMatch _ } -> makeParseResultWithCtx (ParsingSuccess List.empty) ctx
 

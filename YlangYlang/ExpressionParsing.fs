@@ -24,6 +24,7 @@ type Context =
     | WholeExpression
     | ParensExpression
     | Whitespace
+    | Suffix
 
 
 /// Aka the problem
@@ -71,19 +72,19 @@ let symbol (token : Token) =
 
 
 
-
-
-let spaces : ExpressionParser<unit> =
+let whitespaceToken =
     let err = ExpectedString "whitespace"
 
-    repeat (
-        parseExpectedToken err (function
-            | Token.Whitespace _ -> Some ()
-            | _ -> None)
-        |> addCtxToStack Whitespace
-    )
-    |> ignore
+    parseExpectedToken err (function
+        | Token.Whitespace _ -> Some ()
+        | _ -> None)
+    |> addCtxToStack Whitespace
 
+/// Chomps through any - or no - whitespace
+let spaces : ExpressionParser<unit> = repeat whitespaceToken |> ignore
+
+/// Chomps through at least one whitespace token
+let atLeastOneSpaces : ExpressionParser<unit> = oneOrMore whitespaceToken |> ignore
 
 type PartitionedTokens =
     { includedTokens : TokenWithContext list
@@ -291,7 +292,6 @@ let parseDotGetter : ExpressionParser<IdentifierName> =
 
 
 
-#nowarn "40"
 
 
 /// Create a parser and a version of the parser also matching a parenthesised version of the parser
@@ -310,6 +310,26 @@ let rec parensifyParser parser =
     |. spaces
 
 
+
+
+
+
+/// A parser that accumulates expressions and adds subexpressions onto them
+let snowballParser
+    (origParser : ExpressionParser<'a>)
+    (parserToSnowball : ExpressionParser<'a -> 'a>)
+    : ExpressionParser<'a> =
+    let combine : 'a -> ('a -> 'a) -> 'a = fun expr suffix -> suffix expr
+
+    succeed (List.fold combine)
+    |= origParser
+    |= repeat parserToSnowball
+
+
+
+
+
+#nowarn "40"
 
 
 let rec parseLambda =
@@ -375,7 +395,7 @@ and parseRecordKeyValue =
     |. spaces
     |. symbol Colon
     |. spaces
-    |= parseExpression
+    |= lazyParser (fun _ -> parseExpression)
 
 
 and parseRecord =
@@ -403,7 +423,6 @@ and parseSingleValueExpressions : ExpressionParser<Expression> =
                 parseIdentifier
                 |> map SingleValueExpression.Identifier
 
-
                 parsePrimitiveLiteral
                 |> map (Primitive >> ExplicitValue) ]
         |> map Expression.SingleValueExpression
@@ -412,59 +431,59 @@ and parseSingleValueExpressions : ExpressionParser<Expression> =
 
 
 
-/// Parses valid expression suffixes and returns a function that, given a 'preceding' expression, generates a compound expression
-and parseSuffixes : ExpressionParser<Expression -> CompoundExpression> =
-    succeed (fun suffixExpr ->
+/// Parses valid single expression suffixes and returns a function that, given the preceding expression, generates a compound expression
+and parseSuffixes : ExpressionParser<Expression -> Expression> =
+    succeed (fun fieldOpt opAndExprOpt ->
         fun precedingExpression ->
-            match suffixExpr with
-            | Left field -> DotAccess (precedingExpression, field)
-            | Right (opOpt, expr') ->
-                (match opOpt with
-                 | Some op -> CompoundExpression.Operator (precedingExpression, (op, expr'))
+            let prevExpr =
+                match fieldOpt with
+                | None -> precedingExpression
+                | Some fieldName ->
+                    DotAccess (precedingExpression, fieldName)
+                    |> Expression.CompoundExpression
 
-                 | None -> FunctionApplication (precedingExpression, expr')))
+            match opAndExprOpt with
+            | None -> prevExpr
 
-    |= either
-        (parseDotGetter |> map Left)
-        (succeed (fun opOpt expr -> Right (opOpt, expr))
-         |. spaces
-         |= opt parseOperator
-         |. spaces
-         |= lazyParser (fun _ -> parseExpression)
-         |. spaces)
-
-and parseCompoundExpressions : ExpressionParser<Expression> =
-    parensifyParser (
-        succeed (fun expr dotGetterOrOtherExprOpt ->
-            match dotGetterOrOtherExprOpt with
-            | Some suffixExpr ->
-                (match suffixExpr with
-                 | Left field -> DotAccess (expr, field)
-
-                 | Right (opOpt, expr') ->
-                     (match opOpt with
-                      | Some op -> CompoundExpression.Operator (expr, (op, expr'))
-
-                      | None -> FunctionApplication (expr, expr')))
+            | Some (None, expr) ->
+                FunctionApplication (prevExpr, expr)
                 |> Expression.CompoundExpression
 
-            | None -> expr)
-        |= parseSingleValueExpressions
+            | Some (Some op, expr) ->
+                CompoundExpression.Operator (prevExpr, (op, expr))
+                |> Expression.CompoundExpression)
 
-        |= opt (
-            (either
-                (parseDotGetter |> map Left)
+    |= opt parseDotGetter // No spaces allowed between object and dot
+    |= opt (
+        succeed (fun opMaybe expr -> (opMaybe, expr))
 
-                (succeed (fun opOpt expr -> Right (opOpt, expr))
-                 |. spaces
-                 |= opt parseOperator
-                 |. spaces
-                 |= lazyParser (fun _ -> parseExpression)
-                 |. spaces))
-        )
+        |. spaces
+        |= opt parseOperator
+        |. spaces
+        |= lazyParser (fun _ -> parseExpression)
+    )
+    |. spaces
+
+
+and parseSimpleCompoundExpressons =
+    parensifyParser (
+        snowballParser parseSingleValueExpressions parseSuffixes
         |. spaces
     )
+
+and parseCompoundsOfCompoundExpressions : ExpressionParser<Expression> =
+    parensifyParser (
+        snowballParser (lazyParser (fun _ -> parseSimpleCompoundExpressons)) parseSuffixes
+        |. spaces
+    )
+    |. spaces
     |> addCtxToStack CompoundExpression
+
+//and parseCompoundExpressions : ExpressionParser<Expression> =
+//    (snowballParser (parensifyParser (snowballParser parseSingleValueExpressions parseSuffixes)) parseSuffixes)
+//    |. spaces
+//    |> addCtxToStack CompoundExpression
+
 
 
 
@@ -472,7 +491,7 @@ and parseExpression : ExpressionParser<Expression> =
     succeed id
 
     |. spaces
-    |= parseCompoundExpressions
+    |= parseCompoundsOfCompoundExpressions
     |. spaces
     |> addCtxToStack WholeExpression
 

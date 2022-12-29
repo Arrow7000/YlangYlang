@@ -91,7 +91,6 @@ type Token =
     | Underscore // to signify unused function param
     | Unit // ()
     | QualifiedIdentifier of segments : string list
-    | RecordAccess of segments : string list
     | DotGetter of fieldName : string
     | Operator of Operator
 
@@ -404,12 +403,6 @@ module Matchers =
 
         | _ -> NoMatch
 
-    let recordAccess cursor =
-        function
-        | MultiCharRegex "[a-z]\w*(?:\.[a-z]\w*)+" str ->
-            makeTokenWithCtx cursor (RecordAccess <| String.split '.' str) str
-        | _ -> NoMatch
-
     let dotGetter cursor =
         function
         | MultiCharRegex "\.[a-z]\w*" str -> makeTokenWithCtx cursor (String.tail str |> String.ofSeq |> DotGetter) str
@@ -509,7 +502,6 @@ module Matchers =
           inKeywordMatcher
           moduleSegmentsMatcher
           qualifiedIdentifierMatcher
-          recordAccess
           dotGetter
           importKeyword
           asKeyword
