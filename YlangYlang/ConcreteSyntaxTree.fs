@@ -122,7 +122,7 @@ type PrimitiveLiteralValue =
 type CompoundValues =
     | List of Expression list
     | Record of (IdentifierName * Expression) list
-    | Tuple of Expression list
+    | Tuple of (Expression * Expression * Expression list) // Because a tuple has at least two members
 
 // Not sure yet if it makes sense to have this as a separate type
 and CustomTypeValues =

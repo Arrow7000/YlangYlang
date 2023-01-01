@@ -228,9 +228,9 @@ let rec oneOf (parsers : Parser<'a, 'token, 'ctx, 'err> list) : Parser<'a, 'toke
 
 
 let lazyParser thunk : Parser<'a, 'token, 'ctx, 'err> =
-    Parser (fun tokens ->
+    Parser (fun ctx ->
         let (Parser parse) = thunk ()
-        parse tokens)
+        parse ctx)
 
 
 

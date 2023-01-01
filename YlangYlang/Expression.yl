@@ -1,10 +1,11 @@
 ﻿let
+  other ( _ ::  khkjh_ ) = ()
   asdf ({qwe,opi} :: p  ) = 2346
-  tyupled ( dfgs,dff ) = '1'
+  tyupled ( dfg as coolAlias,dff ) = '1'
   other (parms, test as key) = ()
   also ({ xd ,yoy} as test) = test.yoy
+  blabla (sdf,_) = df.df
   thing ( {dsdf }:: rest as tastyAlias) = [ sd, 34 , asdf++ 45 ++ "sdf"]
   thing ( {x,  y } :: rest as tastyAlias) = [ sd, 34 , asdf++ 45 ++ "sdf"]
-  other ( _ ::  _ ) = ()
 in
 thing xjk

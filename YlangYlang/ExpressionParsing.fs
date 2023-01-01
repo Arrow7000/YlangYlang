@@ -7,6 +7,19 @@ open ConcreteSyntaxTree
 open Parser
 
 
+type ParamContext =
+    | TopLevelParam
+    | SimpleParam
+    | DelimitedParam
+    | InherentlyDelimitedParam
+    | NotInherentlyDelimitedParam
+    | ParensedParam of ParamContext
+    | ParamAlias
+    | RecordParam
+    | TupleParam
+    | ConsParam
+    | TypeParam
+
 type Context =
     | PrimitiveLiteral
     | Int
@@ -15,6 +28,7 @@ type Context =
     | Unit
     | Operator
     | ParamList
+    | SingleParam of ParamContext
     | Identifier
     | Lambda
     | SingleLetAssignment
@@ -290,7 +304,7 @@ let parensedParser parser =
     |= parser
     |. spaces
     |. symbol ParensClose
-    |> addCtxToStack ParensExpression
+    |. spaces
 
 
 /// Create a parser and a version of the parser also matching a parenthesised version of the parser
@@ -310,13 +324,28 @@ let rec parensifyParser parser =
 
 
 
+let typeNameParser =
+    parseExpectedToken (ExpectedString "type name") (function
+        | Token.ModuleSegmentsOrQualifiedTypeOrVariant strings -> Some strings
+        | Token.TypeNameOrVariantOrTopLevelModule str -> Some (NEL.make str)
+        | _ -> None)
+
 
 let parseSimpleParam =
-    parseExpectedToken (ExpectedString "single param") (function
-        | ValueIdentifier str -> Some <| Named str
-        | Underscore -> Some <| Ignored
-        | Token.Unit -> Some AssignmentPattern.Unit
-        | _ -> None)
+    either
+        (parseExpectedToken (ExpectedString "single param") (function
+            | ValueIdentifier str -> Some <| Named str
+            | Underscore -> Some <| Ignored
+            | Token.Unit -> Some AssignmentPattern.Unit
+            | _ -> None))
+
+        (typeNameParser
+         |> map (fun typeName ->
+             DestructuredTypeVariant (typeName, List.empty)
+             |> DestructuredPattern))
+
+    |> addCtxToStack (SingleParam SimpleParam)
+
 
 /// Parses `as <identifier>` aliases and returns the alias
 let parseAlias =
@@ -326,6 +355,7 @@ let parseAlias =
     |. symbol AsKeyword
     |. spaces
     |= parseIdentifier
+    |> addCtxToStack (SingleParam ParamAlias)
 
 let parseRecordDestructuringParam =
     sequence
@@ -337,6 +367,7 @@ let parseRecordDestructuringParam =
           item = parseIdentifier
           supportsTrailingSeparator = false }
     |> map DestructuredRecord
+    |> addCtxToStack (SingleParam RecordParam)
 
 let rec parseTupleDestructuredParam = // : ExpressionParser<AssignmentPattern list> =
     let parseTupleItem = lazyParser (fun _ -> parseDelimitedParam)
@@ -360,6 +391,7 @@ let rec parseTupleDestructuredParam = // : ExpressionParser<AssignmentPattern li
     )
     |. symbol ParensClose
     |. spaces
+    |> addCtxToStack (SingleParam TupleParam)
 
 and parseConsDestructuredParam =
     succeed (fun nel last -> DestructuredCons (NEL.appendList [ last ] nel))
@@ -371,28 +403,25 @@ and parseConsDestructuredParam =
     )
     |= lazyParser (fun _ -> parseTopLevelParam)
     |. spaces
+    |> addCtxToStack (SingleParam ConsParam)
 
 and parseTypeVariantDestructuredParam =
-    let typeNameParser =
-        parseExpectedToken (ExpectedString "type name") (function
-            | Token.ModuleSegmentsOrQualifiedTypeOrVariant strings -> Some strings
-            | Token.TypeNameOrVariantOrTopLevelModule str -> Some (NEL.make str)
-            | _ -> None)
-
     succeed (fun typeName params' -> DestructuredTypeVariant (typeName, params'))
-    |. symbol ParensOpen
-    |. spaces
     |= typeNameParser
     |. spaces
     |= repeat (lazyParser (fun _ -> parseTopLevelParam) |. spaces)
-    |. symbol ParensClose
     |. spaces
+    |> addCtxToStack (SingleParam TypeParam)
 
 and parseInherentlyDelimitedParam =
     either parseRecordDestructuringParam parseTupleDestructuredParam
+    |> addCtxToStack (SingleParam InherentlyDelimitedParam)
 
 and parseNotInherentlyDelimitedParam =
     either parseConsDestructuredParam parseTypeVariantDestructuredParam
+    |> addCtxToStack (SingleParam NotInherentlyDelimitedParam)
+
+
 
 and parseDelimitedParam =
     succeed (fun pattern aliasOpt ->
@@ -400,26 +429,27 @@ and parseDelimitedParam =
         | Some alias -> Aliased (pattern, alias)
         | None -> pattern)
 
-    |= oneOf [ parseSimpleParam
+    |= oneOf [ parseNotInherentlyDelimitedParam
+               |> map DestructuredPattern
 
-               succeed DestructuredPattern
-               |= either parseNotInherentlyDelimitedParam parseInherentlyDelimitedParam
+               parseInherentlyDelimitedParam
+               |> map DestructuredPattern
+
+               parseSimpleParam
 
                parensedParser (lazyParser <| fun _ -> parseDelimitedParam) ]
     |. spaces
     |= opt parseAlias
+    |> addCtxToStack (SingleParam DelimitedParam)
 
-
-// @TODO: looks like cons sequences aren't being parsed properly
 and parseTopLevelParam =
     oneOf [ parseSimpleParam
 
             parensedParser parseDelimitedParam
 
             succeed DestructuredPattern
-            |= parseInherentlyDelimitedParam
-
-            parensedParser (lazyParser (fun _ -> parseTopLevelParam)) ]
+            |= parseInherentlyDelimitedParam ]
+    |> addCtxToStack (SingleParam TopLevelParam)
 
 
 
@@ -558,14 +588,33 @@ and parseList =
 
 
 and parseTuple =
-    sequence
-        { symbol = symbol
-          startToken = ParensOpen
-          endToken = ParensClose
-          separator = Comma
-          spaces = spaces
-          item = lazyParser (fun _ -> parseExpression)
-          supportsTrailingSeparator = false }
+    //sequence
+    //    { symbol = symbol
+    //      startToken = ParensOpen
+    //      endToken = ParensClose
+    //      separator = Comma
+    //      spaces = spaces
+    //      item = lazyParser (fun _ -> parseExpression)
+    //      supportsTrailingSeparator = false }
+    let parseTupleItem = lazyParser (fun _ -> parseExpression)
+
+    succeed (fun first second rest -> Tuple (first, second, rest))
+
+    |. symbol ParensOpen
+    |. spaces
+    |= parseTupleItem
+    |. symbol Comma
+    |. spaces
+    |= parseTupleItem
+    |. spaces
+    |= repeat (
+        succeed id
+
+        |. symbol Comma
+        |= parseTupleItem
+        |. spaces
+    )
+    |. symbol ParensClose
 
 
 and parseSingleValueExpressions : ExpressionParser<Expression> =
@@ -582,8 +631,7 @@ and parseSingleValueExpressions : ExpressionParser<Expression> =
             parseList
             |> map (List >> Compound >> ExplicitValue)
 
-            parseTuple
-            |> map (Tuple >> Compound >> ExplicitValue)
+            parseTuple |> map (Compound >> ExplicitValue)
 
 
             parsePrimitiveLiteral
@@ -598,8 +646,11 @@ and groupParser =
         (succeed combineEndParser
          |= parseSingleValueExpressions
          |= endParser)
-        (parensedParser (lazyParser (fun _ -> parseExpression))
-         |> map ParensedExpression)
+        (parensedParser (
+            lazyParser (fun _ -> parseExpression)
+            |> map ParensedExpression
+         )
+         |> addCtxToStack ParensExpression)
 
 
 and startParser = either parseSingleValueExpressions groupParser

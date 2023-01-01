@@ -125,7 +125,24 @@ let testEither =
           let expected = makeResult (Ok B) [ B ] [ C; A; C ]
 
           Expect.equal result expected "Test more items in tokensLeft")
-      |> testCase "Test more items in tokensLeft" ]
+      |> testCase "Test more items in tokensLeft"
+      makeTestCase "Test oneOf" (fun _ ->
+          let parser =
+              oneOf [ oneOrMore parseA
+                      oneOrMore parseB
+                      oneOrMore parseC
+                      oneOrMore parseD ]
+
+          let tokens = [ C; C ]
+
+
+          let result = run parser tokens
+          let expected = makeResult (Ok (NEL (C, [ C ]))) tokens List.empty
+
+          expectEqual result expected None)
+
+
+      ]
     |> testList "Test either"
 
 

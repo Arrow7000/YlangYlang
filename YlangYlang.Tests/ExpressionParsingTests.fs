@@ -72,12 +72,11 @@ let testParensExpressionWithSimpleExpressions =
         tokens
         |> fun res ->
             Expect.wantOk res "Should succeed"
-            |> split (Parser.run parseSingleValueExpressions)
+            |> split (Parser.run parseExpression)
             |> fun (tokens', res') ->
                 Expect.equal
                     res'.parseResult
-                    (ParsingSuccess
-                     <| makeNumberExpression (IntLiteral 34))
+                    (ParsingSuccess (ParensedExpression (makeNumberExpression (IntLiteral 34))))
                     "Parse parenthesised simple expression")
     |> testCase "Parse parenthesised simple expression"
 
@@ -87,14 +86,13 @@ let testNestedParensExpressionWithSimpleExpression =
         let tokens = tokeniseString "( (  34) ) "
 
         tokens
-        |> Result.map (Parser.run parseSingleValueExpressions)
+        |> Result.map (Parser.run parseExpression)
         |> fun res ->
             Expect.wantOk res "Should succeed"
             |> fun res ->
                 Expect.equal
                     res.parseResult
-                    (ParsingSuccess
-                     <| makeNumberExpression (IntLiteral 34))
+                    (ParsingSuccess (ParensedExpression (ParensedExpression (makeNumberExpression (IntLiteral 34)))))
                     "Parse nested parenthesised simple expression")
     |> testCase "Parse nested parenthesised simple expression"
 
@@ -111,10 +109,12 @@ let testCompoundExpression =
 
                 Expect.equal
                     (stripContexts res')
-                    (Expression.CompoundExpression (
-                        CompoundExpression.Operator (
-                            makeNumberExpression (IntLiteral 34),
-                            (PlusOp, makeNumberExpression (FloatLiteral -4.6))
+                    (ParensedExpression (
+                        Expression.CompoundExpression (
+                            CompoundExpression.Operator (
+                                makeNumberExpression (IntLiteral 34),
+                                (PlusOp, makeNumberExpression (FloatLiteral -4.6))
+                            )
                         )
                      )
                      |> makeSuccess tokens')
@@ -134,29 +134,20 @@ let testParensExpressionWithMultiOperators =
 
                 Expect.equal
                     (stripContexts res')
-                    (Expression.CompoundExpression (
-                        CompoundExpression.Operator (
-                            makeNumberExpression (IntLiteral 34),
-                            (PlusOp,
-                             (Expression.CompoundExpression (
-                                 CompoundExpression.Operator (
-                                     makeNumberExpression (FloatLiteral -4.6),
-                                     (DivOp, makeNumberExpression (IntLiteral 7))
-                                 )
-                             )))
+                    (ParensedExpression (
+                        Expression.CompoundExpression (
+                            CompoundExpression.Operator (
+                                makeNumberExpression (IntLiteral 34),
+                                (PlusOp,
+                                 (Expression.CompoundExpression (
+                                     CompoundExpression.Operator (
+                                         makeNumberExpression (FloatLiteral -4.6),
+                                         (DivOp, makeNumberExpression (IntLiteral 7))
+                                     )
+                                 )))
+                            )
                         )
                      )
                      |> makeSuccess tokens')
                     "Parse parenthesised expression")
     |> testCase "Parse parenthesised expression"
-
-
-//[<Tests>]
-//let tests =
-//    testList
-//        "Expression parsing"
-//        [ testParensExpressionWithMultiOperators
-//          testSimpleExpression
-//          testOperatorExpression
-//          testParensExpressionWithSimpleExpressions
-//          testNestedParensExpressionWithSimpleExpression ]
