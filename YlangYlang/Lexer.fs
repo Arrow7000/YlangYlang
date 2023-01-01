@@ -53,6 +53,7 @@ type Operator =
     | BackwardComposeOp
     | ForwardPipeOp
     | BackwardPipeOp
+    | ConsOp
     | OtherOp of string
 
 type Token =
@@ -466,6 +467,7 @@ module Matchers =
     let backwardComposeOp = simpleMatch (Operator BackwardComposeOp) "\<\<"
     let forwardPipeOp = simpleMatch (Operator ForwardPipeOp) "\|\>"
     let backwardPipeOp = simpleMatch (Operator BackwardPipeOp) "\<\|"
+    let consOp = simpleMatch (Operator ConsOp) "::"
     let andOp = simpleMatch (Operator AndOp) "&&"
     let orOp = simpleMatch (Operator OrOp) "\|\|"
 
@@ -527,6 +529,7 @@ module Matchers =
           backwardComposeOp
           forwardPipeOp
           backwardPipeOp
+          consOp
           parensOpen
           parensClose
           bracketsOpen

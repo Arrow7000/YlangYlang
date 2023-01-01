@@ -14,10 +14,21 @@ type ModuleName = NEL<IdentifierName> // to account for fact that it could be to
 
 type MaybeQualifiedValue = NEL<IdentifierName>
 
-/// Named - or ignored - variables to be declared, like an identifier name, function parameter, destructured field, etc.
-type AssignmentValue =
+type DestructuredPattern =
+    | DestructuredRecord of IdentifierName list
+    | DestructuredTuple of AssignmentPattern list // This should really be a type that we can ensure has at least 2 members
+    | DestructuredCons of NEL<AssignmentPattern>
+    | DestructuredTypeVariant of TypeName * AssignmentPattern list
+
+
+
+/// Named - or ignored - variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
+and AssignmentPattern =
     | Named of IdentifierName
     | Ignored // i.e. the underscore
+    | Unit
+    | DestructuredPattern of DestructuredPattern
+    | Aliased of AssignmentPattern * alias : IdentifierName
 
 
 // TYPES
@@ -108,7 +119,7 @@ type PrimitiveLiteralValue =
     | StringPrimitive of string
     | UnitPrimitive
 
-type CompoundTypeValues =
+type CompoundValues =
     | List of Expression list
     | Record of (IdentifierName * Expression) list
     | Tuple of Expression list
@@ -120,12 +131,12 @@ and CustomTypeValues =
 
 // lambas and named funcs have different syntaxes but i think they can both be treated as the same thing
 and FunctionValue =
-    { params_ : NEL<AssignmentValue> // cos if it didn't have any then it would just be a regular value
+    { params_ : NEL<AssignmentPattern> // cos if it didn't have any then it would just be a regular value
       body : Expression }
 
 
 and ExplicitValue =
-    | Compound of CompoundTypeValues
+    | Compound of CompoundValues
     | Primitive of PrimitiveLiteralValue
     | CustomTypeVariant of CustomTypeValues
 
@@ -134,7 +145,7 @@ and ExplicitValue =
 
 /// @TODO: allow for destructured params here at some point
 and LetBinding =
-    { name : AssignmentValue
+    { name : AssignmentPattern
       value : Expression }
 
 

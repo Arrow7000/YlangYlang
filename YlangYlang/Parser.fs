@@ -407,6 +407,7 @@ let rec repeat (Parser parseFn : Parser<'a, 'token, 'ctx, 'err>) : Parser<'a lis
     let rec traverser (ctx : ParseContext<'token, 'ctx, 'err>) : ParseResultWithContext<'a list, 'token, 'ctx, 'err> =
         match parseFn ctx with
         | { parseResult = ParsingSuccess success } as result ->
+
             result
             |> (if List.length ctx.prevTokens
                    <> List.length result.prevTokens then
@@ -458,6 +459,13 @@ let uncommit =
 
 
 
+
+
+
+
+#nowarn "40"
+
+
 type SequenceConfig<'a, 'token, 'simpleToken, 'ctx, 'err> =
     { symbol : 'simpleToken -> Parser<unit, 'token, 'ctx, 'err>
       startToken : 'simpleToken
@@ -467,12 +475,12 @@ type SequenceConfig<'a, 'token, 'simpleToken, 'ctx, 'err> =
       item : Parser<'a, 'token, 'ctx, 'err>
       supportsTrailingSeparator : bool }
 
-
-#nowarn "40"
-
-
-let sequence config : Parser<'a list, 'token, 'ctx, 'err> =
-    let { symbol = symbol; spaces = spaces } = config
+let sequence (config : SequenceConfig<'a, 'token, 'simpleToken, 'ctx, 'err>) : Parser<'a list, 'token, 'ctx, 'err> =
+    let { symbol = symbol
+          spaces = spaces
+          startToken = startToken
+          endToken = endToken } =
+        config
 
     let rec postStartParser =
         (succeed (fun x xs -> x :: xs)
@@ -486,7 +494,7 @@ let sequence config : Parser<'a list, 'token, 'ctx, 'err> =
                   else
                       succeed ())
               |. spaces
-              |. symbol config.endToken)
+              |. symbol endToken)
 
              (succeed id
 
@@ -496,6 +504,6 @@ let sequence config : Parser<'a list, 'token, 'ctx, 'err> =
 
     succeed id
 
-    |. symbol config.startToken
+    |. symbol startToken
     |. spaces
     |= postStartParser

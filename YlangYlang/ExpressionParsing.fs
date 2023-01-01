@@ -60,6 +60,7 @@ type SuffixType =
 
 
 
+#nowarn "40"
 
 
 let parseExpectedToken (err : ParserError) chooser : ExpressionParser<'a> =
@@ -155,7 +156,7 @@ let private parseSameColBlock parser =
         (fun ctx ->
             let includedTokens = getBlock IncludeSameCol ctx.tokensLeft
 
-            printfn "\nIncluded in sameCol block: %A" (includedTokens |> List.map (fun t -> t.token))
+            //printfn "\nIncluded in sameCol block: %A" (includedTokens |> List.map (fun t -> t.token))
 
             includedTokens)
         parser
@@ -166,7 +167,7 @@ let private parseIndentedColBlock parser =
         (fun ctx ->
             let includedTokens = getBlock OnlyIncludeIndenteds ctx.tokensLeft
 
-            printfn "\nIncluded in indented block: %A" (includedTokens |> List.map (fun t -> t.token))
+            //printfn "\nIncluded in indented block: %A" (includedTokens |> List.map (fun t -> t.token))
 
             includedTokens)
         parser
@@ -221,7 +222,7 @@ let parseUint =
         | _ -> None)
 
 let parseInt : ExpressionParser<NumberLiteralValue> =
-    fork parseUnaryNegationOpInt (succeed int) (fun op -> succeed op |= parseUint |> map IntLiteral)
+    fork parseUnaryNegationOpInt (succeed int) (fun op -> parseUint |> map (op >> IntLiteral))
     |> addCtxToStack Int
 
 
@@ -233,7 +234,13 @@ let parseUfloat =
 
 
 let parseFloat =
-    fork parseUnaryNegationOpFloat (succeed id) (fun op -> (succeed op |= parseUfloat) |> map FloatLiteral)
+    succeed (fun opOpt num ->
+        (match opOpt with
+         | Some op -> op num
+         | None -> num)
+        |> FloatLiteral)
+    |= opt parseUnaryNegationOpFloat
+    |= parseUfloat
     |> addCtxToStack Float
 
 
@@ -268,32 +275,11 @@ let parseOperator =
         | _ -> None)
     |> addCtxToStack Operator
 
-
-
-let parseAssignmentValue =
-    parseExpectedToken (ExpectedString "single param") (function
-        | ValueIdentifier str -> Some <| Named str
-        | Underscore -> Some <| Ignored
-        | _ -> None)
-
-let parseParamList =
-    oneOrMore (parseAssignmentValue |. spaces)
-    |> addCtxToStack ParamList
-
-
-
 let parseIdentifier =
     parseExpectedToken (ExpectedString "identifier") (function
         | Token.ValueIdentifier n -> Some <| IdentifierName n
         | _ -> None)
     |> addCtxToStack Identifier
-
-
-let parseDotGetter : ExpressionParser<IdentifierName> =
-    parseExpectedToken (ExpectedString "dot accessed field") (function
-        | DotGetter field -> Some field
-        | _ -> None)
-
 
 
 let parensedParser parser =
@@ -304,7 +290,6 @@ let parensedParser parser =
     |= parser
     |. spaces
     |. symbol ParensClose
-    |> map ParensedExpression
     |> addCtxToStack ParensExpression
 
 
@@ -322,6 +307,144 @@ let rec parensifyParser parser =
          |> addCtxToStack ParensExpression)
         parser
     |. spaces
+
+
+
+
+let parseSimpleParam =
+    parseExpectedToken (ExpectedString "single param") (function
+        | ValueIdentifier str -> Some <| Named str
+        | Underscore -> Some <| Ignored
+        | Token.Unit -> Some AssignmentPattern.Unit
+        | _ -> None)
+
+/// Parses `as <identifier>` aliases and returns the alias
+let parseAlias =
+    succeed id
+
+    |. spaces
+    |. symbol AsKeyword
+    |. spaces
+    |= parseIdentifier
+
+let parseRecordDestructuringParam =
+    sequence
+        { symbol = symbol
+          startToken = BracesOpen
+          endToken = BracesClose
+          separator = Comma
+          spaces = spaces
+          item = parseIdentifier
+          supportsTrailingSeparator = false }
+    |> map DestructuredRecord
+
+let rec parseTupleDestructuredParam = // : ExpressionParser<AssignmentPattern list> =
+    let parseTupleItem = lazyParser (fun _ -> parseDelimitedParam)
+
+    succeed (fun first second rest -> DestructuredTuple (first :: second :: rest))
+    |. symbol ParensOpen
+    |. spaces
+    |= parseTupleItem
+    |. spaces
+    |. symbol Comma
+    |. spaces
+    |= parseTupleItem
+    |. spaces
+    |= repeat (
+        succeed id
+
+        |. symbol Comma
+        |. spaces
+        |= parseTupleItem
+        |. spaces
+    )
+    |. symbol ParensClose
+    |. spaces
+
+and parseConsDestructuredParam =
+    succeed (fun nel last -> DestructuredCons (NEL.appendList [ last ] nel))
+    |= oneOrMore (
+        lazyParser (fun _ -> parseTopLevelParam)
+        |. spaces
+        |. symbol (Lexer.Operator Operator.ConsOp)
+        |. spaces
+    )
+    |= lazyParser (fun _ -> parseTopLevelParam)
+    |. spaces
+
+and parseTypeVariantDestructuredParam =
+    let typeNameParser =
+        parseExpectedToken (ExpectedString "type name") (function
+            | Token.ModuleSegmentsOrQualifiedTypeOrVariant strings -> Some strings
+            | Token.TypeNameOrVariantOrTopLevelModule str -> Some (NEL.make str)
+            | _ -> None)
+
+    succeed (fun typeName params' -> DestructuredTypeVariant (typeName, params'))
+    |. symbol ParensOpen
+    |. spaces
+    |= typeNameParser
+    |. spaces
+    |= repeat (lazyParser (fun _ -> parseTopLevelParam) |. spaces)
+    |. symbol ParensClose
+    |. spaces
+
+and parseInherentlyDelimitedParam =
+    either parseRecordDestructuringParam parseTupleDestructuredParam
+
+and parseNotInherentlyDelimitedParam =
+    either parseConsDestructuredParam parseTypeVariantDestructuredParam
+
+and parseDelimitedParam =
+    succeed (fun pattern aliasOpt ->
+        match aliasOpt with
+        | Some alias -> Aliased (pattern, alias)
+        | None -> pattern)
+
+    |= oneOf [ parseSimpleParam
+
+               succeed DestructuredPattern
+               |= either parseNotInherentlyDelimitedParam parseInherentlyDelimitedParam
+
+               parensedParser (lazyParser <| fun _ -> parseDelimitedParam) ]
+    |. spaces
+    |= opt parseAlias
+
+
+// @TODO: looks like cons sequences aren't being parsed properly
+and parseTopLevelParam =
+    oneOf [ parseSimpleParam
+
+            parensedParser parseDelimitedParam
+
+            succeed DestructuredPattern
+            |= parseInherentlyDelimitedParam
+
+            parensedParser (lazyParser (fun _ -> parseTopLevelParam)) ]
+
+
+
+
+
+
+
+
+
+
+let parseParamList =
+    oneOrMore (parseTopLevelParam |. spaces)
+    |> addCtxToStack ParamList
+
+
+
+
+
+let parseDotGetter : ExpressionParser<IdentifierName> =
+    parseExpectedToken (ExpectedString "dot accessed field") (function
+        | DotGetter field -> Some field
+        | _ -> None)
+
+
+
 
 
 let combineEndParser expr end' : Expression =
@@ -344,7 +467,6 @@ let combineEndParser expr end' : Expression =
 
 
 
-#nowarn "40"
 
 
 let rec parseLambda =
@@ -362,7 +484,7 @@ let rec parseLambda =
 
 
 
-and singleAssignment =
+and singleLetAssignment =
     parseIndentedColBlock (
         succeed (fun name params' (expr : Expression) ->
             { name = name
@@ -375,9 +497,9 @@ and singleAssignment =
                     |> Function
                     |> ExplicitValue
                     |> Expression.SingleValueExpression })
-        |= parseAssignmentValue
+        |= parseTopLevelParam
         |. spaces
-        |= repeat (parseAssignmentValue |. spaces)
+        |= repeat (parseTopLevelParam |. spaces)
         |. spaces
         |. symbol Token.AssignmentEquals
         |. spaces
@@ -395,7 +517,7 @@ and parseLetBindingsList =
      |. symbol LetKeyword
      |. commit
      |. spaces
-     |= oneOrMore singleAssignment
+     |= oneOrMore singleLetAssignment
      |. spaces
      |. symbol InKeyword
      |. spaces
@@ -424,6 +546,26 @@ and parseRecord =
           supportsTrailingSeparator = false }
 
 
+and parseList =
+    sequence
+        { symbol = symbol
+          startToken = BracketsOpen
+          endToken = BracketsClose
+          separator = Comma
+          spaces = spaces
+          item = lazyParser (fun _ -> parseExpression)
+          supportsTrailingSeparator = false }
+
+
+and parseTuple =
+    sequence
+        { symbol = symbol
+          startToken = ParensOpen
+          endToken = ParensClose
+          separator = Comma
+          spaces = spaces
+          item = lazyParser (fun _ -> parseExpression)
+          supportsTrailingSeparator = false }
 
 
 and parseSingleValueExpressions : ExpressionParser<Expression> =
@@ -431,11 +573,18 @@ and parseSingleValueExpressions : ExpressionParser<Expression> =
 
             parseLetBindingsList
 
+            parseIdentifier
+            |> map SingleValueExpression.Identifier
+
             parseRecord
             |> map (Record >> Compound >> ExplicitValue)
 
-            parseIdentifier
-            |> map SingleValueExpression.Identifier
+            parseList
+            |> map (List >> Compound >> ExplicitValue)
+
+            parseTuple
+            |> map (Tuple >> Compound >> ExplicitValue)
+
 
             parsePrimitiveLiteral
             |> map (Primitive >> ExplicitValue) ]
@@ -449,7 +598,8 @@ and groupParser =
         (succeed combineEndParser
          |= parseSingleValueExpressions
          |= endParser)
-        (parensedParser (lazyParser (fun _ -> parseExpression)))
+        (parensedParser (lazyParser (fun _ -> parseExpression))
+         |> map ParensedExpression)
 
 
 and startParser = either parseSingleValueExpressions groupParser
