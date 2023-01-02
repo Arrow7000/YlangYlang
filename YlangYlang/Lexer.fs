@@ -92,7 +92,7 @@ type Token =
     | Underscore // to signify unused function param
     | Unit // ()
     | QualifiedIdentifier of segments : string list
-    | DotGetter of fieldName : string
+    | DotFieldPath of fields : NEL<string> // for <expression>.field.subfield paths
     | Operator of Operator
 
 
@@ -159,7 +159,7 @@ let makeTokenWithCtx (cursor : FileCursor) token (chars : string) =
 
 
 /// Prepends a ^ at the start of your search so you don't have to remember it each time. Don't say I don't do anything for you ;)
-let getMatchAtStart pattern (input : string) =
+let getMatchAtStart (pattern : string) (input : string) =
     // This basically enforces that the match has to be at the start of the string
     let wrappedPattern = $"^(?:{pattern})"
     let m = Regex.Match (input, wrappedPattern)
@@ -404,9 +404,15 @@ module Matchers =
 
         | _ -> NoMatch
 
-    let dotGetter cursor =
+    let dotFieldPath cursor =
         function
-        | MultiCharRegex "\.[a-z]\w*" str -> makeTokenWithCtx cursor (String.tail str |> String.ofSeq |> DotGetter) str
+        | MultiCharRegex "(?:\.[a-z]\w*)+" str ->
+            String.split '.' str
+            |> List.filter (String.IsNullOrWhiteSpace >> not)
+            |> (function
+            | [] -> NoMatch
+            | head :: rest -> makeTokenWithCtx cursor (DotFieldPath (NEL (head, rest))) str)
+
         | _ -> NoMatch
 
     let importKeyword = simpleMatch ImportKeyWord "import\\b"
@@ -504,7 +510,7 @@ module Matchers =
           inKeywordMatcher
           moduleSegmentsMatcher
           qualifiedIdentifierMatcher
-          dotGetter
+          dotFieldPath
           importKeyword
           asKeyword
           typeNameOrVariantOrTopLevelModule

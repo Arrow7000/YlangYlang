@@ -66,7 +66,7 @@ type ExpressionParserResult<'a> = ParseResultWithContext<'a, TokenWithContext, C
 
 type SuffixType =
     | NoEnd
-    | DotEnd of fieldName : string
+    | DotEnd of fieldSegments : NEL<string>
     | FuncAppEnd of Expression
     | OpEnd of (Operator * Expression)
 
@@ -468,9 +468,9 @@ let parseParamList =
 
 
 
-let parseDotGetter : ExpressionParser<IdentifierName> =
+let parseDotGetter : ExpressionParser<NEL<IdentifierName>> =
     parseExpectedToken (ExpectedString "dot accessed field") (function
-        | DotGetter field -> Some field
+        | DotFieldPath fields -> Some fields
         | _ -> None)
 
 
@@ -480,8 +480,8 @@ let parseDotGetter : ExpressionParser<IdentifierName> =
 let combineEndParser expr end' : Expression =
     match end' with
     | NoEnd -> expr
-    | DotEnd fieldName ->
-        DotAccess (expr, fieldName)
+    | DotEnd fields ->
+        DotAccess (expr, fields)
         |> Expression.CompoundExpression
 
     | FuncAppEnd paramExpr ->
@@ -588,18 +588,9 @@ and parseList =
 
 
 and parseTuple =
-    //sequence
-    //    { symbol = symbol
-    //      startToken = ParensOpen
-    //      endToken = ParensClose
-    //      separator = Comma
-    //      spaces = spaces
-    //      item = lazyParser (fun _ -> parseExpression)
-    //      supportsTrailingSeparator = false }
     let parseTupleItem = lazyParser (fun _ -> parseExpression)
 
     succeed (fun first second rest -> Tuple (first, second, rest))
-
     |. symbol ParensOpen
     |. spaces
     |= parseTupleItem
@@ -632,7 +623,6 @@ and parseSingleValueExpressions : ExpressionParser<Expression> =
             |> map (List >> Compound >> ExplicitValue)
 
             parseTuple |> map (Compound >> ExplicitValue)
-
 
             parsePrimitiveLiteral
             |> map (Primitive >> ExplicitValue) ]
@@ -670,7 +660,6 @@ and endParser =
              |. spaces
              |= lazyParser (fun _ -> parseExpression))
     )
-    |. spaces
 
 and parseCompoundExpressions : ExpressionParser<Expression> =
     succeed combineEndParser

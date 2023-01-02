@@ -160,7 +160,7 @@ and SingleValueExpression =
 and CompoundExpression =
     | Operator of (Expression * (Operator * Expression)) // Multiple operators in a row are in right nested expressions
     | FunctionApplication of (Expression * Expression)
-    | DotAccess of Expression * IdentifierName
+    | DotAccess of Expression * NEL<IdentifierName>
 
 and Expression =
     | SingleValueExpression of SingleValueExpression
