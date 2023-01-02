@@ -4,11 +4,11 @@ open Expecto
 open Lexer
 open ConcreteSyntaxTree
 open Parser
-open ExpressionParsing
 open System.Diagnostics
-open Expecto.Logging
 
-let private stripContexts ctx : ExpressionParserResult<'a> = { ctx with contextStack = List.empty }
+
+/// So that we don't have to reproduce the contextStack implementation details before we actuals with expecteds
+let private stripContexts ctx : ExpressionParsing.ExpressionParserResult<'a> = { ctx with contextStack = List.empty }
 
 let private makeSuccess tokensParsed v =
     blankParseCtx
@@ -20,14 +20,14 @@ let private makeNumberExpression =
     NumberPrimitive
     >> Primitive
     >> ExplicitValue
-    >> Expression.SingleValueExpression
+    >> SingleValueExpression
 
 
 [<Tests>]
 let testSimpleExpression =
     (fun _ ->
         (tokeniseString "-4.6")
-        |> Result.map (Parser.run parseSingleValueExpressions)
+        |> Result.map (Parser.run ExpressionParsing.parseSingleValueExpressions)
         |> fun res ->
             Expect.wantOk res "Should succeed"
             |> fun res ->
@@ -48,15 +48,14 @@ let testOperatorExpression =
         tokens
         |> fun res ->
             Expect.wantOk res "Should succeed"
-            |> split (Parser.run parseCompoundExpressions)
+            |> split (Parser.run ExpressionParsing.parseCompoundExpressions)
             |> fun (tokens', res') ->
                 Expect.equal
                     (stripContexts res')
-                    (Expression.CompoundExpression (
+                    (CompoundExpression (
                         CompoundExpression.Operator (
                             makeNumberExpression (FloatLiteral -4.6),
-                            (AppendOp,
-                             Expression.SingleValueExpression (ExplicitValue (Primitive (StringPrimitive "test"))))
+                            (AppendOp, SingleValueExpression (ExplicitValue (Primitive (StringPrimitive "test"))))
                         )
                      )
                      |> makeSuccess tokens')
@@ -72,7 +71,7 @@ let testParensExpressionWithSimpleExpressions =
         tokens
         |> fun res ->
             Expect.wantOk res "Should succeed"
-            |> split (Parser.run parseExpression)
+            |> split (Parser.run ExpressionParsing.parseExpression)
             |> fun (tokens', res') ->
                 Expect.equal
                     res'.parseResult
@@ -86,7 +85,7 @@ let testNestedParensExpressionWithSimpleExpression =
         let tokens = tokeniseString "( (  34) ) "
 
         tokens
-        |> Result.map (Parser.run parseExpression)
+        |> Result.map (Parser.run ExpressionParsing.parseExpression)
         |> fun res ->
             Expect.wantOk res "Should succeed"
             |> fun res ->
@@ -104,13 +103,13 @@ let testCompoundExpression =
         tokens
         |> fun res ->
             Expect.wantOk res "Should succeed"
-            |> split (Parser.run parseCompoundExpressions)
+            |> split (Parser.run ExpressionParsing.parseCompoundExpressions)
             |> fun (tokens', res') ->
 
                 Expect.equal
                     (stripContexts res')
                     (ParensedExpression (
-                        Expression.CompoundExpression (
+                        CompoundExpression (
                             CompoundExpression.Operator (
                                 makeNumberExpression (IntLiteral 34),
                                 (PlusOp, makeNumberExpression (FloatLiteral -4.6))
@@ -129,17 +128,17 @@ let testParensExpressionWithMultiOperators =
         tokens
         |> fun res ->
             Expect.wantOk res "Should succeed"
-            |> split (Parser.run parseCompoundExpressions)
+            |> split (Parser.run ExpressionParsing.parseCompoundExpressions)
             |> fun (tokens', res') ->
 
                 Expect.equal
                     (stripContexts res')
                     (ParensedExpression (
-                        Expression.CompoundExpression (
+                        CompoundExpression (
                             CompoundExpression.Operator (
                                 makeNumberExpression (IntLiteral 34),
                                 (PlusOp,
-                                 (Expression.CompoundExpression (
+                                 (CompoundExpression (
                                      CompoundExpression.Operator (
                                          makeNumberExpression (FloatLiteral -4.6),
                                          (DivOp, makeNumberExpression (IntLiteral 7))

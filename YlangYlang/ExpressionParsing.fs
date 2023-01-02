@@ -13,7 +13,7 @@ type ParamContext =
     | DelimitedParam
     | InherentlyDelimitedParam
     | NotInherentlyDelimitedParam
-    | ParensedParam of ParamContext
+    | ParensedParam
     | ParamAlias
     | RecordParam
     | TupleParam
@@ -41,7 +41,7 @@ type Context =
     | Suffix
 
 
-/// Aka the problem
+
 type ParserError =
     | ExpectedToken of Token
     | ExpectedString of string
@@ -50,7 +50,7 @@ type ParserError =
     | PredicateDidntMatch
 
     /// but there were yet more tokens
-    | ExpectedEndOfExpression of Token list
+    | ExpectedEndOfExpression of tokensLeft : Token list
 
     /// but there were no tokens left
     | UnexpectedEndOfExpression of expected : Token option
@@ -291,7 +291,9 @@ let parseOperator =
 
 let parseIdentifier =
     parseExpectedToken (ExpectedString "identifier") (function
-        | Token.ValueIdentifier n -> Some <| IdentifierName n
+        | Token.SingleIdentifier n -> Some <| IdentifierName n
+        | Token.TypeNameOrVariantOrTopLevelModule n -> Some <| IdentifierName n
+        //| Token.ModuleSegmentsOrQualifiedTypeOrVariant n -> Some <| IdentifierName n
         | _ -> None)
     |> addCtxToStack Identifier
 
@@ -334,7 +336,7 @@ let typeNameParser =
 let parseSimpleParam =
     either
         (parseExpectedToken (ExpectedString "single param") (function
-            | ValueIdentifier str -> Some <| Named str
+            | SingleIdentifier str -> Some <| Named str
             | Underscore -> Some <| Ignored
             | Token.Unit -> Some AssignmentPattern.Unit
             | _ -> None))
@@ -369,7 +371,7 @@ let parseRecordDestructuringParam =
     |> map DestructuredRecord
     |> addCtxToStack (SingleParam RecordParam)
 
-let rec parseTupleDestructuredParam = // : ExpressionParser<AssignmentPattern list> =
+let rec parseTupleDestructuredParam : ExpressionParser<DestructuredPattern> =
     let parseTupleItem = lazyParser (fun _ -> parseDelimitedParam)
 
     succeed (fun first second rest -> DestructuredTuple (first :: second :: rest))
@@ -437,7 +439,8 @@ and parseDelimitedParam =
 
                parseSimpleParam
 
-               parensedParser (lazyParser <| fun _ -> parseDelimitedParam) ]
+               parensedParser (lazyParser <| fun _ -> parseDelimitedParam)
+               |> addCtxToStack (SingleParam ParensedParam) ]
     |. spaces
     |= opt parseAlias
     |> addCtxToStack (SingleParam DelimitedParam)
@@ -509,7 +512,6 @@ let rec parseLambda =
     |. symbol Token.Arrow
     |. spaces
     |= lazyParser (fun _ -> parseExpression)
-    |. spaces
     |> addCtxToStack Lambda
 
 
@@ -522,7 +524,7 @@ and singleLetAssignment =
                 match params' with
                 | [] -> expr
                 | head :: tail ->
-                    ({ params_ = NEL.consFromList head tail
+                    ({ params_ = NEL.new_ head tail
                        body = expr })
                     |> Function
                     |> ExplicitValue

@@ -23,16 +23,25 @@ type OneOrTree<'a> =
 type NonEmptyList<'a> =
     | NEL of first : 'a * rest : 'a list
 
+    /// Make new NEL with head and tail
+    static member new_ (a : 'a) a's : NEL<'a> = NEL (a, a's)
+
+    /// Make new NEL by just giving it a head
+    static member make (a : 'a) : NEL<'a> = NEL.new_ a List.empty
+
+
+
+    (* Simple getters *)
+
     static member head (NEL (head', _)) = head'
     static member tail (NEL (_, tail')) = tail'
 
     static member map f (NEL (first, rest)) = NEL (f first, List.map f rest)
-    static member make (a : 'a) : NEL<'a> = NEL (a, List.empty)
 
     static member fromList (l : 'a list) : NEL<'a> option =
         match l with
         | [] -> None
-        | head :: rest -> Some <| NEL (head, rest)
+        | head :: rest -> Some <| NEL.new_ head rest
 
     static member toList (NEL (head, tail)) = head :: tail
 
@@ -41,9 +50,9 @@ type NonEmptyList<'a> =
 
             NEL (head1, rest1 @ (head2 :: rest2))
 
-    static member cons (item : 'a) (NEL (head, tail)) = NEL (item, head :: tail)
-    static member consFromList (item : 'a) tail = NEL (item, tail)
+    static member cons (newHead : 'a) (NEL (head, tail)) = NEL (newHead, head :: tail)
 
+    /// Appends the list to the end of the NEL
     static member appendList (list : 'a list) (NEL (head, tail)) = NEL (head, tail @ list)
 
     static member fold f state (NEL (head, tail)) = tail |> List.fold f (f state head)
@@ -53,7 +62,7 @@ type NonEmptyList<'a> =
         | None -> head
         | Some last -> last
 
-/// A convenient alias
+/// A convenient alias for NonEmptyList
 and NEL<'a> = NonEmptyList<'a>
 
 

@@ -3,7 +3,7 @@
 open Lexer
 
 
-// NAMES AND IDENTIFIERS
+(* Names and identifiers *)
 
 /// @TODO: Maybe wrap this in a newtype so that we can unambigiously differentiate between declared identifiers and referenced identifiers?
 type IdentifierName = string
@@ -31,7 +31,7 @@ and AssignmentPattern =
     | Aliased of AssignmentPattern * alias : IdentifierName
 
 
-// TYPES
+(* Types *)
 
 type TypeReference =
     | Concrete of TypeName // name of the type referenced
@@ -106,7 +106,7 @@ type BuiltInCompoundTypes =
 
 
 
-// VALUES
+(* Values *)
 
 type NumberLiteralValue =
     | FloatLiteral of float
@@ -187,43 +187,58 @@ let typeOfPrimitiveLiteralValue =
 
 
 
-// THE MODULE AS AN ENTITY
+(* The module as a whole *)
 
-/// `import Thing.OtherThing.Stuff (as TT) (exposing ((..)|(baa,baz,Bar))) `
-type ImportExposingMode =
+
+
+//module <Identifier>{.<Identifier>} exposing (..)
+//module <Identifier>{.Identifier} exposing ((<Identifier>[(..)]|<identifier>){, (<Identifier>[(..)]|<identifier>)})
+
+
+type ModuleExport =
+    { name : IdentifierName
+      exposeVariants : bool }
+
+
+type ExportExposings =
+    | ExposeAll // exposing (..)
+    | ExplicitExposeds of ModuleExport list // exposing (Foo, Bar(..), baz)
+
+
+
+type ModuleDeclaration =
+    { moduleName : ModuleName
+      exposing : ExportExposings }
+
+
+
+
+
+// /// Use when parsing types works
+//type ValueOrTypeExport =
+//    | ValueExport of IdentifierName
+//    | TypeExport of TypeExport
+
+//type ExplicitExports =
+//    { types : TypeExport list
+//      values : IdentifierName list }
+
+//type Exports =
+//    | ExportAll
+//    | ExportExplicits of ValueOrTypeExport list
+
+
+
+type ImportExposings =
     | NoExposeds
     | ExplicitExposeds of IdentifierName list // exposing (Foo,Bar,baz)
     | ExposeAll // exposing (..)
 
-type Import =
-    { path : NEL<string> // dot-separated module path
+type ImportDeclaration =
+    { moduleName : ModuleName
       alias : IdentifierName option
-      exposingMode : ImportExposingMode }
+      exposingMode : ImportExposings }
 
-
-type TypeExport =
-    { name : IdentifierName
-      exposeVariants : bool }
-
-//type ValueExport = { name : IdentifierName }
-type ValueOrTypeExport =
-    | ValueExport of IdentifierName
-    | TypeExport of TypeExport
-
-type ExportExposingMode =
-    | ExposeAll // exposing (..)
-    | ExplicitExposeds of ValueOrTypeExport list // exposing (Foo,Bar,baz)
-
-
-type ExplicitExports =
-    { types : TypeExport list
-      values : IdentifierName list }
-
-
-
-type Exports =
-    | ExportAll
-    | ExportExplicits of ValueOrTypeExport list
 
 type ValueDeclaration =
     { typeSignature : TypeDeclaration list option // either it's explicit or it'll have to be inferred
@@ -232,7 +247,7 @@ type ValueDeclaration =
 // Representing a whole file/module
 type YlModule =
     { moduleName : ModuleName
-      exports : Exports
-      imports : Import list
+      exports : ExportExposings
+      imports : ImportDeclaration list
       typeDeclarations : TypeDeclaration list
       valueDeclarations : ValueDeclaration list }

@@ -18,7 +18,6 @@ type LexingError =
     | CouldntRecognise of string
     | NoMatchOnRestOfString of line : string
 
-// @TODO: at some point include the line and col numbers along with the errors, or even just with the tokens tbh
 type LexingErrors = NonEmptyList<LexingError>
 
 
@@ -26,9 +25,6 @@ type WhitespaceChar =
     | Space
     | NewLineChar
 
-//type Whitespace =
-//    | Spaces of int // i.e. combine all non-newline whitespace chars into a single item so they are easier to handle
-//    | NewLine
 
 
 
@@ -62,8 +58,6 @@ type Token =
     | PrimitiveLiteral of PrimitiveLiteral
     | LetKeyword
     | InKeyword
-    | ModuleSegmentsOrQualifiedTypeOrVariant of NEL<string> // when it has dots in so it could be either a module name or refer to a (partially) qualified type or type variant
-    | TypeNameOrVariantOrTopLevelModule of string // when there are no dots in the segments so it could be either a module name or just refer to a type or type variant. There's probably better ways of doing this less ambiguously. Atm I'm gonna leave that for the parsing stage, but it could be moved into the lexing stage at some point if we want to.
     | ModuleKeyword
     | ImportKeyWord
     | AsKeyword
@@ -74,7 +68,6 @@ type Token =
     | BracketsClose
     | BracesOpen
     | BracesClose
-    | ValueIdentifier of string
     | Comma
     | AssignmentEquals
     | PipeChar
@@ -91,7 +84,10 @@ type Token =
     | Backslash // to signify start of lambda
     | Underscore // to signify unused function param
     | Unit // ()
-    | QualifiedIdentifier of segments : string list
+    | ModuleSegmentsOrQualifiedTypeOrVariant of NEL<string> // when it has dots in so it could be either a module name or refer to a (partially) qualified type or type variant
+    | TypeNameOrVariantOrTopLevelModule of string // when there are no dots in the segments so it could be either a module name or just refer to a type or type variant. There's probably better ways of doing this less ambiguously. Atm I'm gonna leave that for the parsing stage, but it could be moved into the lexing stage at some point if we want to.
+    | SingleIdentifier of string
+    | QualifiedIdentifier of segments : NEL<string>
     | DotFieldPath of fields : NEL<string> // for <expression>.field.subfield paths
     | Operator of Operator
 
@@ -107,7 +103,7 @@ type TokenWithContext =
     member this.charLength = List.length this.chars // bear in mind that the whitespace tokens will span multiple lines
 
 /// Simple alias for `TokenWithContext`
-and TknCtx = TokenWithContext
+type TknCtx = TokenWithContext
 
 type FileCursor = { endLine : uint; endCol : uint }
 //| Start
@@ -211,7 +207,6 @@ let getUpToNextLineBreak string =
 
 let justKeepLexing (allMatchers : Matcher list) string =
     let initialCursor = { endLine = uint 0; endCol = uint 0 }
-    //let initialCursor = Start
 
     let getFirstMatch cursor string =
         allMatchers
@@ -400,7 +395,10 @@ module Matchers =
     let qualifiedIdentifierMatcher cursor =
         function
         | MultiCharRegex "[A-Z]\w*(?:\.[A-Z]\w*)*(?:\.[a-z]\w*)" str ->
-            makeTokenWithCtx cursor (QualifiedIdentifier <| String.split '.' str) str
+            String.split '.' str
+            |> function
+                | [] -> failwithf "Qualified identifier sequence was somehow empty"
+                | head :: tail -> makeTokenWithCtx cursor (QualifiedIdentifier (NEL.new_ head tail)) str
 
         | _ -> NoMatch
 
@@ -410,7 +408,7 @@ module Matchers =
             String.split '.' str
             |> List.filter (String.IsNullOrWhiteSpace >> not)
             |> (function
-            | [] -> NoMatch
+            | [] -> failwithf "Dot field sequence was somehow empty"
             | head :: rest -> makeTokenWithCtx cursor (DotFieldPath (NEL (head, rest))) str)
 
         | _ -> NoMatch
@@ -491,7 +489,7 @@ module Matchers =
     /// Only run this after all the keywords have been tried!
     let valueIdentifier cursor =
         function
-        | MultiCharRegex "[a-z]\w*" ident -> makeTokenWithCtx cursor (ValueIdentifier ident) ident
+        | MultiCharRegex "[a-z]\w*" ident -> makeTokenWithCtx cursor (SingleIdentifier ident) ident
         | _ -> NoMatch
 
     let otherOp cursor =

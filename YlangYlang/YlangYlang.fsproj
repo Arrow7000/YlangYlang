@@ -14,13 +14,11 @@
     <Compile Include="Lexer.fs" />
     <Compile Include="ConcreteSyntaxTree.fs" />
     <Compile Include="Parser.fs" />
-    <Compile Include="ParserStates.fs" />
     <None Include="Expression.yl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <Compile Include="ExpressionParsing.fs" />
     <Compile Include="DebugHelpers.fs" />
-    <Compile Include="ModuleParsing.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

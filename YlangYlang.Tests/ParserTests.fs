@@ -276,8 +276,7 @@ let testKeepAndIgnoreOperators =
 
           let result = runParser allTokens
 
-          let expected =
-              makeResult (Ok <| NEL.consFromList B [ B; B; B ]) allTokens List.empty
+          let expected = makeResult (Ok <| NEL.new_ B [ B; B; B ]) allTokens List.empty
 
           Expect.equal result expected "Match 4 Bs with oneOrMore")
       |> testCase "Match 4 Bs with oneOrMore" ]

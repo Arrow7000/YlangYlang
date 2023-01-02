@@ -32,7 +32,7 @@ type ParseResultWithContext<'a, 'token, 'ctx, 'err> =
       committed : bool list }
 
 
-type ParseFn<'a, 'token, 'ctx, 'err> =
+type private ParseFn<'a, 'token, 'ctx, 'err> =
     ParseContext<'token, 'ctx, 'err> -> ParseResultWithContext<'a, 'token, 'ctx, 'err>
 
 
@@ -64,7 +64,7 @@ let private makeCtxFromParseResult
       contextStack = resultWithCtx.contextStack
       committed = resultWithCtx.committed }
 
-let private replaceParseResultWithCtx
+let private replaceParseResult
     (result : ParseResult<'b, 'token, 'ctx, 'err>)
     (record : ParseResultWithContext<'a, 'token, 'ctx, 'err>)
     : ParseResultWithContext<'b, 'token, 'ctx, 'err> =
@@ -185,8 +185,6 @@ let either
     (parserB : Parser<'a, 'token, 'ctx, 'err>)
     : Parser<'a, 'token, 'ctx, 'err> =
     Parser (fun record ->
-        // @TODO: actually figure out the logic for committing to a path or not
-
         match runWithCtx parserA { record with committed = List.empty } with
         | { parseResult = ParsingSuccess _ } as result -> result
         | { parseResult = NoParsingMatch firstErrs } as result ->
@@ -258,8 +256,8 @@ let fork parserA parserB finalParser =
 
 
 
-
-let getOffset : Parser<int, 'token, 'ctx, 'err> =
+/// Gets offset in terms of tokens, not characters!
+let getTokensOffset : Parser<int, 'token, 'ctx, 'err> =
     Parser (fun ctx -> makeParseResultWithCtx (ParsingSuccess <| List.length ctx.prevTokens) ctx)
 
 let getSourceTokens : Parser<'token list, 'token, 'ctx, 'err> =
@@ -307,17 +305,20 @@ let rec chompWhile predicate : Parser<unit, 'token, 'ctx, 'err> =
 
 
 
-let any () = chompWhile (always true)
 
 
-
-
-let tee f parser =
+/// runs `f` on the input record to the given parser
+let teeInput f parser =
     Parser (fun record ->
         f record
         runWithCtx parser record)
 
-
+/// runs `f` on the result of the given parser
+let teeResult f parser =
+    Parser (fun record ->
+        let result = runWithCtx parser record
+        f result
+        result)
 
 
 let splitParser chomper parser : Parser<'a, 'token, 'ctx, 'err> =
@@ -411,7 +412,7 @@ let rec repeat (Parser parseFn : Parser<'a, 'token, 'ctx, 'err>) : Parser<'a lis
             result
             |> (if List.length ctx.prevTokens
                    <> List.length result.prevTokens then
-                    // This conditional stops parsing when no progress was made
+                    // This conditional stops parsing when no progress was made, which prevents e.g. a whitespace parser from looping forever
                     makeCtxFromParseResult
                     >> traverser
                     >> mapResult (fun list -> success :: list)
@@ -427,9 +428,7 @@ let rec repeat (Parser parseFn : Parser<'a, 'token, 'ctx, 'err>) : Parser<'a lis
 
 
 let oneOrMore (parser : Parser<'a, 'token, 'ctx, 'err>) : Parser<NEL<'a>, 'token, 'ctx, 'err> =
-    succeed NEL.consFromList
-    |= parser
-    |= repeat parser
+    succeed NEL.new_ |= parser |= repeat parser
 
 
 
@@ -437,7 +436,7 @@ let oneOrMore (parser : Parser<'a, 'token, 'ctx, 'err>) : Parser<NEL<'a>, 'token
 let opt (parser : Parser<'a, 'token, 'ctx, 'err>) : Parser<'a option, 'token, 'ctx, 'err> =
     Parser (fun record ->
         match runWithCtx parser record with
-        | { parseResult = ParsingSuccess s } as result -> replaceParseResultWithCtx (ParsingSuccess <| Some s) result
+        | { parseResult = ParsingSuccess s } as result -> mapResult Some result
         | { parseResult = NoParsingMatch _ } -> makeParseResultWithCtx (ParsingSuccess None) record)
 
 
