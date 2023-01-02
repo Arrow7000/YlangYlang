@@ -682,5 +682,90 @@ and parseExpression : ExpressionParser<Expression> =
     |> addCtxToStack WholeExpression
 
 
+
+
+
+
+
+
+
+(* Parse module *)
+
+let parseModuleName : ExpressionParser<ModuleName> =
+    parseExpectedToken (ExpectedString "module name") (function
+        | ModuleSegmentsOrQualifiedTypeOrVariant path -> Some path
+        | TypeNameOrVariantOrTopLevelModule path -> Some (NEL.make path)
+        | _ -> None)
+
+
+let parseModuleDeclaration =
+    let exposingAllParser =
+        symbol ParensOpen
+        |. spaces
+        |. symbol DoubleDot
+        |. spaces
+        |. symbol ParensClose
+
+
+    let explicitExportItem =
+        succeed (fun ident exposedAll ->
+            { name = ident
+              exposeVariants = Option.isSome exposedAll })
+        |= parseIdentifier
+        |. spaces
+        |= opt exposingAllParser
+        |. spaces
+
+    let explicitExports =
+        succeed (fun firsts last -> firsts @ [ last ])
+        |. symbol ParensOpen
+        |. spaces
+        |= repeat (
+            explicitExportItem
+            |. spaces
+            |. symbol Comma
+            |. spaces
+        )
+        |= explicitExportItem
+        |. symbol ParensClose
+
+
+
+    succeed (fun moduleName exports ->
+        { moduleName = moduleName
+          exposing =
+            match exports with
+            | None -> ExportExposings.ExposeAll
+            | Some exports' -> ExportExposings.ExplicitExposeds exports'
+
+        })
+    |. symbol ModuleKeyword
+    |. spaces
+    |= parseModuleName
+    |. spaces
+    |. symbol ExposingKeyword
+    |. spaces
+    |= either (succeed None |. exposingAllParser) (succeed Some |= explicitExports)
+    |. spaces
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /// Just a simple re-export for easier running
 let run = Parser.run
