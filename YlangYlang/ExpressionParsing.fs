@@ -64,13 +64,11 @@ type ExpressionParser<'a> = Parser<'a, TokenWithContext, Context, ParserError>
 type ExpressionParserResult<'a> = ParseResultWithContext<'a, TokenWithContext, Context, ParserError>
 
 
+
 type SuffixType =
-    | NoEnd
-    | DotEnd of fieldSegments : NEL<UnqualValueIdentifier>
-    | FuncAppEnd of Expression
-    | OpEnd of (Operator * Expression)
-
-
+    | Suffix of
+        fieldSegments : NEL<UnqualValueIdentifier> option *
+        opAndFunction : (Operator option * Expression) option
 
 
 
@@ -492,20 +490,30 @@ let parseDotGetter : ExpressionParser<NEL<UnqualValueIdentifier>> =
 
 let combineEndParser expr end' : Expression =
     match end' with
-    | NoEnd -> expr
-    | DotEnd fields ->
-        DotAccess (expr, fields)
-        |> Expression.CompoundExpression
+    | Suffix (dotFieldSegments, opAndFuncParam) ->
+        let initialExpr =
+            match dotFieldSegments with
+            | Some dotFields ->
+                DotAccess (expr, dotFields)
+                |> Expression.CompoundExpression
+            | None -> expr
 
-    | FuncAppEnd paramExpr ->
-        FunctionApplication (expr, paramExpr)
-        |> Expression.CompoundExpression
+        match opAndFuncParam with
+        | Some (Some op, operandExpr) ->
+            CompoundExpression.Operator (initialExpr, (op, operandExpr))
+            |> Expression.CompoundExpression
+        | Some (None, paramExpr) ->
+            FunctionApplication (initialExpr, paramExpr)
+            |> Expression.CompoundExpression
+        | None -> initialExpr
 
-    | OpEnd (op, operand) ->
-        CompoundExpression.Operator (expr, (op, operand))
-        |> Expression.CompoundExpression
 
 
+
+let rec combineRepeatedEnds expr ends =
+    match ends with
+    | [] -> expr
+    | firstEnd :: rest -> combineRepeatedEnds (combineEndParser expr firstEnd) rest
 
 
 
@@ -621,33 +629,33 @@ and parseTuple =
 
 
 and parseSingleValueExpressions : ExpressionParser<Expression> =
-    oneOf [ parseLambda |> map (Function >> ExplicitValue)
+    succeed Expression.SingleValueExpression
+    |= oneOf [ parseLambda |> map (Function >> ExplicitValue)
 
-            parseLetBindingsList
+               parseLetBindingsList
 
-            parseIdentifier
-            |> map SingleValueExpression.Identifier
+               parseIdentifier
+               |> map SingleValueExpression.Identifier
 
-            parseRecord
-            |> map (Record >> Compound >> ExplicitValue)
+               parseRecord
+               |> map (Record >> Compound >> ExplicitValue)
 
-            parseList
-            |> map (List >> Compound >> ExplicitValue)
+               parseList
+               |> map (List >> Compound >> ExplicitValue)
 
-            parseTuple |> map (Compound >> ExplicitValue)
+               parseTuple |> map (Compound >> ExplicitValue)
 
-            parsePrimitiveLiteral
-            |> map (Primitive >> ExplicitValue) ]
-    |> map Expression.SingleValueExpression
+               parsePrimitiveLiteral
+               |> map (Primitive >> ExplicitValue) ]
     |> addCtxToStack SingleValueExpression
 
 
 
 and groupParser =
     either
-        (succeed combineEndParser
+        (succeed combineRepeatedEnds
          |= parseSingleValueExpressions
-         |= endParser)
+         |= repeat endParser)
         (parensedParser (
             lazyParser (fun _ -> parseExpression)
             |> map ParensedExpression
@@ -659,24 +667,24 @@ and startParser = either parseSingleValueExpressions groupParser
 
 
 and endParser =
-    succeed (Option.defaultValue NoEnd)
+    succeed (fun dotFields opAndExpr -> Suffix (dotFields, opAndExpr))
+    |= opt parseDotGetter
+    |. spaces
     |= opt (
-        either
-            (parseDotGetter |> map DotEnd)
-            (succeed (fun opMaybe expr ->
-                match opMaybe with
-                | Some op -> OpEnd (op, expr)
-                | None -> FuncAppEnd expr)
-             |. spaces
-             |= opt parseOperator
-             |. spaces
-             |= lazyParser (fun _ -> parseExpression))
+        succeed (fun op expr -> (op, expr))
+
+        |= opt parseOperator
+        |. spaces
+        |= lazyParser (fun _ -> parseExpression)
     )
+    |. spaces
+
+
 
 and parseCompoundExpressions : ExpressionParser<Expression> =
-    succeed combineEndParser
+    succeed combineRepeatedEnds
     |= startParser
-    |= endParser
+    |= repeat endParser
     |. spaces
     |> addCtxToStack CompoundExpression
 
