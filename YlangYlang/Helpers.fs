@@ -139,6 +139,16 @@ module List =
         firstPart, lastPart
 
 
+    let (|Empty|Last|) list =
+        let rec getLast accumulated list =
+            match list with
+            | [] -> Empty
+            | last :: [] -> Last (List.rev accumulated, last)
+            | head :: rest -> getLast (head :: accumulated) rest
+
+        getLast List.empty list
+
+
 
 
 type Either<'a, 'b> =

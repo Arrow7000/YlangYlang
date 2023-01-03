@@ -66,7 +66,7 @@ type ExpressionParserResult<'a> = ParseResultWithContext<'a, TokenWithContext, C
 
 type SuffixType =
     | NoEnd
-    | DotEnd of fieldSegments : NEL<string>
+    | DotEnd of fieldSegments : NEL<UnqualValueIdentifier>
     | FuncAppEnd of Expression
     | OpEnd of (Operator * Expression)
 
@@ -291,12 +291,21 @@ let parseOperator =
 
 let parseIdentifier =
     parseExpectedToken (ExpectedString "identifier") (function
-        | Token.SingleIdentifier n -> Some <| IdentifierName n
-        | Token.TypeNameOrVariantOrTopLevelModule n -> Some <| IdentifierName n
-        //| Token.ModuleSegmentsOrQualifiedTypeOrVariant n -> Some <| IdentifierName n
+        | Token.Identifier ident -> Some ident
         | _ -> None)
     |> addCtxToStack Identifier
 
+let parseSingleValueIdentifier =
+    parseExpectedToken (ExpectedString "single value identifier") (function
+        | Token.Identifier (SingleValueIdentifier ident) -> Some ident
+        | _ -> None)
+
+let parseSingleValueOrTypeIdentifier : ExpressionParser<UnqualIdentifier> =
+    parseExpectedToken (ExpectedString "single value or type identifier") (function
+        | Token.Identifier (Identifier.SingleValueIdentifier ident) -> Some (UnqualIdentifier.ValueIdentifier ident)
+        | Token.Identifier (Identifier.TypeNameOrVariantOrTopLevelModule ident) ->
+            Some (UnqualIdentifier.TypeIdentifier ident)
+        | _ -> None)
 
 let parensedParser parser =
     succeed id
@@ -328,21 +337,22 @@ let rec parensifyParser parser =
 
 let typeNameParser =
     parseExpectedToken (ExpectedString "type name") (function
-        | Token.ModuleSegmentsOrQualifiedTypeOrVariant strings -> Some strings
-        | Token.TypeNameOrVariantOrTopLevelModule str -> Some (NEL.make str)
+        | Token.Identifier (ModuleSegmentsOrQualifiedTypeOrVariant ident) -> Some (QualifiedType ident)
+        | Token.Identifier (TypeNameOrVariantOrTopLevelModule ident) -> Some (UnqualType ident)
         | _ -> None)
 
 
 let parseSimpleParam =
     either
         (parseExpectedToken (ExpectedString "single param") (function
-            | SingleIdentifier str -> Some <| Named str
+            | Token.Identifier (SingleValueIdentifier str) -> Some <| Named str
             | Underscore -> Some <| Ignored
             | Token.Unit -> Some AssignmentPattern.Unit
             | _ -> None))
 
         (typeNameParser
          |> map (fun typeName ->
+             // @TODO: allow for using type fields also, not just a data-less type variant constructor
              DestructuredTypeVariant (typeName, List.empty)
              |> DestructuredPattern))
 
@@ -356,7 +366,7 @@ let parseAlias =
     |. spaces
     |. symbol AsKeyword
     |. spaces
-    |= parseIdentifier
+    |= parseSingleValueIdentifier
     |> addCtxToStack (SingleParam ParamAlias)
 
 let parseRecordDestructuringParam =
@@ -471,7 +481,7 @@ let parseParamList =
 
 
 
-let parseDotGetter : ExpressionParser<NEL<IdentifierName>> =
+let parseDotGetter : ExpressionParser<NEL<UnqualValueIdentifier>> =
     parseExpectedToken (ExpectedString "dot accessed field") (function
         | DotFieldPath fields -> Some fields
         | _ -> None)
@@ -560,7 +570,7 @@ and parseLetBindingsList =
 and parseRecordKeyValue =
     succeed (fun key expression -> (key, expression))
 
-    |= parseIdentifier
+    |= parseSingleValueIdentifier
     |. spaces
     |. symbol Colon
     |. spaces
@@ -691,10 +701,10 @@ and parseExpression : ExpressionParser<Expression> =
 
 (* Parse module *)
 
-let parseModuleName : ExpressionParser<ModuleName> =
+let parseModuleName : ExpressionParser<TypeOrModuleIdentifier> =
     parseExpectedToken (ExpectedString "module name") (function
-        | ModuleSegmentsOrQualifiedTypeOrVariant path -> Some path
-        | TypeNameOrVariantOrTopLevelModule path -> Some (NEL.make path)
+        | Token.Identifier (ModuleSegmentsOrQualifiedTypeOrVariant path) -> Some (QualifiedType path)
+        | Token.Identifier (TypeNameOrVariantOrTopLevelModule path) -> Some (UnqualType path)
         | _ -> None)
 
 
@@ -711,7 +721,7 @@ let parseModuleDeclaration =
         succeed (fun ident exposedAll ->
             { name = ident
               exposeVariants = Option.isSome exposedAll })
-        |= parseIdentifier
+        |= parseSingleValueOrTypeIdentifier
         |. spaces
         |= opt exposingAllParser
         |. spaces

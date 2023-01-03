@@ -5,36 +5,28 @@ open Lexer
 
 (* Names and identifiers *)
 
-/// @TODO: Maybe wrap this in a newtype so that we can unambigiously differentiate between declared identifiers and referenced identifiers?
-type IdentifierName = string
-
-
-type TypeName = NEL<IdentifierName> // to account for fact that it could be direct or qualified reference
-type ModuleName = NEL<IdentifierName> // to account for fact that it could be top level or submodule
-
-type MaybeQualifiedValue = NEL<IdentifierName>
 
 type DestructuredPattern =
-    | DestructuredRecord of IdentifierName list
+    | DestructuredRecord of Identifier list
     | DestructuredTuple of AssignmentPattern list // This should really be a type that we can ensure has at least 2 members
     | DestructuredCons of NEL<AssignmentPattern>
-    | DestructuredTypeVariant of TypeName * AssignmentPattern list
+    | DestructuredTypeVariant of TypeOrModuleIdentifier * AssignmentPattern list
 
 
 
 /// Named - or ignored - variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
 and AssignmentPattern =
-    | Named of IdentifierName
+    | Named of UnqualValueIdentifier
     | Ignored // i.e. the underscore
     | Unit
     | DestructuredPattern of DestructuredPattern
-    | Aliased of AssignmentPattern * alias : IdentifierName
+    | Aliased of AssignmentPattern * alias : UnqualValueIdentifier
 
 
 (* Types *)
 
 type TypeReference =
-    | Concrete of TypeName // name of the type referenced
+    | Concrete of UnqualValueIdentifier // name of the type referenced
     | Generic of string // name of the type param. This includes unused parameters in functions and case matches
 
 
@@ -51,13 +43,13 @@ and MentionableType =
 
 
 and RecordType =
-    { fields : Map<IdentifierName, MentionableType> }
+    { fields : Map<UnqualTypeOrModuleIdentifier, MentionableType> }
 
 
 
 and AliasType =
     { referent : MentionableType
-      specifiedTypeParams : IdentifierName list } // in case the underlying type needs it
+      specifiedTypeParams : UnqualValueIdentifier list } // in case the underlying type needs it
 
 and TupleType = { types : MentionableType list } // could process into pairs and triples once we've eliminated the quads (although they should be recognised by the compiler, they are still forbidden). Should we account for single entry tuples? Well no because those are just the same as the type in the single tuple. What about zero case tuples? Well no because those are just the same as Unit.
 
@@ -66,7 +58,7 @@ and TupleType = { types : MentionableType list } // could process into pairs and
 //type Triple<'a, 'b, 'c> = { fst : 'a; snd : 'b; third : 'c }
 
 type VariantCase =
-    { label : IdentifierName
+    { label : UnqualTypeOrModuleIdentifier
       contents : MentionableType list }
 
 type SumType = { variants : NEL<VariantCase> }
@@ -78,7 +70,7 @@ type TypeOfTypeDeclaration =
 
 /// A top level type declaration
 type TypeDeclaration =
-    { typeParams : IdentifierName list // generic params, could be empty
+    { typeParams : UnqualValueIdentifier list // generic params, could be empty
       typeOfTypeDeclaration : TypeOfTypeDeclaration }
 
 
@@ -96,7 +88,7 @@ type BuiltInPrimitiveTypes =
 // Not sure if this is useful yet
 type BuiltInCompoundTypes =
     | List of MentionableType // or of it makes sense to have these subtypes on the compound type variants yet
-    | Record of (IdentifierName * MentionableType) list
+    | Record of (UnqualValueIdentifier * MentionableType) list
     | Tuple of TupleType
 
 
@@ -121,12 +113,12 @@ type PrimitiveLiteralValue =
 
 type CompoundValues =
     | List of Expression list
-    | Record of (IdentifierName * Expression) list
+    | Record of (UnqualValueIdentifier * Expression) list
     | Tuple of (Expression * Expression * Expression list) // Because a tuple has at least two members
 
 // Not sure yet if it makes sense to have this as a separate type
 and CustomTypeValues =
-    { label : IdentifierName
+    { label : UnqualTypeOrModuleIdentifier
       values : ExplicitValue list }
 
 // lambas and named funcs have different syntaxes but i think they can both be treated as the same thing
@@ -152,7 +144,7 @@ and LetBinding =
 
 and SingleValueExpression =
     | ExplicitValue of ExplicitValue
-    | Identifier of IdentifierName // referencing some other expression...
+    | Identifier of Identifier // referencing some other expression...
     | LetExpression of (NEL<LetBinding> * Expression) // can't have lets outside of an expression
 
 
@@ -160,7 +152,7 @@ and SingleValueExpression =
 and CompoundExpression =
     | Operator of (Expression * (Operator * Expression)) // Multiple operators in a row are in right nested expressions
     | FunctionApplication of (Expression * Expression)
-    | DotAccess of Expression * NEL<IdentifierName>
+    | DotAccess of Expression * NEL<UnqualValueIdentifier>
 
 and Expression =
     | SingleValueExpression of SingleValueExpression
@@ -196,7 +188,7 @@ let typeOfPrimitiveLiteralValue =
 
 
 type ModuleExport =
-    { name : IdentifierName
+    { name : UnqualIdentifier
       exposeVariants : bool }
 
 
@@ -207,7 +199,7 @@ type ExportExposings =
 
 
 type ModuleDeclaration =
-    { moduleName : ModuleName
+    { moduleName : TypeOrModuleIdentifier
       exposing : ExportExposings }
 
 
@@ -231,12 +223,12 @@ type ModuleDeclaration =
 
 type ImportExposings =
     | NoExposeds
-    | ExplicitExposeds of IdentifierName list // exposing (Foo,Bar,baz)
+    | ExplicitExposeds of UnqualIdentifier list // exposing (Foo,Bar,baz)
     | ExposeAll // exposing (..)
 
 type ImportDeclaration =
-    { moduleName : ModuleName
-      alias : IdentifierName option
+    { moduleName : QualifiedModuleOrTypeIdentifier
+      alias : UnqualTypeOrModuleIdentifier option
       exposingMode : ImportExposings }
 
 
@@ -246,7 +238,7 @@ type ValueDeclaration =
 
 // Representing a whole file/module
 type YlModule =
-    { moduleName : ModuleName
+    { moduleName : QualifiedModuleOrTypeIdentifier
       exports : ExportExposings
       imports : ImportDeclaration list
       typeDeclarations : TypeDeclaration list

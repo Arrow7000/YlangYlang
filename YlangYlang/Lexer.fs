@@ -26,13 +26,59 @@ type WhitespaceChar =
     | NewLineChar
 
 
+(* Identifiers *)
 
+/// An unqualified lowercase identifier
+type UnqualValueIdentifier = | UnqualValueIdentifier of string
+
+
+/// An unqualified uppercase identifier, could be a type alias, type variant label/constructor, top-level module name, module segment, or module import alias
+type UnqualTypeOrModuleIdentifier = | UnqualTypeOrModuleIdentifier of string
+
+
+/// SomeModule.Segment.thing
+type QualifiedValueIdentifier =
+    | QualifiedValueIdentifier of
+        qualifiedPath : NEL<UnqualTypeOrModuleIdentifier> *
+        valueIdentifier : UnqualValueIdentifier
+
+
+/// SomeModule.Segment.Thing
+///
+/// Could signify either a module, or a qualified type reference - either fully qualified or qualified by alias
+type QualifiedModuleOrTypeIdentifier = | QualifiedModuleOrTypeIdentifier of NEL<UnqualTypeOrModuleIdentifier>
+
+
+/// All the possible values that consist of a single, unqualified, variable name; i.e. either an unqualified type or unqualified value
+type UnqualIdentifier =
+    | ValueIdentifier of UnqualValueIdentifier
+    | TypeIdentifier of UnqualTypeOrModuleIdentifier
+
+
+type TypeOrModuleIdentifier =
+    | QualifiedType of QualifiedModuleOrTypeIdentifier
+    | UnqualType of UnqualTypeOrModuleIdentifier
+
+
+type ValueIdentifier =
+    | QualifiedValue of QualifiedValueIdentifier
+    | UnqualValue of UnqualValueIdentifier
+
+
+
+(* Tokens *)
 
 type PrimitiveLiteral =
     | UintLiteral of uint
     | UfloatLiteral of float
     | StringLiteral of string
     | CharLiteral of char
+
+type Identifier =
+    | ModuleSegmentsOrQualifiedTypeOrVariant of QualifiedModuleOrTypeIdentifier // when it has dots in so it could be either a module name or refer to a (partially) qualified type or type variant
+    | TypeNameOrVariantOrTopLevelModule of UnqualTypeOrModuleIdentifier // when there are no dots in the segments so it could be either a module name or just refer to a type or type variant. There's probably better ways of doing this less ambiguously. Atm I'm gonna leave that for the parsing stage, but it could be moved into the lexing stage at some point if we want to.
+    | SingleValueIdentifier of UnqualValueIdentifier
+    | QualifiedPathValueIdentifier of QualifiedValueIdentifier
 
 type Operator =
     | EqualityOp
@@ -84,11 +130,8 @@ type Token =
     | Backslash // to signify start of lambda
     | Underscore // to signify unused function param
     | Unit // ()
-    | ModuleSegmentsOrQualifiedTypeOrVariant of NEL<string> // when it has dots in so it could be either a module name or refer to a (partially) qualified type or type variant
-    | TypeNameOrVariantOrTopLevelModule of string // when there are no dots in the segments so it could be either a module name or just refer to a type or type variant. There's probably better ways of doing this less ambiguously. Atm I'm gonna leave that for the parsing stage, but it could be moved into the lexing stage at some point if we want to.
-    | SingleIdentifier of string
-    | QualifiedIdentifier of segments : NEL<string>
-    | DotFieldPath of fields : NEL<string> // for <expression>.field.subfield paths
+    | Identifier of Identifier
+    | DotFieldPath of fields : NEL<UnqualValueIdentifier> // for `<expression>.field.subfield` paths. For that dot field sequence this would only contain `field` and `subfield`, because the expression that is dotted into could be any arbitrary expression, it doesn't necessarily have to be an identifier
     | Operator of Operator
 
 
@@ -379,47 +422,8 @@ module Matchers =
 
     let inKeywordMatcher = simpleMatch InKeyword "in\\b"
 
-    let moduleSegmentsMatcher cursor =
-        function
-        | MultiCharRegex "[A-Z]\w*(?:\.[A-Z]\w*)+(?=\s)" str ->
-            let token =
-                String.split '.' str
-                |> NEL.fromList
-                |> function
-                    | Some nel -> ModuleSegmentsOrQualifiedTypeOrVariant nel
-                    | None -> failwithf "Module segments list was somehow empty"
-
-            makeTokenWithCtx cursor token str
-        | _ -> NoMatch
-
-    let qualifiedIdentifierMatcher cursor =
-        function
-        | MultiCharRegex "[A-Z]\w*(?:\.[A-Z]\w*)*(?:\.[a-z]\w*)" str ->
-            String.split '.' str
-            |> function
-                | [] -> failwithf "Qualified identifier sequence was somehow empty"
-                | head :: tail -> makeTokenWithCtx cursor (QualifiedIdentifier (NEL.new_ head tail)) str
-
-        | _ -> NoMatch
-
-    let dotFieldPath cursor =
-        function
-        | MultiCharRegex "(?:\.[a-z]\w*)+" str ->
-            String.split '.' str
-            |> List.filter (String.IsNullOrWhiteSpace >> not)
-            |> (function
-            | [] -> failwithf "Dot field sequence was somehow empty"
-            | head :: rest -> makeTokenWithCtx cursor (DotFieldPath (NEL (head, rest))) str)
-
-        | _ -> NoMatch
-
     let importKeyword = simpleMatch ImportKeyWord "import\\b"
     let asKeyword = simpleMatch AsKeyword "as\\b"
-
-    let typeNameOrVariantOrTopLevelModule cursor =
-        function
-        | MultiCharRegex "[A-Z]\w*" str -> makeTokenWithCtx cursor (TypeNameOrVariantOrTopLevelModule str) str
-        | _ -> NoMatch
 
     let moduleKeyWordMatcher = simpleMatch ModuleKeyword "module\\b"
 
@@ -486,10 +490,78 @@ module Matchers =
     let underscore = simpleMatch Underscore "_"
 
 
+    let moduleSegmentsOrQualifiedTypeMatcher cursor =
+        function
+        | MultiCharRegex "[A-Z]\w*(?:\.[A-Z]\w*)+(?![\w\.])" str ->
+            let token =
+                String.split '.' str
+                |> List.map UnqualTypeOrModuleIdentifier
+                |> NEL.fromList
+                |> function
+                    | Some nel ->
+                        QualifiedModuleOrTypeIdentifier nel
+                        |> ModuleSegmentsOrQualifiedTypeOrVariant
+                        |> Identifier
+
+                    | None -> failwithf "Module segments list was somehow empty"
+
+            makeTokenWithCtx cursor token str
+        | _ -> NoMatch
+
+    let qualifiedIdentifierMatcher cursor =
+        function
+        | MultiCharRegex "[A-Z]\w*(?:\.[A-Z]\w*)*(?:\.[a-z]\w*)(?![\w\.])" str ->
+            String.split '.' str
+            |> function
+                | List.Empty -> failwithf "Qualified identifier sequence was somehow empty"
+
+                | List.Last (allButLast, last) ->
+                    match List.map UnqualTypeOrModuleIdentifier allButLast with
+                    | [] -> failwithf "Qualified identifier sequence was somehow empty"
+                    | head :: tail ->
+                        let token =
+                            QualifiedValueIdentifier (NEL.new_ head tail, UnqualValueIdentifier last)
+                            |> QualifiedPathValueIdentifier
+                            |> Identifier
+
+                        makeTokenWithCtx cursor token str
+
+        | _ -> NoMatch
+
+    let typeNameOrVariantOrTopLevelModule cursor =
+        function
+        | MultiCharRegex "[A-Z]\w*(?![\w\.])" str ->
+            makeTokenWithCtx
+                cursor
+                (UnqualTypeOrModuleIdentifier str
+                 |> TypeNameOrVariantOrTopLevelModule
+                 |> Identifier)
+                str
+        | _ -> NoMatch
+
+
+    let dotFieldPath cursor =
+        function
+        | MultiCharRegex "(?:\.[a-z]\w*)+" str ->
+            String.split '.' str
+            |> List.filter (String.IsNullOrWhiteSpace >> not)
+            |> List.map UnqualValueIdentifier
+            |> (function
+            | [] -> failwithf "Dot field sequence was somehow empty"
+            | head :: rest -> makeTokenWithCtx cursor (DotFieldPath (NEL (head, rest))) str)
+
+        | _ -> NoMatch
+
     /// Only run this after all the keywords have been tried!
     let valueIdentifier cursor =
         function
-        | MultiCharRegex "[a-z]\w*" ident -> makeTokenWithCtx cursor (SingleIdentifier ident) ident
+        | MultiCharRegex "[a-z]\w*" ident ->
+            makeTokenWithCtx
+                cursor
+                (UnqualValueIdentifier ident
+                 |> SingleValueIdentifier
+                 |> Identifier)
+                ident
         | _ -> NoMatch
 
     let otherOp cursor =
@@ -506,12 +578,8 @@ module Matchers =
           charLiteral
           letKeywordMatcher
           inKeywordMatcher
-          moduleSegmentsMatcher
-          qualifiedIdentifierMatcher
-          dotFieldPath
           importKeyword
           asKeyword
-          typeNameOrVariantOrTopLevelModule
           moduleKeyWordMatcher
           exposingKeyWordMatcher
           equality
@@ -552,6 +620,10 @@ module Matchers =
           colon
           backslash
           underscore
+          moduleSegmentsOrQualifiedTypeMatcher
+          qualifiedIdentifierMatcher
+          typeNameOrVariantOrTopLevelModule
+          dotFieldPath
           valueIdentifier
           otherOp ]
 
