@@ -31,6 +31,7 @@ type Context =
     | SingleParam of ParamContext
     | Identifier
     | Lambda
+    | Record
     | SingleLetAssignment
     | LetBindingsAssignmentList
     | SingleValueExpression
@@ -580,7 +581,7 @@ and parseRecordKeyValue =
 
     |= parseSingleValueIdentifier
     |. spaces
-    |. symbol Colon
+    |. symbol AssignmentEquals
     |. spaces
     |= lazyParser (fun _ -> parseExpression)
 
@@ -594,7 +595,7 @@ and parseRecord =
           spaces = spaces
           item = lazyParser (fun _ -> parseRecordKeyValue)
           supportsTrailingSeparator = false }
-
+    |> addCtxToStack Record
 
 and parseList =
     sequence
@@ -638,7 +639,7 @@ and parseSingleValueExpressions : ExpressionParser<Expression> =
                |> map SingleValueExpression.Identifier
 
                parseRecord
-               |> map (Record >> Compound >> ExplicitValue)
+               |> map (CompoundValues.Record >> Compound >> ExplicitValue)
 
                parseList
                |> map (List >> Compound >> ExplicitValue)
@@ -698,6 +699,24 @@ and parseExpression : ExpressionParser<Expression> =
     |= parseCompoundExpressions
     |. spaces
     |> addCtxToStack WholeExpression
+
+
+
+
+
+
+
+
+
+
+
+
+
+let parseTypeExpression = () // how to do this...
+
+
+
+
 
 
 
