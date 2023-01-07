@@ -26,8 +26,8 @@ and AssignmentPattern =
 (* Types *)
 
 type TypeReference =
-    | Concrete of UnqualValueIdentifier // name of the type referenced
-    | Generic of string // name of the type param. This includes unused parameters in functions and case matches
+    | Concrete of QualifiedModuleOrTypeIdentifier // name of the type referenced
+    | Generic of UnqualValueIdentifier // name of the type param. This includes unused parameters in functions and case matches
 
 
 
@@ -39,6 +39,7 @@ and MentionableType =
     | Tuple of TupleType
     | Name of TypeReference
     | Arrow of (MentionableType * MentionableType)
+    | UnitType of Unit
 
 
 
@@ -155,10 +156,16 @@ and CompoundExpression =
     | FunctionApplication of Expression * NEL<Expression>
     | DotAccess of Expression * NEL<UnqualValueIdentifier>
 
+and ControlFlowExpression =
+    | IfExpression of condition : Expression * ifTrue : Expression * ifFalse : Expression
+    | CaseMatch of exprToMatch : Expression * branches : NEL<AssignmentPattern * Expression>
+
+
 and Expression =
     | SingleValueExpression of SingleValueExpression
     | CompoundExpression of CompoundExpression
     | ParensedExpression of Expression
+    | ControlFlowExpression of ControlFlowExpression
 
 
 // Not sure if it makes sense to have these yet, when we haven't yet enforced that the types are consistent...

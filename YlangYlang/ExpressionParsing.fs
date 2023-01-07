@@ -69,7 +69,7 @@ type ExpressionParserResult<'a> = ParseResultWithContext<'a, TokenWithContext, C
 
 type OpOrFunctionApplication =
     | Operator of (Operator * Expression)
-    | FunctionApplication of NEL<Expression>
+    | FunctionApplication of NEL<Expression> * OpOrFunctionApplication option
 
 
 
@@ -490,14 +490,17 @@ let parseDotGetter : ExpressionParser<NEL<UnqualValueIdentifier>> =
 
 
 
-let combineEndParser expr opAndFuncParam : Expression =
+let rec combineEndParser expr opAndFuncParam : Expression =
     match opAndFuncParam with
     | Some (Operator (op, operandExpr)) ->
         CompoundExpression.Operator (expr, (op, operandExpr))
         |> Expression.CompoundExpression
-    | Some (FunctionApplication paramExprList) ->
-        CompoundExpression.FunctionApplication (expr, paramExprList)
-        |> Expression.CompoundExpression
+    | Some (FunctionApplication (paramExprList, nestedEndExprOpt)) ->
+        let firstExpr =
+            CompoundExpression.FunctionApplication (expr, paramExprList)
+            |> Expression.CompoundExpression
+
+        combineEndParser firstExpr nestedEndExprOpt
     | None -> expr
 
 
@@ -645,11 +648,12 @@ and startParser =
             DotAccess (expr, dotFields)
             |> Expression.CompoundExpression
 
-        | None -> ParensedExpression expr)
+        | None -> expr)
 
     |= either
         parseSingleValueExpressions
         (parensedParser (lazyParser (fun _ -> parseExpression))
+         |> map ParensedExpression
          |> addCtxToStack ParensExpression)
     |= opt parseDotGetter
 
@@ -663,11 +667,59 @@ and endParser =
          |. spaces
          |= lazyParser (fun _ -> parseExpression))
 
-        (succeed FunctionApplication
-         |= oneOrMore (startParser |. spaces))
+        (succeed (fun params' endOpt -> FunctionApplication (params', endOpt))
+         |= oneOrMore (startParser |. spaces)
+         |. spaces
+         |= opt (lazyParser <| fun _ -> endParser))
     |. spaces
 
 
+
+and parseIfExpression =
+    let parseExpr = lazyParser (fun _ -> parseExpression)
+
+    parseSameColBlock (
+        succeed (fun condition ifTrue ifFalse -> IfExpression (condition, ifTrue, ifFalse))
+        |. symbol IfKeyword
+        |. spaces
+        |= parseExpr // @TODO: need to ensure that the expression is indented from the start of the `if` keyword
+        |. spaces
+        |. symbol ThenKeyword
+        |. spaces
+        |= parseExpr // @TODO: need to ensure that the expression is indented from the start of the `if` keyword, or from the `then` keyword, if `then` is on a new line
+        |. spaces
+        |. symbol ElseKeyword
+        |. spaces
+        |= parseExpr // @TODO: need to ensure that the expression is indented from the start of the `if` keyword, or from the `else` keyword, if `else` is on a new line
+    )
+
+and parseCaseMatch =
+    let parseExpr = lazyParser (fun _ -> parseExpression)
+
+    parseSameColBlock (
+        succeed (fun exprToMatch branches -> CaseMatch (exprToMatch, branches))
+        |. symbol CaseKeyword
+        |. spaces
+        |= parseExpr
+        |. spaces
+        |. symbol OfKeyword
+        |. spaces
+        |= oneOrMore (
+            parseIndentedColBlock (
+                succeed (fun assignment expr -> (assignment, expr))
+                |= parseDelimitedParam
+                |. spaces
+                |. symbol Lexer.Arrow
+                |. spaces
+                |= parseExpr
+                |. spaces
+            )
+        )
+    )
+
+and parseControlFlowExpression =
+    either parseIfExpression parseCaseMatch
+    |> map ControlFlowExpression
 
 and parseCompoundExpressions : ExpressionParser<Expression> =
     succeed combineEndParser
@@ -685,7 +737,7 @@ and parseExpression : ExpressionParser<Expression> =
     succeed id
 
     |. spaces
-    |= parseCompoundExpressions
+    |= either parseCompoundExpressions parseControlFlowExpression
     |. spaces
     |> addCtxToStack WholeExpression
 
