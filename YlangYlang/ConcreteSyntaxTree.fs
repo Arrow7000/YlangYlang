@@ -150,8 +150,9 @@ and SingleValueExpression =
 
 /// @TODO: would be good to flatten these constructors in the abstract syntax tree so we can represent the operators and function applications as a list, not a tree with heavy right hand side children
 and CompoundExpression =
-    | Operator of (Expression * (Operator * Expression)) // Multiple operators in a row are in right nested expressions
-    | FunctionApplication of (Expression * Expression)
+    // Multiple operators in a row are in right nested expressions
+    | Operator of (Expression * (Operator * Expression))
+    | FunctionApplication of Expression * NEL<Expression>
     | DotAccess of Expression * NEL<UnqualValueIdentifier>
 
 and Expression =
