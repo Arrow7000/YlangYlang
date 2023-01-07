@@ -505,6 +505,36 @@ let rec combineEndParser expr opAndFuncParam : Expression =
 
 
 
+let infixOpDeclarationParser =
+    let associativityParser =
+        parseExpectedToken (ExpectedString "associativity signifier") (function
+            | Token.Identifier (SingleValueIdentifier (UnqualValueIdentifier str)) ->
+                match str with
+                | "left" -> Some Left
+                | "right" -> Some Right
+                | "non" -> Some Non
+                | _ -> None
+            | _ -> None)
+
+    succeed (fun assoc precedence op ident ->
+        { name = op
+          associativity = assoc
+          precedence = int precedence
+          value = ident })
+
+    |. symbol InfixKeyword
+    |. spaces
+    |= associativityParser
+    |. spaces
+    |= parseUint
+    |. spaces
+    |. symbol ParensOpen
+    |= parseOperator
+    |. symbol ParensClose
+    |. spaces
+    |. symbol AssignmentEquals
+    |. spaces
+    |= parseIdentifier
 
 
 

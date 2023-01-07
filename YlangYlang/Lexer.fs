@@ -96,7 +96,7 @@ type Operator =
     | ForwardPipeOp
     | BackwardPipeOp
     | ConsOp
-    | OtherOp of string
+    | OtherOp of UnqualValueIdentifier
 
 type Token =
     | Whitespace of WhitespaceChar
@@ -124,6 +124,7 @@ type Token =
     | IfKeyword
     | ThenKeyword
     | ElseKeyword
+    | InfixKeyword
     | Colon
     | Arrow
     | DoubleDot
@@ -470,6 +471,7 @@ module Matchers =
     let ifKeyword = simpleMatch IfKeyword "if\\b"
     let thenKeyword = simpleMatch ThenKeyword "then\\b"
     let elseKeyword = simpleMatch ElseKeyword "else\\b"
+    let infixKeyword = simpleMatch InfixKeyword "infix\\b"
 
     let forwardComposeOp = simpleMatch (Operator ForwardComposeOp) "\>\>"
     let backwardComposeOp = simpleMatch (Operator BackwardComposeOp) "\<\<"
@@ -567,7 +569,12 @@ module Matchers =
     let otherOp cursor =
         function
         | MultiCharRegex "[<>!@#\\\\\/*^%£$%&*\\-+|=]+" opChars ->
-            makeTokenWithCtx cursor (OtherOp opChars |> Operator) opChars
+            makeTokenWithCtx
+                cursor
+                (UnqualValueIdentifier opChars
+                 |> OtherOp
+                 |> Operator)
+                opChars
         | _ -> NoMatch
 
     let allMatchersInOrder =
@@ -597,6 +604,7 @@ module Matchers =
           ifKeyword
           thenKeyword
           elseKeyword
+          infixKeyword
           forwardComposeOp
           backwardComposeOp
           forwardPipeOp

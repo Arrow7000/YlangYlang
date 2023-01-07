@@ -112,6 +112,20 @@ type PrimitiveLiteralValue =
     | StringPrimitive of string
     | UnitPrimitive
 
+
+type InfixOpAssociativity =
+    | Left
+    | Right
+    | Non
+
+type InfixOpDeclaration =
+    { name : Lexer.Operator
+      associativity : InfixOpAssociativity
+      precedence : int
+      /// The value should be a function taking exactly two parameters
+      value : Identifier }
+
+
 type CompoundValues =
     | List of Expression list
     | Record of (UnqualValueIdentifier * Expression) list
