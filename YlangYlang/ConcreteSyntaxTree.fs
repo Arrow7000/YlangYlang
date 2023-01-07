@@ -152,7 +152,7 @@ and ExplicitValue =
 
 /// @TODO: allow for destructured params here at some point
 and LetBinding =
-    { name : AssignmentPattern
+    { bindPattern : AssignmentPattern
       value : Expression }
 
 
@@ -181,6 +181,11 @@ and Expression =
     | ParensedExpression of Expression
     | ControlFlowExpression of ControlFlowExpression
 
+
+
+type ValueDeclaration =
+    { valueName : UnqualValueIdentifier
+      value : Expression }
 
 // Not sure if it makes sense to have these yet, when we haven't yet enforced that the types are consistent...
 // Unless... maybe these type getters can return a Result of either consistent types or of conflicting types, which can then be used for type errors or type hinting or somesuch...?
@@ -221,7 +226,7 @@ type ExportExposings =
 
 
 type ModuleDeclaration =
-    { moduleName : TypeOrModuleIdentifier
+    { moduleName : QualifiedModuleOrTypeIdentifier
       exposing : ExportExposings }
 
 
@@ -242,10 +247,12 @@ type ModuleDeclaration =
 //    | ExportExplicits of ValueOrTypeExport list
 
 
+//import <Identifier>{.<Identifier>} [[as <Identifier>] [exposing (..)]]
+//import <Identifier>{.<Identifier>} [[as <Identifier>] [exposing ( { <Identifier>|<identifier>, } <Identifier>|<identifier> )]]
 
 type ImportExposings =
     | NoExposeds
-    | ExplicitExposeds of UnqualIdentifier list // exposing (Foo,Bar,baz)
+    | ExplicitExposeds of NEL<UnqualIdentifier> // exposing (Foo,Bar,baz)
     | ExposeAll // exposing (..)
 
 type ImportDeclaration =
@@ -254,14 +261,13 @@ type ImportDeclaration =
       exposingMode : ImportExposings }
 
 
-type ValueDeclaration =
-    { typeSignature : TypeDeclaration list option // either it's explicit or it'll have to be inferred
-      body : Expression } // aaand heeere's where the magic happens!
+//type ValueDeclaration =
+//    { typeSignature : TypeDeclaration list option // either it's explicit or it'll have to be inferred
+//      body : Expression } // aaand heeere's where the magic happens!
 
 // Representing a whole file/module
 type YlModule =
-    { moduleName : QualifiedModuleOrTypeIdentifier
-      exports : ExportExposings
+    { moduleDecl : ModuleDeclaration
       imports : ImportDeclaration list
-      typeDeclarations : TypeDeclaration list
+      //typeDeclarations : TypeDeclaration list
       valueDeclarations : ValueDeclaration list }

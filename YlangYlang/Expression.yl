@@ -1,11 +1,18 @@
-﻿let
-  blabla (sdf,_) = (df  ++ dfg_ ).df.sdf.jk3
-  other ( _ ::  khkjh_ ) = ()
-  asdf ({qwe,opi} :: p  ) = 2346
-  tyupled ( dfg as coolAlias,dff ) = '1'
-  other (parms, test as key) = ()
-  also ({ xd ,yoy} as test) = test.yoy
-  thing ( {dsdf }:: rest as tastyAlias) = [ sd, 34 , asdf++ 45 ++ "sdf"]
-  thing ( {x,  y } :: rest as tastyAlias) = [ sd, 34 , asdf++ 45 ++ "sdf"]
-in
- ( sdf- 234).yay.sub.fields ++ 984 + sdf asdfs 34 f 34.34 f.f.f.f.f f + (f e e r / 5 * (23 ))
+﻿module Main.Thing exposing (thisThing,Parser(..))
+
+import Main.Other as MO
+import Main.OtherThing as MOT exposing (all,sorts,ofThings)
+
+
+whatever _ =
+  case thing == okay   
+    of
+   Test     -> 
+     let
+        _ = Debug.log "" ()
+    in
+     ( if a then b else 
+                                                c) 
+   _ :: tail -> sub.field param1 alsoParam
+
+cmds = 613

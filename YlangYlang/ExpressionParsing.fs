@@ -35,6 +35,7 @@ type Context =
     | List
     | Tuple
     | SingleLetAssignment
+    | ValueDeclaration
     | LetBindingsAssignmentList
     | SingleValueExpression
     | CompoundExpression
@@ -555,7 +556,7 @@ let rec parseLambda =
 and singleLetAssignment =
     parseIndentedColBlock (
         succeed (fun name params' (expr : Expression) ->
-            { name = name
+            { bindPattern = name
               value =
                 match params' with
                 | [] -> expr
@@ -681,9 +682,9 @@ and startParser =
         | None -> expr)
 
     |= oneOf [ parseSingleValueExpressions
-        (parensedParser (lazyParser (fun _ -> parseExpression))
-         |> map ParensedExpression
-         |> addCtxToStack ParensExpression)
+               (parensedParser (lazyParser (fun _ -> parseExpression))
+                |> map ParensedExpression
+                |> addCtxToStack ParensExpression)
                parseControlFlowExpression ]
     |= opt parseDotGetter
 
@@ -708,41 +709,39 @@ and endParser =
 and parseIfExpression =
     let parseExpr = lazyParser (fun _ -> parseExpression)
 
-        succeed (fun condition ifTrue ifFalse -> IfExpression (condition, ifTrue, ifFalse))
-        |. symbol IfKeyword
-        |. spaces
+    succeed (fun condition ifTrue ifFalse -> IfExpression (condition, ifTrue, ifFalse))
+    |. symbol IfKeyword
+    |. spaces
     |= parseExpr
-        |. spaces
-        |. symbol ThenKeyword
-        |. spaces
-        |= parseExpr // @TODO: need to ensure that the expression is indented from the start of the `if` keyword, or from the `then` keyword, if `then` is on a new line
-        |. spaces
-        |. symbol ElseKeyword
-        |. spaces
+    |. spaces
+    |. symbol ThenKeyword
+    |. spaces
+    |= parseExpr
+    |. spaces
+    |. symbol ElseKeyword
+    |. spaces
     |= parseExpr
 
 
 and parseCaseMatch =
     let parseExpr = lazyParser (fun _ -> parseExpression)
 
-    parseSameColBlock (
-        succeed (fun exprToMatch branches -> CaseMatch (exprToMatch, branches))
-        |. symbol CaseKeyword
-        |. spaces
-        |= parseExpr
-        |. spaces
-        |. symbol OfKeyword
-        |. spaces
-        |= oneOrMore (
-            parseIndentedColBlock (
-                succeed (fun assignment expr -> (assignment, expr))
-                |= parseDelimitedParam
-                |. spaces
-                |. symbol Lexer.Arrow
-                |. spaces
-                |= parseExpr
-                |. spaces
-            )
+    succeed (fun exprToMatch branches -> CaseMatch (exprToMatch, branches))
+    |. symbol CaseKeyword
+    |. spaces
+    |= parseExpr
+    |. spaces
+    |. symbol OfKeyword
+    |. spaces
+    |= oneOrMore (
+        parseIndentedColBlock (
+            succeed (fun assignment expr -> (assignment, expr))
+            |= parseDelimitedParam
+            |. spaces
+            |. symbol Lexer.Arrow
+            |. spaces
+            |= parseExpr
+            |. spaces
         )
     )
 
@@ -774,6 +773,29 @@ and parseExpression : ExpressionParser<Expression> =
 
 
 
+let parseValueDeclaration =
+    parseIndentedColBlock (
+        succeed (fun name params' (expr : Expression) ->
+            { valueName = name
+              value =
+                match params' with
+                | [] -> expr
+                | head :: tail ->
+                    ({ params_ = NEL.new_ head tail
+                       body = expr })
+                    |> Function
+                    |> ExplicitValue
+                    |> Expression.SingleValueExpression })
+        |= parseSingleValueIdentifier
+        |. spaces
+        |= repeat (parseTopLevelParam |. spaces)
+        |. spaces
+        |. symbol Token.AssignmentEquals
+        |. spaces
+        |= lazyParser (fun _ -> parseExpression)
+        |. spaces
+    )
+    |> addCtxToStack SingleLetAssignment
 
 
 
@@ -797,24 +819,30 @@ let parseTypeExpression = () // how to do this...
 
 
 
+
+
 (* Parse module *)
 
-let parseModuleName : ExpressionParser<TypeOrModuleIdentifier> =
+let parseModuleName : ExpressionParser<QualifiedModuleOrTypeIdentifier> =
     parseExpectedToken (ExpectedString "module name") (function
-        | Token.Identifier (ModuleSegmentsOrQualifiedTypeOrVariant path) -> Some (QualifiedType path)
-        | Token.Identifier (TypeNameOrVariantOrTopLevelModule path) -> Some (UnqualType path)
+        | Token.Identifier (ModuleSegmentsOrQualifiedTypeOrVariant path) -> Some path
+        | Token.Identifier (TypeNameOrVariantOrTopLevelModule ident) ->
+            Some (QualifiedModuleOrTypeIdentifier <| NEL.make ident)
         | _ -> None)
 
+let parseModuleAlias : ExpressionParser<UnqualTypeOrModuleIdentifier> =
+    parseExpectedToken (ExpectedString "module name") (function
+        | Token.Identifier (TypeNameOrVariantOrTopLevelModule ident) -> Some ident
+        | _ -> None)
 
-let parseModuleDeclaration =
-    let exposingAllParser =
-        symbol ParensOpen
-        |. spaces
-        |. symbol DoubleDot
-        |. spaces
-        |. symbol ParensClose
+let exposingAllParser =
+    symbol ParensOpen
+    |. spaces
+    |. symbol DoubleDot
+    |. spaces
+    |. symbol ParensClose
 
-
+let parseModuleDeclaration : ExpressionParser<ModuleDeclaration> =
     let explicitExportItem =
         succeed (fun ident exposedAll ->
             { name = ident
@@ -854,7 +882,48 @@ let parseModuleDeclaration =
     |. symbol ExposingKeyword
     |. spaces
     |= either (succeed None |. exposingAllParser) (succeed Some |= explicitExports)
+
+
+let parseImport =
+    succeed (fun moduleName alias exposeMode ->
+        { moduleName = moduleName
+          alias = alias
+          exposingMode = exposeMode |> Option.defaultValue NoExposeds })
+    |. symbol ImportKeyWord
     |. spaces
+    |= parseModuleName
+    |= opt (
+        succeed id
+
+        |. spaces
+        |. symbol AsKeyword
+        |. spaces
+        |= parseModuleAlias
+    )
+    |= opt (
+        succeed id
+
+        |. spaces
+        |. symbol ExposingKeyword
+        |. spaces
+        |= either
+            (succeed ExposeAll |. exposingAllParser)
+            (succeed (fun first others -> NEL.new_ first others |> ExplicitExposeds)
+
+             |. symbol ParensOpen
+             |. spaces
+             |= parseSingleValueOrTypeIdentifier
+             |= repeat (
+                 succeed id
+
+                 |. spaces
+                 |. symbol Comma
+                 |. spaces
+                 |= parseSingleValueOrTypeIdentifier
+             )
+             |. spaces
+             |. symbol ParensClose)
+    )
 
 
 
@@ -864,9 +933,18 @@ let parseModuleDeclaration =
 
 
 
+let parseEntireModule =
+    succeed (fun moduleDeclaration imports values ->
+        { moduleDecl = moduleDeclaration
+          imports = imports
+          valueDeclarations = values })
 
-
-
+    |. spaces
+    |= parseModuleDeclaration
+    |. spaces
+    |= repeat (parseImport |. spaces)
+    |. spaces
+    |= repeat (parseValueDeclaration |. spaces)
 
 
 
@@ -876,4 +954,5 @@ let parseModuleDeclaration =
 
 
 /// Just a simple re-export for easier running
-let run = Parser.run
+let run : ExpressionParser<'a> -> TokenWithContext list -> ExpressionParserResult<'a> =
+    Parser.run

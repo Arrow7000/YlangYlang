@@ -8,7 +8,7 @@ let main argv =
     Lexer.tokeniseString fileText
     |> Result.map (
         tee (List.map (fun t -> t.token) >> printfn "%A")
-        >> Parser.run ExpressionParsing.parseExpression
+        >> ExpressionParsing.run ExpressionParsing.parseEntireModule
         >> DebugHelpers.formatErrors
     )
     |> printfn "%A"
