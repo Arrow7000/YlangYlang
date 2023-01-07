@@ -320,21 +320,15 @@ let teeResult f parser =
         f result
         result)
 
-
 let splitParser chomper parser : Parser<'a, 'token, 'ctx, 'err> =
     Parser (fun ctx ->
         let chomped = chomper ctx
         let newCtx = { ctx with tokensLeft = chomped }
         let parseResult = runWithCtx parser newCtx
 
-        let diff =
-            List.length parseResult.prevTokens
-            - List.length ctx.prevTokens
+        let tokensParsed = List.skip (List.length ctx.prevTokens) parseResult.prevTokens
 
-        { parseResult with
-            tokensLeft =
-                parseResult.tokensLeft
-                @ List.skip diff ctx.tokensLeft }
+        { parseResult with tokensLeft = List.skip (List.length tokensParsed) ctx.tokensLeft }
 
     )
 

@@ -680,11 +680,11 @@ and startParser =
 
         | None -> expr)
 
-    |= either
-        parseSingleValueExpressions
+    |= oneOf [ parseSingleValueExpressions
         (parensedParser (lazyParser (fun _ -> parseExpression))
          |> map ParensedExpression
          |> addCtxToStack ParensExpression)
+               parseControlFlowExpression ]
     |= opt parseDotGetter
 
 
@@ -708,11 +708,10 @@ and endParser =
 and parseIfExpression =
     let parseExpr = lazyParser (fun _ -> parseExpression)
 
-    parseSameColBlock (
         succeed (fun condition ifTrue ifFalse -> IfExpression (condition, ifTrue, ifFalse))
         |. symbol IfKeyword
         |. spaces
-        |= parseExpr // @TODO: need to ensure that the expression is indented from the start of the `if` keyword
+    |= parseExpr
         |. spaces
         |. symbol ThenKeyword
         |. spaces
@@ -720,8 +719,8 @@ and parseIfExpression =
         |. spaces
         |. symbol ElseKeyword
         |. spaces
-        |= parseExpr // @TODO: need to ensure that the expression is indented from the start of the `if` keyword, or from the `else` keyword, if `else` is on a new line
-    )
+    |= parseExpr
+
 
 and parseCaseMatch =
     let parseExpr = lazyParser (fun _ -> parseExpression)
@@ -747,6 +746,7 @@ and parseCaseMatch =
         )
     )
 
+
 and parseControlFlowExpression =
     either parseIfExpression parseCaseMatch
     |> map ControlFlowExpression
@@ -767,7 +767,7 @@ and parseExpression : ExpressionParser<Expression> =
     succeed id
 
     |. spaces
-    |= either parseCompoundExpressions parseControlFlowExpression
+    |= parseCompoundExpressions
     |. spaces
     |> addCtxToStack WholeExpression
 
