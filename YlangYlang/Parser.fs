@@ -88,16 +88,9 @@ let addCtxToStack (ctx : 'ctx) (Parser parseFn) : Parser<'a, 'token, 'ctx, 'err>
 
 let private runWithCtx (Parser parseFn) parseCtx : ParseResultWithContext<'a, 'token, 'ctx, 'err> = parseFn parseCtx
 
-let run parser (tokens : 'token list) : ParseResultWithContext<'a, 'token, 'ctx, 'err> =
-    runWithCtx
-        parser
-        { prevTokens = List.empty
-          tokensLeft = tokens
-          contextStack = List.empty
-          committed = List.empty }
 
 
-let getCtxFromStack (Parser parseFn : Parser<'a, 'token, 'ctx, 'err>) : 'ctx list =
+let getCtxFromResultStack (Parser parseFn : Parser<'a, 'token, 'ctx, 'err>) : 'ctx list =
     let result = parseFn blankParseCtx
     result.contextStack
 
@@ -215,11 +208,10 @@ let wasCommittedInParser
     let rec comparator resultCommitteds ctxCommitteds =
         match resultCommitteds, ctxCommitteds with
         | [], [] -> false
-        | [], _ -> false
-        | _, [] -> true
+        | [], _ :: _ -> false
+        | _ :: _, [] -> true
         | _ :: r, _ :: c -> comparator r c
 
-    //List.length result.committed > List.length ctx.committed
     comparator result.committed ctx.committed
 
 
@@ -228,26 +220,13 @@ let either
     (parserB : Parser<'a, 'token, 'ctx, 'err>)
     : Parser<'a, 'token, 'ctx, 'err> =
     Parser (fun record ->
-        let recordStrippedOfCommits = { record with committed = List.empty }
-
-        /// @TODO: not actually sure why things break when we add the commits back in to the success results... that doesn't seem right.
-        /// But basically my suspicion is that unlike my initial mental model of how either and oneOf work, setting the commit for the parser isn't actually contained to a single parser, but also 'infects' all subsequent parsers - because the way the keep and skip operators work is that they map the next parser into the previous one - and so it maintains the commit level even for subsequent parsers, resulting in behaviour like "any parsing non-match after you've committed anywhere, is going to be fatal, regardless if you actually just intended that thing to be optional"
-        let addCommitsBackIn (result : ParseResultWithContext<'a, 'token, 'ctx, 'err>) =
-            { result with committed = result.committed @ record.committed }
-
-
-        match runWithCtx parserA recordStrippedOfCommits with
+        match runWithCtx parserA record with
         | { parseResult = ParsingSuccess _ } as result -> result
         | { parseResult = NoParsingMatch firstErrs } as result ->
-            let didCommitEvenMore =
-                match result.committed with
-                | _ :: _ -> true
-                | [] -> false
-
-            if didCommitEvenMore then
-                addCommitsBackIn result
+            if wasCommittedInParser record result then
+                result
             else
-                match runWithCtx parserB recordStrippedOfCommits with
+                match runWithCtx parserB record with
                 | { parseResult = ParsingSuccess _ } as result -> result
                 | { parseResult = NoParsingMatch sndErrs } as result ->
                     let errs =
@@ -261,7 +240,7 @@ let either
                             MultipleErrs [ OneErr err1
                                            OneErr err2 ]
 
-                    replaceParseResult (NoParsingMatch errs) (addCommitsBackIn result))
+                    replaceParseResult (NoParsingMatch errs) (result))
 
 
 let rec oneOf (parsers : Parser<'a, 'token, 'ctx, 'err> list) : Parser<'a, 'token, 'ctx, 'err> =
@@ -468,21 +447,16 @@ let opt (parser : Parser<'a, 'token, 'ctx, 'err>) : Parser<'a option, 'token, 'c
     Parser (fun record ->
         match runWithCtx parser record with
         | { parseResult = ParsingSuccess _ } as result -> mapResult Some result
-        | { parseResult = NoParsingMatch errs } as result ->
-            match record.committed with
-            | [] -> makeParseResultWithCtx (ParsingSuccess None) record
-            | () :: _ -> result |> mapResult Some)
+        | { parseResult = NoParsingMatch _ } as result ->
+            if wasCommittedInParser record result then
+                mapResult Some result
+            else
+                makeParseResultWithCtx (ParsingSuccess None) record)
 
 
 
 let commit =
     Parser (fun ctx -> makeParseResultWithCtx (ParsingSuccess ()) { ctx with committed = () :: ctx.committed })
-
-
-let commitWithLog logger =
-    Parser (fun ctx ->
-        logger ctx.prevTokens
-        makeParseResultWithCtx (ParsingSuccess ()) { ctx with committed = () :: ctx.committed })
 
 
 let uncommit =
@@ -546,3 +520,12 @@ let sequence (config : SequenceConfig<'a, 'token, 'simpleToken, 'ctx, 'err>) : P
     |. symbol startToken
     |. spaces
     |= either (succeed List.empty |. symbol endToken) postStartParser
+
+
+let run parser (tokens : 'token list) : ParseResultWithContext<'a, 'token, 'ctx, 'err> =
+    runWithCtx
+        parser
+        { prevTokens = List.empty
+          tokensLeft = tokens
+          contextStack = List.empty
+          committed = List.empty }

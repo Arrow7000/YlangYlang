@@ -55,7 +55,8 @@ let testOperatorExpression =
                     (CompoundExpression (
                         CompoundExpression.Operator (
                             makeNumberExpression (FloatLiteral -4.6),
-                            (AppendOp, SingleValueExpression (ExplicitValue (Primitive (StringPrimitive "test"))))
+                            AppendOp,
+                            SingleValueExpression (ExplicitValue (Primitive (StringPrimitive "test")))
                         )
                      )
                      |> makeSuccess tokens')
@@ -112,7 +113,8 @@ let testCompoundExpression =
                         CompoundExpression (
                             CompoundExpression.Operator (
                                 makeNumberExpression (IntLiteral 34),
-                                (PlusOp, makeNumberExpression (FloatLiteral -4.6))
+                                PlusOp,
+                                makeNumberExpression (FloatLiteral -4.6)
                             )
                         )
                      )
@@ -137,13 +139,14 @@ let testParensExpressionWithMultiOperators =
                         CompoundExpression (
                             CompoundExpression.Operator (
                                 makeNumberExpression (IntLiteral 34),
-                                (PlusOp,
-                                 (CompoundExpression (
-                                     CompoundExpression.Operator (
-                                         makeNumberExpression (FloatLiteral -4.6),
-                                         (DivOp, makeNumberExpression (IntLiteral 7))
-                                     )
-                                 )))
+                                PlusOp,
+                                (CompoundExpression (
+                                    CompoundExpression.Operator (
+                                        makeNumberExpression (FloatLiteral -4.6),
+                                        DivOp,
+                                        makeNumberExpression (IntLiteral 7)
+                                    )
+                                ))
                             )
                         )
                      )

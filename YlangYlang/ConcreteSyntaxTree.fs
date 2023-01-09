@@ -10,7 +10,7 @@ type DestructuredPattern =
     | DestructuredRecord of Identifier list
     | DestructuredTuple of AssignmentPattern list // This should really be a type that we can ensure has at least 2 members
     | DestructuredCons of NEL<AssignmentPattern>
-    | DestructuredTypeVariant of TypeOrModuleIdentifier * AssignmentPattern list
+    | DestructuredTypeVariant of constructor : TypeOrModuleIdentifier * AssignmentPattern list
 
 
 
@@ -38,7 +38,7 @@ and MentionableType =
     | Record of RecordType
     | Tuple of TupleType
     | Name of TypeReference
-    | Arrow of (MentionableType * MentionableType)
+    | Arrow of fromType : MentionableType * toType : MentionableType
     | UnitType of Unit
 
 
@@ -129,16 +129,15 @@ type InfixOpDeclaration =
 type CompoundValues =
     | List of Expression list
     | Record of (UnqualValueIdentifier * Expression) list
-    | Tuple of (Expression * Expression * Expression list) // Because a tuple has at least two members
+    | Tuple of Expression * NEL<Expression> // Because a tuple has at least two members
 
 // Not sure yet if it makes sense to have this as a separate type
 and CustomTypeValues =
     { label : UnqualTypeOrModuleIdentifier
       values : ExplicitValue list }
 
-// lambas and named funcs have different syntaxes but i think they can both be treated as the same thing
 and FunctionValue =
-    { params_ : NEL<AssignmentPattern> // cos if it didn't have any then it would just be a regular value
+    { params_ : NEL<AssignmentPattern> // cos if it didn't have any then it would just be a regular value expression
       body : Expression }
 
 
@@ -160,15 +159,15 @@ and LetBinding =
 and SingleValueExpression =
     | ExplicitValue of ExplicitValue
     | Identifier of Identifier // referencing some other expression...
-    | LetExpression of (NEL<LetBinding> * Expression) // can't have lets outside of an expression
+    | LetExpression of bindings : NEL<LetBinding> * inExpr : Expression // can't have lets outside of an expression
 
 
 /// @TODO: would be good to flatten these constructors in the abstract syntax tree so we can represent the operators and function applications as a list, not a tree with heavy right hand side children
 and CompoundExpression =
     // Multiple operators in a row are in right nested expressions
-    | Operator of (Expression * (Operator * Expression))
-    | FunctionApplication of Expression * NEL<Expression>
-    | DotAccess of Expression * NEL<UnqualValueIdentifier>
+    | Operator of left : Expression * op : Operator * right : Expression
+    | FunctionApplication of funcExpr : Expression * params' : NEL<Expression>
+    | DotAccess of expr : Expression * dotSequence : NEL<UnqualValueIdentifier>
 
 and ControlFlowExpression =
     | IfExpression of condition : Expression * ifTrue : Expression * ifFalse : Expression

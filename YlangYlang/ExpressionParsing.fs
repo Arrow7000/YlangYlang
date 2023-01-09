@@ -33,7 +33,7 @@ type Context =
     | Lambda
     | Record
     | List
-    | Tuple
+    | ParensedOrTuple
     | SingleLetAssignment
     | ValueDeclaration
     | LetBindingsAssignmentList
@@ -495,7 +495,7 @@ let parseDotGetter : ExpressionParser<NEL<UnqualValueIdentifier>> =
 let rec combineEndParser expr opAndFuncParam : Expression =
     match opAndFuncParam with
     | Some (Operator (op, operandExpr)) ->
-        CompoundExpression.Operator (expr, (op, operandExpr))
+        CompoundExpression.Operator (expr, op, operandExpr)
         |> Expression.CompoundExpression
     | Some (FunctionApplication (paramExprList, nestedEndExprOpt)) ->
         let firstExpr =
@@ -628,14 +628,18 @@ and parseList =
     |> addCtxToStack List
 
 
-and parseTuple =
+and parseTupleOrParensedExpr =
     let parseTupleItem = lazyParser (fun _ -> parseExpression)
 
-    succeed (fun first second rest -> CompoundValues.Tuple (first, second, rest))
+    succeed (fun first more ->
+        match more with
+        | [] -> ParensedExpression first
+        | head :: rest ->
+            CompoundValues.Tuple (first, NEL.new_ head rest)
+            |> Compound
+            |> ExplicitValue
+            |> Expression.SingleValueExpression)
     |. symbol ParensOpen
-    |. spaces
-    |= parseTupleItem
-    |. symbol Comma
     |. spaces
     |= parseTupleItem
     |. spaces
@@ -643,11 +647,12 @@ and parseTuple =
         succeed id
 
         |. symbol Comma
+        |. spaces
         |= parseTupleItem
         |. spaces
     )
     |. symbol ParensClose
-    |> addCtxToStack Tuple
+    |> addCtxToStack ParensedOrTuple
 
 
 
@@ -666,8 +671,6 @@ and parseSingleValueExpressions : ExpressionParser<Expression> =
                parseList
                |> map (CompoundValues.List >> Compound >> ExplicitValue)
 
-               parseTuple |> map (Compound >> ExplicitValue)
-
                parsePrimitiveLiteral
                |> map (Primitive >> ExplicitValue) ]
     |> addCtxToStack SingleValueExpression
@@ -683,16 +686,13 @@ and startParser =
 
         | None -> expr)
     |= oneOf [ parseSingleValueExpressions
-               (parensedParser (lazyParser (fun _ -> parseExpression))
-                |> map ParensedExpression
-                |> addCtxToStack ParensExpression)
+               parseTupleOrParensedExpr
                parseControlFlowExpression ]
     |= opt parseDotGetter
 
 
 and endParser =
     succeed id
-
     |= either
         (succeed (fun op expr -> Operator (op, expr))
          |= parseOperator
@@ -915,7 +915,6 @@ let parseImport =
         |= either
             (succeed ExposeAll |. exposingAllParser)
             (succeed (fun first others -> NEL.new_ first others |> ExplicitExposeds)
-
              |. symbol ParensOpen
              |. spaces
              |= parseSingleValueOrTypeIdentifier
