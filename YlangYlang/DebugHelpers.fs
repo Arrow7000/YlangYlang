@@ -2,11 +2,10 @@
 
 open Lexer
 open Parser
-open ExpressionParsing
 
 
 /// Get the actual constituent string from the `TokenWithContext`s
-let private formatTokensAsText (tokens : TokenWithContext list) =
+let formatTokensAsText (tokens : TokenWithContext list) =
     tokens
     |> List.fold (fun str token -> str + String.ofSeq token.chars) ""
 
@@ -24,7 +23,7 @@ let rec private makeErrsStringly result errs =
 
 
 /// Return a result with either the success result, or a friendlier formatted error data
-let formatErrors (res : ExpressionParserResult<_>) =
+let formatErrors res =
     match res with
     | { parseResult = NoParsingMatch errs } as result -> Error <| makeErrsStringly result errs
     | { parseResult = ParsingSuccess s } as result -> Ok result

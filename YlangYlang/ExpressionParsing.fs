@@ -187,8 +187,9 @@ let private parseIndentedColBlock parser =
             includedTokens)
         parser
 
+/// Ensure no tokens were left unparsed.
 /// `end` is a keyword in F# so have to use `isEnd`
-let isEnd : ExpressionParser<unit> =
+let ensureEnd : ExpressionParser<unit> =
     parseSimple (fun tokensLeft ->
         match tokensLeft with
         | [] -> Ok (), List.empty
@@ -582,16 +583,17 @@ and singleLetAssignment =
 /// @TODO: need to ensure that it's ok for the in to be on the same indentation level as the let
 /// @TODO: also, for some reason it only looks for one assignment and then throws an error if it doesn't find an in keyword right after... not sure why. I think it's because there's something wrong with the blockParser, that it doesn't really work correctly, cos of how it handles whitespace and so on.
 and parseLetBindingsList =
-    (succeed (fun letBindings expr -> LetExpression (letBindings, expr))
-     |. symbol LetKeyword
-     |. commit
-     |. spaces
-     |= oneOrMore singleLetAssignment
-     |. spaces
-     |. symbol InKeyword
-     |. spaces
-     |= lazyParser (fun _ -> parseExpression)
-     |> addCtxToStack LetBindingsAssignmentList)
+    succeed (fun letBindings expr -> LetExpression (letBindings, expr))
+    |. symbol LetKeyword
+    |. commit
+    |. spaces
+    |= oneOrMore singleLetAssignment
+    |. spaces
+    |. symbol InKeyword
+    |. commit
+    |. spaces
+    |= lazyParser (fun _ -> parseExpression)
+    |> addCtxToStack LetBindingsAssignmentList
 
 
 and parseRecordKeyValue =
@@ -680,7 +682,6 @@ and startParser =
             |> Expression.CompoundExpression
 
         | None -> expr)
-
     |= oneOf [ parseSingleValueExpressions
                (parensedParser (lazyParser (fun _ -> parseExpression))
                 |> map ParensedExpression
@@ -711,14 +712,17 @@ and parseIfExpression =
 
     succeed (fun condition ifTrue ifFalse -> IfExpression (condition, ifTrue, ifFalse))
     |. symbol IfKeyword
+    |. commit
     |. spaces
     |= parseExpr
     |. spaces
     |. symbol ThenKeyword
+    |. commit
     |. spaces
     |= parseExpr
     |. spaces
     |. symbol ElseKeyword
+    |. commit
     |. spaces
     |= parseExpr
 
@@ -728,10 +732,12 @@ and parseCaseMatch =
 
     succeed (fun exprToMatch branches -> CaseMatch (exprToMatch, branches))
     |. symbol CaseKeyword
+    |. commit
     |. spaces
     |= parseExpr
     |. spaces
     |. symbol OfKeyword
+    |. commit
     |. spaces
     |= oneOrMore (
         parseIndentedColBlock (
@@ -938,13 +944,13 @@ let parseEntireModule =
         { moduleDecl = moduleDeclaration
           imports = imports
           valueDeclarations = values })
-
     |. spaces
     |= parseModuleDeclaration
     |. spaces
     |= repeat (parseImport |. spaces)
     |. spaces
     |= repeat (parseValueDeclaration |. spaces)
+    |. ensureEnd
 
 
 

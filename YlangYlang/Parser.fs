@@ -21,15 +21,19 @@ type ParseContext<'token, 'ctx, 'err> =
       prevTokens : 'token list
       tokensLeft : 'token list
       /// Commit stack
-      committed : bool list }
+      committed : unit list }
 
 type ParseResultWithContext<'a, 'token, 'ctx, 'err> =
     { parseResult : ParseResult<'a, 'token, 'ctx, 'err>
       contextStack : 'ctx list
+      /// prevTokens only reflects tokens that were successfully parsed, not ones that were attempted but failed
       prevTokens : 'token list
       tokensLeft : 'token list
       /// Commit stack
-      committed : bool list }
+      committed : unit list }
+
+
+
 
 
 type private ParseFn<'a, 'token, 'ctx, 'err> =
@@ -82,7 +86,6 @@ let addCtxToStack (ctx : 'ctx) (Parser parseFn) : Parser<'a, 'token, 'ctx, 'err>
 
 
 
-
 let private runWithCtx (Parser parseFn) parseCtx : ParseResultWithContext<'a, 'token, 'ctx, 'err> = parseFn parseCtx
 
 let run parser (tokens : 'token list) : ParseResultWithContext<'a, 'token, 'ctx, 'err> =
@@ -98,6 +101,11 @@ let getCtxFromStack (Parser parseFn : Parser<'a, 'token, 'ctx, 'err>) : 'ctx lis
     let result = parseFn blankParseCtx
     result.contextStack
 
+
+let trace logger parser =
+    Parser (fun ctx ->
+        logger ctx
+        runWithCtx parser ctx)
 
 /// Parser that always succeeds
 let succeed a : Parser<'a, 'token, 'ctx, 'err> =
@@ -180,26 +188,67 @@ let map3
     |> join
 
 
+
+let keep
+    (parserA : Parser<'a -> 'b, 'token, 'ctx, 'err>)
+    (parserB : Parser<'a, 'token, 'ctx, 'err>)
+    : Parser<'b, 'token, 'ctx, 'err> =
+    map2 apply parserA parserB
+
+let (|=) a b = keep a b
+
+
+let skip (parserA : Parser<'keep, 'token, 'ctx, 'err>) (parserB : Parser<'ignore, 'token, 'ctx, 'err>) =
+    map2 (fun a _ -> a) parserA parserB
+
+let (|.) a b = skip a b
+
+
+let ignore p = map ignore p
+
+
+
+let wasCommittedInParser
+    (ctx : ParseContext<'token, 'ctx, 'err>)
+    (result : ParseResultWithContext<'a, 'token, 'ctx, 'err>)
+    =
+    let rec comparator resultCommitteds ctxCommitteds =
+        match resultCommitteds, ctxCommitteds with
+        | [], [] -> false
+        | [], _ -> false
+        | _, [] -> true
+        | _ :: r, _ :: c -> comparator r c
+
+    //List.length result.committed > List.length ctx.committed
+    comparator result.committed ctx.committed
+
+
 let either
     (parserA : Parser<'a, 'token, 'ctx, 'err>)
     (parserB : Parser<'a, 'token, 'ctx, 'err>)
     : Parser<'a, 'token, 'ctx, 'err> =
     Parser (fun record ->
-        match runWithCtx parserA { record with committed = List.empty } with
+        let recordStrippedOfCommits = { record with committed = List.empty }
+
+        /// @TODO: not actually sure why things break when we add the commits back in to the success results... that doesn't seem right.
+        /// But basically my suspicion is that unlike my initial mental model of how either and oneOf work, setting the commit for the parser isn't actually contained to a single parser, but also 'infects' all subsequent parsers - because the way the keep and skip operators work is that they map the next parser into the previous one - and so it maintains the commit level even for subsequent parsers, resulting in behaviour like "any parsing non-match after you've committed anywhere, is going to be fatal, regardless if you actually just intended that thing to be optional"
+        let addCommitsBackIn (result : ParseResultWithContext<'a, 'token, 'ctx, 'err>) =
+            { result with committed = result.committed @ record.committed }
+
+
+        match runWithCtx parserA recordStrippedOfCommits with
         | { parseResult = ParsingSuccess _ } as result -> result
         | { parseResult = NoParsingMatch firstErrs } as result ->
             let didCommitEvenMore =
-                result.committed
-                |> List.tryHead
-                |> Option.defaultValue false
+                match result.committed with
+                | _ :: _ -> true
+                | [] -> false
 
             if didCommitEvenMore then
-                printfn "didCommitEvenMore: %A" didCommitEvenMore
-                { result with committed = result.committed @ record.committed }
+                addCommitsBackIn result
             else
-                match runWithCtx parserB { record with committed = List.empty } with
-                | { parseResult = ParsingSuccess _ } as result ->
-                    { result with committed = result.committed @ record.committed }
+                match runWithCtx parserB recordStrippedOfCommits with
+                | { parseResult = ParsingSuccess _ } as result -> result
                 | { parseResult = NoParsingMatch sndErrs } as result ->
                     let errs =
                         match firstErrs, sndErrs with
@@ -212,7 +261,7 @@ let either
                             MultipleErrs [ OneErr err1
                                            OneErr err2 ]
 
-                    makeParseResultWithCtx (NoParsingMatch errs) { record with committed = result.committed })
+                    replaceParseResult (NoParsingMatch errs) (addCommitsBackIn result))
 
 
 let rec oneOf (parsers : Parser<'a, 'token, 'ctx, 'err> list) : Parser<'a, 'token, 'ctx, 'err> =
@@ -232,22 +281,6 @@ let lazyParser thunk : Parser<'a, 'token, 'ctx, 'err> =
 
 
 
-let keep
-    (parserA : Parser<'a -> 'b, 'token, 'ctx, 'err>)
-    (parserB : Parser<'a, 'token, 'ctx, 'err>)
-    : Parser<'b, 'token, 'ctx, 'err> =
-    map2 apply parserA parserB
-
-let (|=) a b = keep a b
-
-
-let skip (parserA : Parser<'keep, 'token, 'ctx, 'err>) (parserB : Parser<'ignore, 'token, 'ctx, 'err>) =
-    map2 (fun a _ -> a) parserA parserB
-
-let (|.) a b = skip a b
-
-
-let ignore p = map ignore p
 
 
 /// For when there are two paths to the same thing
@@ -413,7 +446,11 @@ let rec repeat (Parser parseFn : Parser<'a, 'token, 'ctx, 'err>) : Parser<'a lis
                 else
                     mapResult List.singleton)
 
-        | { parseResult = NoParsingMatch _ } -> makeParseResultWithCtx (ParsingSuccess List.empty) ctx
+        | { parseResult = NoParsingMatch errs } as result ->
+            if wasCommittedInParser ctx result then
+                replaceParseResult (NoParsingMatch errs) result
+            else
+                makeParseResultWithCtx (ParsingSuccess List.empty) ctx
 
     Parser traverser
 
@@ -430,13 +467,22 @@ let oneOrMore (parser : Parser<'a, 'token, 'ctx, 'err>) : Parser<NEL<'a>, 'token
 let opt (parser : Parser<'a, 'token, 'ctx, 'err>) : Parser<'a option, 'token, 'ctx, 'err> =
     Parser (fun record ->
         match runWithCtx parser record with
-        | { parseResult = ParsingSuccess s } as result -> mapResult Some result
-        | { parseResult = NoParsingMatch _ } -> makeParseResultWithCtx (ParsingSuccess None) record)
+        | { parseResult = ParsingSuccess _ } as result -> mapResult Some result
+        | { parseResult = NoParsingMatch errs } as result ->
+            match record.committed with
+            | [] -> makeParseResultWithCtx (ParsingSuccess None) record
+            | () :: _ -> result |> mapResult Some)
 
 
 
 let commit =
-    Parser (fun ctx -> makeParseResultWithCtx (ParsingSuccess ()) { ctx with committed = true :: ctx.committed })
+    Parser (fun ctx -> makeParseResultWithCtx (ParsingSuccess ()) { ctx with committed = () :: ctx.committed })
+
+
+let commitWithLog logger =
+    Parser (fun ctx ->
+        logger ctx.prevTokens
+        makeParseResultWithCtx (ParsingSuccess ()) { ctx with committed = () :: ctx.committed })
 
 
 let uncommit =
@@ -446,9 +492,9 @@ let uncommit =
             { ctx with
                 committed =
                     match ctx.committed with
-                    | [] -> ctx.committed
-                    | true :: rest -> rest // remove one layer I guess...
-                    | false :: rest -> false :: rest })
+                    | [] -> [] // default is backtracking
+                    | () :: rest -> rest } // remove one layer I guess
+    )
 
 
 
@@ -499,4 +545,4 @@ let sequence (config : SequenceConfig<'a, 'token, 'simpleToken, 'ctx, 'err>) : P
 
     |. symbol startToken
     |. spaces
-    |= postStartParser
+    |= either (succeed List.empty |. symbol endToken) postStartParser

@@ -17,8 +17,8 @@
     <None Include="Expression.yl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <Compile Include="ExpressionParsing.fs" />
     <Compile Include="DebugHelpers.fs" />
+    <Compile Include="ExpressionParsing.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

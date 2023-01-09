@@ -289,13 +289,19 @@ let testCommitment =
 
     let oneCommitParser =
         either
-            (succeed (fun a _ _ -> a)
+            (succeed (fun b _ _ -> b)
 
-             |= parseA
-             |. commit
+             |. parseA
              |= parseB
-             |= parseC)
-            (parseD |. parseC)
+             |. commit
+             |= parseC
+             |= parseD)
+
+            (succeed id
+
+             |. parseA
+             |= parseD
+             |. parseC)
 
 
     let doubleCommitParser =
@@ -303,40 +309,21 @@ let testCommitment =
             (succeed (fun a _ _ -> a)
 
              |= parseA
-             |. commit
              |= parseB
+             |. commit
              |= (either
                      (succeed (fun _ a -> a)
 
                       |= parseC
+                      |. parseD
                       |. commit
                       |= parseA)
                      parseD))
-            (parseD |. parseC)
+            (succeed id |. parseA |= parseW)
 
 
 
     [ makeTestCase "Once we get past commit point we no longer backtrack" (fun _ ->
-          let tokens = [ A; C ]
-
-          let actual = run oneCommitParser tokens
-
-          let coreExpected = makeResult (Error [ makeExpectedToken B C ]) [ A ] [ C ]
-
-          let expected =
-              { coreExpected with
-                  parseResult =
-                      NoParsingMatch (
-                          OneErr
-                              { err = makeExpectedToken B C
-                                prevTokens = [ A ]
-                                contextStack = List.empty }
-                      )
-                  committed = [ true ] }
-
-          expectEqual actual expected None)
-
-      makeTestCase "Get another token past commit and still don't backtrack" (fun _ ->
           let tokens = [ A; B; D ]
 
           let actual = run oneCommitParser tokens
@@ -352,21 +339,41 @@ let testCommitment =
                                 prevTokens = [ A; B ]
                                 contextStack = List.empty }
                       )
-                  committed = [ true ] }
+                  committed = [ () ] }
+
+          expectEqual actual expected None)
+
+      makeTestCase "Get another token past commit and still don't backtrack" (fun _ ->
+          let tokens = [ A; B; C; W ]
+
+          let actual = run oneCommitParser tokens
+
+          let coreExpected = makeResult (Error [ makeExpectedToken D W ]) [ A; B; C ] [ W ]
+
+          let expected =
+              { coreExpected with
+                  parseResult =
+                      NoParsingMatch (
+                          OneErr
+                              { err = makeExpectedToken D W
+                                prevTokens = [ A; B; C ]
+                                contextStack = List.empty }
+                      )
+                  committed = [ () ] }
 
           expectEqual actual expected None)
 
       makeTestCase "If not past commit point should still backtrack" (fun _ ->
-          let tokens = [ D; B ]
+          let tokens = [ A; C ]
 
           let actual = run oneCommitParser tokens
 
           let coreExpected =
               makeResult
-                  (Error [ makeExpectedToken A D
-                           makeExpectedToken C B ])
-                  List.empty
-                  tokens
+                  (Error [ makeExpectedToken B C
+                           makeExpectedToken D C ])
+                  [ A ]
+                  [ C ]
 
           let expected =
               { coreExpected with
@@ -375,107 +382,100 @@ let testCommitment =
                           MultipleErrs[
 
                           OneErr
-                              { err = makeExpectedToken A D
-                                prevTokens = List.empty
+                              { err = makeExpectedToken B C
+                                prevTokens = [ A ]
                                 contextStack = List.empty }
 
                           OneErr
-                              { err = makeExpectedToken C B
-                                prevTokens = [ D ]
+                              { err = makeExpectedToken D C
+                                prevTokens = [ A ]
                                 contextStack = List.empty }]
                       ) }
 
           expectEqual actual expected None)
 
       makeTestCase "Commit twice still doesn't backtrack" (fun _ ->
-          let tokens = [ A; B; C; D ]
+          let tokens = [ A; B; C; D; W ]
 
           let actual = run doubleCommitParser tokens
 
-          let coreExpected = makeResult (Error [ makeExpectedToken A D ]) [ A; B; C ] [ D ]
+          let coreExpected = makeResult (Error [ makeExpectedToken A W ]) [ A; B; C; D ] [ W ]
 
           let expected =
               { coreExpected with
                   parseResult =
                       NoParsingMatch (
                           OneErr
-                              { err = makeExpectedToken A D
-                                prevTokens = [ A; B; C ]
+                              { err = makeExpectedToken A W
+                                prevTokens = [ A; B; C; D ]
                                 contextStack = List.empty }
                       )
-                  committed = [ true; true ] }
+                  committed = [ (); () ] }
 
           expectEqual actual expected None)
 
       makeTestCase "Only get past one commit in a two commit parser" (fun _ ->
-          let tokens = [ A; B; W ]
+          let tokens = [ A; B; C; W ]
 
           let actual = run doubleCommitParser tokens
 
           let coreExpected =
               makeResult
-                  (Error [ makeExpectedToken C W
-                           makeExpectedToken D W
-                           makeExpectedToken D A ])
-                  List.empty
-                  tokens
+                  (Error [ makeExpectedToken D W
+                           makeExpectedToken D C ])
+                  [ A; B ]
+                  [ C; W ]
 
           let expected =
               { coreExpected with
                   parseResult =
                       NoParsingMatch (
                           MultipleErrs [ OneErr
-                                             { err = makeExpectedToken C W
-                                               prevTokens = [ A; B ]
-                                               contextStack = List.empty }
-                                         OneErr
                                              { err = makeExpectedToken D W
-                                               prevTokens = [ A; B ]
+                                               prevTokens = [ A; B; C ]
                                                contextStack = List.empty }
                                          OneErr
-                                             { err = makeExpectedToken D A
-                                               prevTokens = List.empty
-                                               contextStack = List.empty }
-
-                                          ]
+                                             { err = makeExpectedToken D C
+                                               prevTokens = [ A; B ]
+                                               contextStack = List.empty } ]
                       )
-                  committed = List.empty }
+                  committed = [ () ] }
 
           expectEqual actual expected None)
 
       makeTestCase "Fail parser before it commits to anything and pass on a different branch" (fun _ ->
-          let tokens = [ D; C ]
+          let tokens = [ A; W ]
 
           let actual = run doubleCommitParser tokens
 
-          let expected = makeResult (Ok D) tokens List.empty
+          let expected = makeResult (Ok W) tokens List.empty
 
 
           expectEqual actual expected None)
 
       makeTestCase "Fail parser before it commits to anything and so return both branch errors" (fun _ ->
-          let tokens = [ D; B; D ]
+          let tokens = [ A; D; B ]
 
           let actual = run doubleCommitParser tokens
 
           let coreExpected =
               makeResult
-                  (Error [ makeExpectedToken A D
-                           makeExpectedToken C B ])
-                  List.empty
-                  tokens
+                  (Error [ makeExpectedToken B D
+                           makeExpectedToken W D ])
+                  [ A ]
+                  [ D; B ]
 
           let expected =
               { coreExpected with
                   parseResult =
                       NoParsingMatch (
                           MultipleErrs [ OneErr
-                                             { err = makeExpectedToken A D
-                                               prevTokens = List.empty
+                                             { err = makeExpectedToken B D
+                                               prevTokens = [ A ]
                                                contextStack = List.empty }
                                          OneErr
-                                             { err = makeExpectedToken C B
-                                               prevTokens = [ D ]
+                                             { err = makeExpectedToken W D
+                                               prevTokens = [ A ]
                                                contextStack = List.empty } ]
                       ) }
 
@@ -513,7 +513,7 @@ let testCommitment =
                                 prevTokens = [ A; B; C ]
                                 contextStack = List.empty }
                       )
-                  committed = [ true; true ] }
+                  committed = [ (); () ] }
 
           expectEqual actual expected None)
 
@@ -548,7 +548,7 @@ let testCommitment =
                                 prevTokens = [ A; B; C ]
                                 contextStack = List.empty }
                       )
-                  committed = [ true ] }
+                  committed = [ () ] }
 
           expectEqual actual expected None) ]
     |> testList "Test committing"
