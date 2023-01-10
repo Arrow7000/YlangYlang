@@ -37,7 +37,7 @@ type Context =
     | SingleLetAssignment
     | ValueDeclaration
     | LetBindingsAssignmentList
-    | SingleValueExpression
+    | DelimitedExpressions
     | CompoundExpression
     | WholeExpression
     | ParensExpression
@@ -68,9 +68,11 @@ type ExpressionParser<'a> = Parser<'a, TokenWithContext, Context, ParserError>
 type ExpressionParserResult<'a> = ParseResultWithContext<'a, TokenWithContext, Context, ParserError>
 
 
+type OperatorSuffix = NEL<Operator * Expression>
+
 type OpOrFunctionApplication =
-    | Operator of (Operator * Expression)
-    | FunctionApplication of NEL<Expression> * OpOrFunctionApplication option
+    | Operator of OperatorSuffix
+    | FunctionApplication of NEL<Expression> * OperatorSuffix option
 
 
 
@@ -494,15 +496,15 @@ let parseDotGetter : ExpressionParser<NEL<UnqualValueIdentifier>> =
 
 let rec combineEndParser expr opAndFuncParam : Expression =
     match opAndFuncParam with
-    | Some (Operator (op, operandExpr)) ->
-        CompoundExpression.Operator (expr, op, operandExpr)
+    | Some (Operator opAndOperandNel) ->
+        CompoundExpression.Operator (expr, opAndOperandNel)
         |> Expression.CompoundExpression
     | Some (FunctionApplication (paramExprList, nestedEndExprOpt)) ->
         let firstExpr =
             CompoundExpression.FunctionApplication (expr, paramExprList)
             |> Expression.CompoundExpression
 
-        combineEndParser firstExpr nestedEndExprOpt
+        combineEndParser firstExpr (Option.map Operator nestedEndExprOpt)
     | None -> expr
 
 
@@ -575,19 +577,19 @@ and singleLetAssignment =
         |. spaces
         |= lazyParser (fun _ -> parseExpression)
         |. spaces
+        |. ensureEnd // this ensures that the next let binding can't start more indented than this assignment did
     )
     |> addCtxToStack SingleLetAssignment
 
 
 
-/// @TODO: need to ensure that it's ok for the in to be on the same indentation level as the let
-/// @TODO: also, for some reason it only looks for one assignment and then throws an error if it doesn't find an in keyword right after... not sure why. I think it's because there's something wrong with the blockParser, that it doesn't really work correctly, cos of how it handles whitespace and so on.
 and parseLetBindingsList =
     succeed (fun letBindings expr -> LetExpression (letBindings, expr))
     |. symbol LetKeyword
     |. commit
     |. spaces
-    |= oneOrMore singleLetAssignment
+    // this `parseSameColBlock` ensures that successive let bindings can't start on a lower indentation than the first let binding
+    |= parseSameColBlock (oneOrMore singleLetAssignment)
     |. spaces
     |. symbol InKeyword
     |. commit
@@ -656,28 +658,7 @@ and parseTupleOrParensedExpr =
 
 
 
-and parseSingleValueExpressions : ExpressionParser<Expression> =
-    succeed Expression.SingleValueExpression
-    |= oneOf [ parseLambda |> map (Function >> ExplicitValue)
-
-               parseLetBindingsList
-
-               parseIdentifier
-               |> map SingleValueExpression.Identifier
-
-               parseRecord
-               |> map (CompoundValues.Record >> Compound >> ExplicitValue)
-
-               parseList
-               |> map (CompoundValues.List >> Compound >> ExplicitValue)
-
-               parsePrimitiveLiteral
-               |> map (Primitive >> ExplicitValue) ]
-    |> addCtxToStack SingleValueExpression
-
-
-
-and startParser =
+and parseDelimExpressions =
     succeed (fun expr dotFieldsOpt ->
         match dotFieldsOpt with
         | Some dotFields ->
@@ -685,25 +666,45 @@ and startParser =
             |> Expression.CompoundExpression
 
         | None -> expr)
-    |= oneOf [ parseSingleValueExpressions
-               parseTupleOrParensedExpr
-               parseControlFlowExpression ]
+    |= (either
+            (succeed Expression.SingleValueExpression
+             |= oneOf [ parseIdentifier
+                        |> map SingleValueExpression.Identifier
+
+                        parseRecord
+                        |> map (CompoundValues.Record >> Compound >> ExplicitValue)
+
+                        parseList
+                        |> map (CompoundValues.List >> Compound >> ExplicitValue)
+
+                        parsePrimitiveLiteral
+                        |> map (Primitive >> ExplicitValue) ])
+            parseTupleOrParensedExpr)
     |= opt parseDotGetter
+    |> addCtxToStack DelimitedExpressions
 
 
-and endParser =
-    succeed id
-    |= either
-        (succeed (fun op expr -> Operator (op, expr))
-         |= parseOperator
-         |. spaces
-         |= lazyParser (fun _ -> parseExpression))
+and parseFuncAppSuffix =
+    succeed (fun params' opSuffix -> FunctionApplication (params', opSuffix))
 
-        (succeed (fun params' endOpt -> FunctionApplication (params', endOpt))
-         |= oneOrMore (startParser |. spaces)
-         |. spaces
-         |= opt (lazyParser <| fun _ -> endParser))
+    |= oneOrMore (parseDelimExpressions |. spaces)
     |. spaces
+    |= opt parseOperatorSuffix
+
+and parseOperatorSuffix =
+    oneOrMore (
+        succeed (fun op operand -> (op, operand))
+
+        |= parseOperator
+        |. spaces
+        |= lazyParser (fun _ -> parseExpression)
+    )
+
+
+
+and startParser = parseDelimExpressions
+
+and endParser = either (parseOperatorSuffix |> map Operator) parseFuncAppSuffix
 
 
 
@@ -762,7 +763,6 @@ and parseCompoundExpressions : ExpressionParser<Expression> =
     |= startParser
     |. spaces
     |= opt endParser
-    |. spaces
     |> addCtxToStack CompoundExpression
 
 
@@ -772,7 +772,20 @@ and parseExpression : ExpressionParser<Expression> =
     succeed id
 
     |. spaces
-    |= parseCompoundExpressions
+    |= oneOf [ parseCompoundExpressions
+
+               parseControlFlowExpression
+               |> map Expression.SingleValueExpression
+
+               parseLetBindingsList
+               |> map Expression.SingleValueExpression
+
+               parseLambda
+               |> map (
+                   Function
+                   >> ExplicitValue
+                   >> Expression.SingleValueExpression
+               ) ]
     |. spaces
     |> addCtxToStack WholeExpression
 

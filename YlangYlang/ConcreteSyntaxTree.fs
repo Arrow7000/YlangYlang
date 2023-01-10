@@ -154,31 +154,32 @@ and LetBinding =
     { bindPattern : AssignmentPattern
       value : Expression }
 
+and ControlFlowExpression =
+    | IfExpression of condition : Expression * ifTrue : Expression * ifFalse : Expression
+    | CaseMatch of exprToMatch : Expression * branches : NEL<AssignmentPattern * Expression>
+
 
 
 and SingleValueExpression =
     | ExplicitValue of ExplicitValue
     | Identifier of Identifier // referencing some other expression...
     | LetExpression of bindings : NEL<LetBinding> * inExpr : Expression // can't have lets outside of an expression
+    | ControlFlowExpression of ControlFlowExpression
 
 
 /// @TODO: would be good to flatten these constructors in the abstract syntax tree so we can represent the operators and function applications as a list, not a tree with heavy right hand side children
 and CompoundExpression =
     // Multiple operators in a row are in right nested expressions
-    | Operator of left : Expression * op : Operator * right : Expression
+    | Operator of left : Expression * opSequence : NEL<Operator * Expression>
     | FunctionApplication of funcExpr : Expression * params' : NEL<Expression>
     | DotAccess of expr : Expression * dotSequence : NEL<UnqualValueIdentifier>
 
-and ControlFlowExpression =
-    | IfExpression of condition : Expression * ifTrue : Expression * ifFalse : Expression
-    | CaseMatch of exprToMatch : Expression * branches : NEL<AssignmentPattern * Expression>
 
 
 and Expression =
     | SingleValueExpression of SingleValueExpression
     | CompoundExpression of CompoundExpression
-    | ParensedExpression of Expression
-    | ControlFlowExpression of ControlFlowExpression
+    | ParensedExpression of Expression // doesn't make much difference for the syntax tree, but useful for debugging
 
 
 
