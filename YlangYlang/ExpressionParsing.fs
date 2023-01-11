@@ -354,9 +354,9 @@ let parseSimpleParam =
             | Token.Unit -> Some AssignmentPattern.Unit
             | _ -> None))
 
+        // This just parses a single type variant without any data, because the latter would require being delimited, and is therefore parsed elsewhere
         (typeNameParser
          |> map (fun typeName ->
-             // @TODO: allow for using type fields also, not just a data-less type variant constructor
              DestructuredTypeVariant (typeName, List.empty)
              |> DestructuredPattern))
 

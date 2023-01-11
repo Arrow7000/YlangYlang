@@ -7,11 +7,11 @@ import Main.OtherThing as MOT exposing (all,sorts,ofThings)
 whatever _ =
   case thing == okay   
     of
-   Test     -> 
+   Test   a b ((c,f) as bla)  -> 
      let
          xsdfasdfasdf = (3.ert)
          _ = Debug.log "" ()
-        dfg=3-1
+         dfg=3-1
     in
       ( if a then b d cl (3,4,67.9) sdf.da.d + f a (b sd f) k 8 - 3 else 
                                                 c,()  ) 
