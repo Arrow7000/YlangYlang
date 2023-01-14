@@ -81,7 +81,8 @@ let private replaceParseResult
 let addCtxToStack (ctx : 'ctx) (Parser parseFn) : Parser<'a, 'token, 'ctx, 'err> =
     Parser (fun record ->
         let newRecord = { record with contextStack = ctx :: record.contextStack }
-        parseFn newRecord)
+        let result = parseFn newRecord
+        { result with contextStack = record.contextStack })
 
 
 
@@ -229,18 +230,21 @@ let either
                 match runWithCtx parserB record with
                 | { parseResult = ParsingSuccess _ } as result -> result
                 | { parseResult = NoParsingMatch sndErrs } as result ->
-                    let errs =
-                        match firstErrs, sndErrs with
-                        | MultipleErrs [], errs'
-                        | errs', MultipleErrs [] -> errs'
-                        | MultipleErrs list1, MultipleErrs list2 -> MultipleErrs (list1 @ list2)
-                        | OneErr err, MultipleErrs list -> MultipleErrs (OneErr err :: list)
-                        | MultipleErrs list, OneErr err -> MultipleErrs (list @ [ OneErr err ])
-                        | OneErr err1, OneErr err2 ->
-                            MultipleErrs [ OneErr err1
-                                           OneErr err2 ]
+                    if wasCommittedInParser record result then
+                        result
+                    else
+                        let errs =
+                            match firstErrs, sndErrs with
+                            | MultipleErrs [], errs'
+                            | errs', MultipleErrs [] -> errs'
+                            | MultipleErrs list1, MultipleErrs list2 -> MultipleErrs (list1 @ list2)
+                            | OneErr err, MultipleErrs list -> MultipleErrs (OneErr err :: list)
+                            | MultipleErrs list, OneErr err -> MultipleErrs (list @ [ OneErr err ])
+                            | OneErr err1, OneErr err2 ->
+                                MultipleErrs [ OneErr err1
+                                               OneErr err2 ]
 
-                    replaceParseResult (NoParsingMatch errs) (result))
+                        replaceParseResult (NoParsingMatch errs) result)
 
 
 let rec oneOf (parsers : Parser<'a, 'token, 'ctx, 'err> list) : Parser<'a, 'token, 'ctx, 'err> =

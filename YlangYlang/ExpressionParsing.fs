@@ -20,7 +20,10 @@ type ParamContext =
     | ConsParam
     | TypeParam
 
-type Context =
+/// @TODO: use more of these in the actual parsers, now that we pop ctx's off the stack after the completion of a parser
+[<RequireQualifiedAccess>]
+type ParsingCtx =
+    | ModuleDeclaration
     | PrimitiveLiteral
     | Int
     | Float
@@ -44,6 +47,7 @@ type Context =
     | Whitespace
     | Suffix
 
+type PCtx = ParsingCtx
 
 
 type ParserError =
@@ -63,14 +67,14 @@ type ParserError =
 
 
 
-type ExpressionParser<'a> = Parser<'a, TokenWithContext, Context, ParserError>
+type ExpressionParser<'a> = Parser<'a, TokenWithSource, ParsingCtx, ParserError>
 
-type ExpressionParserResult<'a> = ParseResultWithContext<'a, TokenWithContext, Context, ParserError>
+type ExpressionParserResult<'a> = ParseResultWithContext<'a, TokenWithSource, ParsingCtx, ParserError>
 
 
 type OperatorSuffix = NEL<Operator * Expression>
 
-type OpOrFunctionApplication =
+type private OpOrFunctionApplication =
     | Operator of OperatorSuffix
     | FunctionApplication of NEL<Expression> * OperatorSuffix option
 
@@ -101,7 +105,7 @@ let whitespaceToken =
     parseExpectedToken err (function
         | Token.Whitespace _ -> Some ()
         | _ -> None)
-    |> addCtxToStack Whitespace
+    |> addCtxToStack PCtx.Whitespace
 
 /// Chomps through any - or no - whitespace
 let spaces : ExpressionParser<unit> = repeat whitespaceToken |> ignore
@@ -110,11 +114,11 @@ let spaces : ExpressionParser<unit> = repeat whitespaceToken |> ignore
 let atLeastOneSpaces : ExpressionParser<unit> = oneOrMore whitespaceToken |> ignore
 
 type PartitionedTokens =
-    { includedTokens : TokenWithContext list
-      tokensLeft : TokenWithContext list }
+    { includedTokens : TokenWithSource list
+      tokensLeft : TokenWithSource list }
 
 
-let getTilLineBreak (tokens : TokenWithContext list) =
+let getTilLineBreak (tokens : TokenWithSource list) =
     let rec traverser tokensGatheredSoFar tokensLeft =
         match tokensLeft with
         | [] ->
@@ -138,7 +142,7 @@ type BlockInclusion =
     | OnlyIncludeIndenteds
 
 
-let getBlock (inclusion : BlockInclusion) (tokens : TokenWithContext list) : TokenWithContext list =
+let getBlock (inclusion : BlockInclusion) (tokens : TokenWithSource list) : TokenWithSource list =
     match tokens with
     | [] -> List.empty
 
@@ -241,7 +245,7 @@ let parseUint =
 
 let parseInt : ExpressionParser<NumberLiteralValue> =
     fork parseUnaryNegationOpInt (succeed int) (fun op -> parseUint |> map (op >> IntLiteral))
-    |> addCtxToStack Int
+    |> addCtxToStack PCtx.Int
 
 
 
@@ -259,7 +263,7 @@ let parseFloat =
         |> FloatLiteral)
     |= opt parseUnaryNegationOpFloat
     |= parseUfloat
-    |> addCtxToStack Float
+    |> addCtxToStack PCtx.Float
 
 
 
@@ -267,7 +271,7 @@ let parseUnit : ExpressionParser<PrimitiveLiteralValue> =
     parseExpectedToken (ExpectedToken Token.Unit) (function
         | Token.Unit -> Some UnitPrimitive
         | _ -> None)
-    |> addCtxToStack Unit
+    |> addCtxToStack PCtx.Unit
 
 
 
@@ -278,10 +282,10 @@ let parsePrimitiveLiteral =
                 | StringLiteral str -> StringPrimitive str |> Some
                 | CharLiteral c -> CharPrimitive c |> Some
                 | _ -> None)
-            |> addCtxToStack StringOrCharLiteral
+            |> addCtxToStack PCtx.StringOrCharLiteral
 
             parseUnit ]
-    |> addCtxToStack PrimitiveLiteral
+    |> addCtxToStack PCtx.PrimitiveLiteral
 
 
 
@@ -291,13 +295,13 @@ let parseOperator =
     parseExpectedToken (ExpectedString "operator") (function
         | Token.Operator op -> Some op
         | _ -> None)
-    |> addCtxToStack Context.Operator
+    |> addCtxToStack ParsingCtx.Operator
 
 let parseIdentifier =
     parseExpectedToken (ExpectedString "identifier") (function
         | Token.Identifier ident -> Some ident
         | _ -> None)
-    |> addCtxToStack Identifier
+    |> addCtxToStack PCtx.Identifier
 
 let parseSingleValueIdentifier =
     parseExpectedToken (ExpectedString "single value identifier") (function
@@ -333,7 +337,7 @@ let rec parensifyParser parser =
          |. spaces
          |. symbol ParensClose
          |> map ParensedExpression
-         |> addCtxToStack ParensExpression)
+         |> addCtxToStack PCtx.ParensExpression)
         parser
     |. spaces
 
@@ -360,7 +364,7 @@ let parseSimpleParam =
              DestructuredTypeVariant (typeName, List.empty)
              |> DestructuredPattern))
 
-    |> addCtxToStack (SingleParam SimpleParam)
+    |> addCtxToStack (PCtx.SingleParam SimpleParam)
 
 
 /// Parses `as <identifier>` aliases and returns the alias
@@ -371,7 +375,7 @@ let parseAlias =
     |. symbol AsKeyword
     |. spaces
     |= parseSingleValueIdentifier
-    |> addCtxToStack (SingleParam ParamAlias)
+    |> addCtxToStack (PCtx.SingleParam ParamAlias)
 
 let parseRecordDestructuringParam =
     sequence
@@ -383,7 +387,7 @@ let parseRecordDestructuringParam =
           item = parseIdentifier
           supportsTrailingSeparator = false }
     |> map DestructuredRecord
-    |> addCtxToStack (SingleParam RecordParam)
+    |> addCtxToStack (PCtx.SingleParam RecordParam)
 
 let rec parseTupleDestructuredParam : ExpressionParser<DestructuredPattern> =
     let parseTupleItem = lazyParser (fun _ -> parseDelimitedParam)
@@ -407,7 +411,7 @@ let rec parseTupleDestructuredParam : ExpressionParser<DestructuredPattern> =
     )
     |. symbol ParensClose
     |. spaces
-    |> addCtxToStack (SingleParam TupleParam)
+    |> addCtxToStack (PCtx.SingleParam TupleParam)
 
 and parseConsDestructuredParam =
     succeed (fun nel last -> DestructuredCons (NEL.appendList [ last ] nel))
@@ -419,7 +423,7 @@ and parseConsDestructuredParam =
     )
     |= lazyParser (fun _ -> parseTopLevelParam)
     |. spaces
-    |> addCtxToStack (SingleParam ConsParam)
+    |> addCtxToStack (PCtx.SingleParam ConsParam)
 
 and parseTypeVariantDestructuredParam =
     succeed (fun typeName params' -> DestructuredTypeVariant (typeName, params'))
@@ -427,15 +431,15 @@ and parseTypeVariantDestructuredParam =
     |. spaces
     |= repeat (lazyParser (fun _ -> parseTopLevelParam) |. spaces)
     |. spaces
-    |> addCtxToStack (SingleParam TypeParam)
+    |> addCtxToStack (PCtx.SingleParam TypeParam)
 
 and parseInherentlyDelimitedParam =
     either parseRecordDestructuringParam parseTupleDestructuredParam
-    |> addCtxToStack (SingleParam InherentlyDelimitedParam)
+    |> addCtxToStack (PCtx.SingleParam InherentlyDelimitedParam)
 
 and parseNotInherentlyDelimitedParam =
     either parseConsDestructuredParam parseTypeVariantDestructuredParam
-    |> addCtxToStack (SingleParam NotInherentlyDelimitedParam)
+    |> addCtxToStack (PCtx.SingleParam NotInherentlyDelimitedParam)
 
 
 
@@ -454,10 +458,10 @@ and parseDelimitedParam =
                parseSimpleParam
 
                parensedParser (lazyParser <| fun _ -> parseDelimitedParam)
-               |> addCtxToStack (SingleParam ParensedParam) ]
+               |> addCtxToStack (PCtx.SingleParam ParensedParam) ]
     |. spaces
     |= opt parseAlias
-    |> addCtxToStack (SingleParam DelimitedParam)
+    |> addCtxToStack (PCtx.SingleParam DelimitedParam)
 
 and parseTopLevelParam =
     oneOf [ parseSimpleParam
@@ -466,7 +470,7 @@ and parseTopLevelParam =
 
             succeed DestructuredPattern
             |= parseInherentlyDelimitedParam ]
-    |> addCtxToStack (SingleParam TopLevelParam)
+    |> addCtxToStack (PCtx.SingleParam TopLevelParam)
 
 
 
@@ -479,7 +483,7 @@ and parseTopLevelParam =
 
 let parseParamList =
     oneOrMore (parseTopLevelParam |. spaces)
-    |> addCtxToStack ParamList
+    |> addCtxToStack PCtx.ParamList
 
 
 
@@ -494,15 +498,15 @@ let parseDotGetter : ExpressionParser<NEL<UnqualValueIdentifier>> =
 
 
 
-let rec combineEndParser expr opAndFuncParam : Expression =
+let rec private combineEndParser expr opAndFuncParam : Expression =
     match opAndFuncParam with
     | Some (Operator opAndOperandNel) ->
         CompoundExpression.Operator (expr, opAndOperandNel)
-        |> Expression.CompoundExpression
+        |> CompoundExpression
     | Some (FunctionApplication (paramExprList, nestedEndExprOpt)) ->
         let firstExpr =
             CompoundExpression.FunctionApplication (expr, paramExprList)
-            |> Expression.CompoundExpression
+            |> CompoundExpression
 
         combineEndParser firstExpr (Option.map Operator nestedEndExprOpt)
     | None -> expr
@@ -552,7 +556,7 @@ let rec parseLambda =
     |. symbol Token.Arrow
     |. spaces
     |= lazyParser (fun _ -> parseExpression)
-    |> addCtxToStack Lambda
+    |> addCtxToStack PCtx.Lambda
 
 
 
@@ -568,7 +572,7 @@ and singleLetAssignment =
                        body = expr })
                     |> Function
                     |> ExplicitValue
-                    |> Expression.SingleValueExpression })
+                    |> SingleValueExpression })
         |= parseTopLevelParam
         |. spaces
         |= repeat (parseTopLevelParam |. spaces)
@@ -579,7 +583,7 @@ and singleLetAssignment =
         |. spaces
         |. ensureEnd // this ensures that the next let binding can't start more indented than this assignment did
     )
-    |> addCtxToStack SingleLetAssignment
+    |> addCtxToStack PCtx.SingleLetAssignment
 
 
 
@@ -595,7 +599,7 @@ and parseLetBindingsList =
     |. commit
     |. spaces
     |= lazyParser (fun _ -> parseExpression)
-    |> addCtxToStack LetBindingsAssignmentList
+    |> addCtxToStack PCtx.LetBindingsAssignmentList
 
 
 and parseRecordKeyValue =
@@ -616,7 +620,7 @@ and parseRecord =
           spaces = spaces
           item = lazyParser (fun _ -> parseRecordKeyValue)
           supportsTrailingSeparator = false }
-    |> addCtxToStack Record
+    |> addCtxToStack PCtx.Record
 
 and parseList =
     sequence
@@ -627,7 +631,7 @@ and parseList =
           spaces = spaces
           item = lazyParser (fun _ -> parseExpression)
           supportsTrailingSeparator = false }
-    |> addCtxToStack List
+    |> addCtxToStack PCtx.List
 
 
 and parseTupleOrParensedExpr =
@@ -640,7 +644,7 @@ and parseTupleOrParensedExpr =
             CompoundValues.Tuple (first, NEL.new_ head rest)
             |> Compound
             |> ExplicitValue
-            |> Expression.SingleValueExpression)
+            |> SingleValueExpression)
     |. symbol ParensOpen
     |. spaces
     |= parseTupleItem
@@ -654,37 +658,34 @@ and parseTupleOrParensedExpr =
         |. spaces
     )
     |. symbol ParensClose
-    |> addCtxToStack ParensedOrTuple
+    |> addCtxToStack PCtx.ParensedOrTuple
 
 
 
 and parseDelimExpressions =
     succeed (fun expr dotFieldsOpt ->
         match dotFieldsOpt with
-        | Some dotFields ->
-            DotAccess (expr, dotFields)
-            |> Expression.CompoundExpression
+        | Some dotFields -> DotAccess (expr, dotFields) |> CompoundExpression
 
         | None -> expr)
     |= (either
-            (succeed Expression.SingleValueExpression
-             |= oneOf [ parseIdentifier
-                        |> map SingleValueExpression.Identifier
+            (succeed SingleValueExpression
+             |= oneOf [ parseIdentifier |> map Identifier
 
                         parseRecord
-                        |> map (CompoundValues.Record >> Compound >> ExplicitValue)
+                        |> map (Record >> Compound >> ExplicitValue)
 
                         parseList
-                        |> map (CompoundValues.List >> Compound >> ExplicitValue)
+                        |> map (List >> Compound >> ExplicitValue)
 
                         parsePrimitiveLiteral
                         |> map (Primitive >> ExplicitValue) ])
             parseTupleOrParensedExpr)
     |= opt parseDotGetter
-    |> addCtxToStack DelimitedExpressions
+    |> addCtxToStack PCtx.DelimitedExpressions
 
 
-and parseFuncAppSuffix =
+and private parseFuncAppSuffix =
     succeed (fun params' opSuffix -> FunctionApplication (params', opSuffix))
 
     |= oneOrMore (parseDelimExpressions |. spaces)
@@ -704,7 +705,8 @@ and parseOperatorSuffix =
 
 and startParser = parseDelimExpressions
 
-and endParser = either (parseOperatorSuffix |> map Operator) parseFuncAppSuffix
+and private endParser =
+    either (parseOperatorSuffix |> map Operator) parseFuncAppSuffix
 
 
 
@@ -763,7 +765,7 @@ and parseCompoundExpressions : ExpressionParser<Expression> =
     |= startParser
     |. spaces
     |= opt endParser
-    |> addCtxToStack CompoundExpression
+    |> addCtxToStack PCtx.CompoundExpression
 
 
 
@@ -775,19 +777,14 @@ and parseExpression : ExpressionParser<Expression> =
     |= oneOf [ parseCompoundExpressions
 
                parseControlFlowExpression
-               |> map Expression.SingleValueExpression
+               |> map SingleValueExpression
 
-               parseLetBindingsList
-               |> map Expression.SingleValueExpression
+               parseLetBindingsList |> map SingleValueExpression
 
                parseLambda
-               |> map (
-                   Function
-                   >> ExplicitValue
-                   >> Expression.SingleValueExpression
-               ) ]
+               |> map (Function >> ExplicitValue >> SingleValueExpression) ]
     |. spaces
-    |> addCtxToStack WholeExpression
+    |> addCtxToStack PCtx.WholeExpression
 
 
 
@@ -804,7 +801,7 @@ let parseValueDeclaration =
                        body = expr })
                     |> Function
                     |> ExplicitValue
-                    |> Expression.SingleValueExpression })
+                    |> SingleValueExpression })
         |= parseSingleValueIdentifier
         |. spaces
         |= repeat (parseTopLevelParam |. spaces)
@@ -814,7 +811,7 @@ let parseValueDeclaration =
         |= lazyParser (fun _ -> parseExpression)
         |. spaces
     )
-    |> addCtxToStack SingleLetAssignment
+    |> addCtxToStack PCtx.SingleLetAssignment
 
 
 
@@ -823,7 +820,7 @@ let parseValueDeclaration =
 
 
 
-
+// @TODO: this is next!
 let parseTypeExpression = () // how to do this...
 
 
@@ -891,9 +888,7 @@ let parseModuleDeclaration : ExpressionParser<ModuleDeclaration> =
           exposing =
             match exports with
             | None -> ExportExposings.ExposeAll
-            | Some exports' -> ExportExposings.ExplicitExposeds exports'
-
-        })
+            | Some exports' -> ExportExposings.ExplicitExposeds exports' })
     |. symbol ModuleKeyword
     |. spaces
     |= parseModuleName
@@ -972,5 +967,5 @@ let parseEntireModule =
 
 
 /// Just a simple re-export for easier running
-let run : ExpressionParser<'a> -> TokenWithContext list -> ExpressionParserResult<'a> =
+let run : ExpressionParser<'a> -> TokenWithSource list -> ExpressionParserResult<'a> =
     Parser.run

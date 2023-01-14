@@ -4,6 +4,7 @@ open Expecto
 open Lexer
 open ConcreteSyntaxTree
 open Parser
+open ExpressionParsing
 open System.Diagnostics
 
 
@@ -27,7 +28,7 @@ let private makeNumberExpression =
 let testSimpleExpression =
     (fun _ ->
         (tokeniseString "-4.6")
-        |> Result.map (Parser.run ExpressionParsing.parseSingleValueExpressions)
+        |> Result.map (run parseDelimExpressions)
         |> fun res ->
             Expect.wantOk res "Should succeed"
             |> fun res ->
@@ -48,15 +49,17 @@ let testOperatorExpression =
         tokens
         |> fun res ->
             Expect.wantOk res "Should succeed"
-            |> split (Parser.run ExpressionParsing.parseCompoundExpressions)
+            |> split (run parseCompoundExpressions)
             |> fun (tokens', res') ->
                 Expect.equal
                     (stripContexts res')
                     (CompoundExpression (
-                        CompoundExpression.Operator (
+                        Operator (
                             makeNumberExpression (FloatLiteral -4.6),
-                            AppendOp,
-                            SingleValueExpression (ExplicitValue (Primitive (StringPrimitive "test")))
+                            NEL.make (
+                                AppendOp,
+                                SingleValueExpression (ExplicitValue (Primitive (StringPrimitive "test")))
+                            )
                         )
                      )
                      |> makeSuccess tokens')
@@ -72,7 +75,7 @@ let testParensExpressionWithSimpleExpressions =
         tokens
         |> fun res ->
             Expect.wantOk res "Should succeed"
-            |> split (Parser.run ExpressionParsing.parseExpression)
+            |> split (Parser.run parseExpression)
             |> fun (tokens', res') ->
                 Expect.equal
                     res'.parseResult
@@ -104,17 +107,16 @@ let testCompoundExpression =
         tokens
         |> fun res ->
             Expect.wantOk res "Should succeed"
-            |> split (Parser.run ExpressionParsing.parseCompoundExpressions)
+            |> split (run parseCompoundExpressions)
             |> fun (tokens', res') ->
 
                 Expect.equal
                     (stripContexts res')
                     (ParensedExpression (
                         CompoundExpression (
-                            CompoundExpression.Operator (
+                            Operator (
                                 makeNumberExpression (IntLiteral 34),
-                                PlusOp,
-                                makeNumberExpression (FloatLiteral -4.6)
+                                NEL.make (PlusOp, makeNumberExpression (FloatLiteral -4.6))
                             )
                         )
                      )
@@ -130,23 +132,24 @@ let testParensExpressionWithMultiOperators =
         tokens
         |> fun res ->
             Expect.wantOk res "Should succeed"
-            |> split (Parser.run ExpressionParsing.parseCompoundExpressions)
+            |> split (run parseCompoundExpressions)
             |> fun (tokens', res') ->
 
                 Expect.equal
                     (stripContexts res')
                     (ParensedExpression (
                         CompoundExpression (
-                            CompoundExpression.Operator (
+                            Operator (
                                 makeNumberExpression (IntLiteral 34),
-                                PlusOp,
-                                (CompoundExpression (
-                                    CompoundExpression.Operator (
-                                        makeNumberExpression (FloatLiteral -4.6),
-                                        DivOp,
-                                        makeNumberExpression (IntLiteral 7)
-                                    )
-                                ))
+                                NEL.make (
+                                    PlusOp,
+                                    (CompoundExpression (
+                                        Operator (
+                                            makeNumberExpression (FloatLiteral -4.6),
+                                            NEL.make (DivOp, makeNumberExpression (IntLiteral 7))
+                                        )
+                                    ))
+                                )
                             )
                         )
                      )

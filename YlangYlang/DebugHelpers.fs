@@ -5,7 +5,7 @@ open Parser
 
 
 /// Get the actual constituent string from the `TokenWithContext`s
-let formatTokensAsText (tokens : TokenWithContext list) =
+let formatTokensAsText (tokens : TokenWithSource list) =
     tokens
     |> List.fold (fun str token -> str + String.ofSeq token.chars) ""
 

@@ -137,7 +137,7 @@ type Token =
 
 
 /// Not yet used, but to add later for better debugging messages
-type TokenWithContext =
+type TokenWithSource =
     { token : Token
       startLine : uint // the line of the starting character. Is 1-indexed.
       startCol : uint // the col of the starting character. Is 1-indexed.
@@ -147,28 +147,26 @@ type TokenWithContext =
     member this.charLength = List.length this.chars // bear in mind that the whitespace tokens will span multiple lines
 
 /// Simple alias for `TokenWithContext`
-type TknCtx = TokenWithContext
+type TknCtx = TokenWithSource
 
 type FileCursor = { endLine : uint; endCol : uint }
-//| Start
-//| Prev of {| endLine : uint; endCol : uint |}
 
 // Should probably add an Error variant here for lexing errors that are more severe than just 'not a match', e.g. tabs, which are wholesale not allowed. Then that can contain all the parse errors and NoMatch can just denote a simple innocuous no match
 type LexingState =
     | NoMatch
-    | Success of TokenWithContext
+    | Success of TokenWithSource
     // In case we encounter a error even at the lexing stage, e.g. we've found a tab character.
     // @TODO: might be a good idea to thread errors through the lexing state, so that we can keep parsing the rest of the file even if we encounter an error locally!
     | Err of LexingErrors
 
 
 
-type LexingResult = Result<TokenWithContext list, LexingErrors>
+type LexingResult = Result<TokenWithSource list, LexingErrors>
 
 
 type Matcher = FileCursor -> string -> LexingState
 
-let makeCursorFromTokenCtx ({ endLine = line; endCol = col } : TokenWithContext) : FileCursor =
+let makeCursorFromTokenCtx ({ endLine = line; endCol = col } : TokenWithSource) : FileCursor =
     { endLine = line; endCol = col }
 
 /// This currently makes the token context have the col and line that the chars _end_ on, whereas it should be the ones that the token _begins_ on
