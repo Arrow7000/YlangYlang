@@ -323,7 +323,6 @@ let parensedParser parser =
     |= parser
     |. spaces
     |. symbol ParensClose
-    |. spaces
 
 
 /// Create a parser and a version of the parser also matching a parenthesised version of the parser
@@ -410,7 +409,6 @@ let rec parseTupleDestructuredParam : ExpressionParser<DestructuredPattern> =
         |. spaces
     )
     |. symbol ParensClose
-    |. spaces
     |> addCtxToStack (PCtx.SingleParam TupleParam)
 
 and parseConsDestructuredParam =
@@ -422,7 +420,6 @@ and parseConsDestructuredParam =
         |. spaces
     )
     |= lazyParser (fun _ -> parseTopLevelParam)
-    |. spaces
     |> addCtxToStack (PCtx.SingleParam ConsParam)
 
 and parseTypeVariantDestructuredParam =
@@ -430,7 +427,6 @@ and parseTypeVariantDestructuredParam =
     |= typeNameParser
     |. spaces
     |= repeat (lazyParser (fun _ -> parseTopLevelParam) |. spaces)
-    |. spaces
     |> addCtxToStack (PCtx.SingleParam TypeParam)
 
 and parseInherentlyDelimitedParam =
@@ -641,7 +637,7 @@ and parseTupleOrParensedExpr =
         match more with
         | [] -> ParensedExpression first
         | head :: rest ->
-            CompoundValues.Tuple (first, NEL.new_ head rest)
+            Tuple (first, NEL.new_ head rest)
             |> Compound
             |> ExplicitValue
             |> SingleValueExpression)
@@ -783,7 +779,6 @@ and parseExpression : ExpressionParser<Expression> =
 
                parseLambda
                |> map (Function >> ExplicitValue >> SingleValueExpression) ]
-    |. spaces
     |> addCtxToStack PCtx.WholeExpression
 
 
@@ -809,7 +804,6 @@ let parseValueDeclaration =
         |. symbol Token.AssignmentEquals
         |. spaces
         |= lazyParser (fun _ -> parseExpression)
-        |. spaces
     )
     |> addCtxToStack PCtx.SingleLetAssignment
 
@@ -818,10 +812,83 @@ let parseValueDeclaration =
 
 
 
+(* Parse type expressions *)
 
+let rec parseKeyAndValueType =
+    succeed (fun key value -> key, value)
+    |= parseSingleValueIdentifier
+    |. spaces
+    |. symbol Colon
+    |. spaces
+    |= lazyParser (fun _ -> parseTypeExpression)
 
-// @TODO: this is next!
-let parseTypeExpression = () // how to do this...
+and parseRecordType =
+    succeed (fun keyVals -> { fields = Map.ofList keyVals })
+    |. symbol BracesOpen
+    |. spaces
+    |= repeat parseKeyAndValueType
+    |. spaces
+    |. symbol BracesClose
+
+and parseTupleTypeOrParensed =
+    let parseMentionableType = lazyParser (fun _ -> parseTypeExpression)
+
+    succeed (fun first others ->
+        match others with
+        | [] -> MentionableType.Parensed first
+        | head :: rest -> MentionableType.Tuple { types = first, NEL.new_ head rest })
+    |. symbol ParensOpen
+    |. spaces
+    |= parseMentionableType
+    |. spaces
+    |= repeat (
+        succeed id
+
+        |. symbol Comma
+        |. spaces
+        |= parseMentionableType
+        |. spaces
+    )
+    |. symbol ParensClose
+
+and parseInherentlyDelimType =
+    oneOf [ parseRecordType |> map MentionableType.Record
+
+            parseTupleTypeOrParensed
+
+            parseSingleValueIdentifier
+            |> map MentionableType.GenericTypeVar
+
+            parseUnit |> map (always UnitType)
+
+            typeNameParser
+            |> map (fun typeName -> ReferencedType (typeName, List.empty)) ]
+
+and parseTypeReference =
+    succeed (fun typeName typeParams -> ReferencedType (typeName, typeParams))
+    |= typeNameParser
+    |= repeat (
+        succeed id
+
+        |. spaces
+        |= parseInherentlyDelimType
+    )
+
+and parseTypePrimitive = either parseTypeReference parseInherentlyDelimType
+
+and parseTypeExpression =
+    succeed (fun prim toType ->
+        match toType with
+        | [] -> prim
+        | head :: rest -> Arrow (prim, NEL.new_ head rest))
+    |= parseTypePrimitive
+    |= repeat (
+        succeed id
+        |. spaces
+        |. symbol Lexer.Arrow
+        |. spaces
+        |= parseTypePrimitive
+    )
 
 
 

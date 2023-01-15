@@ -46,6 +46,17 @@ type Parser<'a, 'token, 'ctx, 'err> = private | Parser of ParseFn<'a, 'token, 'c
 
 
 
+let mergeErrs firstErrs sndErrs =
+    match firstErrs, sndErrs with
+    | MultipleErrs [], errs'
+    | errs', MultipleErrs [] -> errs'
+    | MultipleErrs list1, MultipleErrs list2 -> MultipleErrs (list1 @ list2)
+    | OneErr err, MultipleErrs list -> MultipleErrs (OneErr err :: list)
+    | MultipleErrs list, OneErr err -> MultipleErrs (list @ [ OneErr err ])
+    | OneErr err1, OneErr err2 ->
+        MultipleErrs [ OneErr err1
+                       OneErr err2 ]
+
 let blankParseCtx : ParseContext<'token, 'ctx, 'err> =
     { prevTokens = List.empty
       tokensLeft = List.empty
@@ -78,11 +89,15 @@ let private replaceParseResult
       contextStack = record.contextStack
       committed = record.committed }
 
+/// Adds a context layer to the context stack, and pops it back off once the parser is done. That way we can keep track of specific contexts of what we're parsing, and get rid of that context once we're done and have moved on to a different context stack.
+/// @TODO: add tests for this, because I don't think pushing and popping context layers on and off the parser is working as expected.
 let addCtxToStack (ctx : 'ctx) (Parser parseFn) : Parser<'a, 'token, 'ctx, 'err> =
     Parser (fun record ->
         let newRecord = { record with contextStack = ctx :: record.contextStack }
         let result = parseFn newRecord
         { result with contextStack = record.contextStack })
+
+
 
 
 
@@ -125,7 +140,7 @@ let fail : 'err -> Parser<'a, 'token, 'ctx, 'err> =
 
 
 
-let mapResult
+let private mapResult
     (f : 'a -> 'b)
     (result : ParseResultWithContext<'a, 'token, 'ctx, 'err>)
     : ParseResultWithContext<'b, 'token, 'ctx, 'err> =
@@ -144,7 +159,7 @@ let mapResult
 let map f parser : Parser<'b, 'token, 'ctx, 'err> =
     Parser (fun ctx ->
         let result = runWithCtx parser ctx
-        result |> mapResult f)
+        mapResult f result)
 
 
 /// Essentially just flatten but implemented without relying on bind
@@ -233,17 +248,7 @@ let either
                     if wasCommittedInParser record result then
                         result
                     else
-                        let errs =
-                            match firstErrs, sndErrs with
-                            | MultipleErrs [], errs'
-                            | errs', MultipleErrs [] -> errs'
-                            | MultipleErrs list1, MultipleErrs list2 -> MultipleErrs (list1 @ list2)
-                            | OneErr err, MultipleErrs list -> MultipleErrs (OneErr err :: list)
-                            | MultipleErrs list, OneErr err -> MultipleErrs (list @ [ OneErr err ])
-                            | OneErr err1, OneErr err2 ->
-                                MultipleErrs [ OneErr err1
-                                               OneErr err2 ]
-
+                        let errs = mergeErrs firstErrs sndErrs
                         replaceParseResult (NoParsingMatch errs) result)
 
 

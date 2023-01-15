@@ -37,14 +37,16 @@ and Unit = Unit // it's a type tho so we gotta include it
 and MentionableType =
     | Record of RecordType
     | Tuple of TupleType
-    | Name of TypeReference
-    | Arrow of fromType : MentionableType * toType : MentionableType
-    | UnitType of Unit
+    | GenericTypeVar of UnqualValueIdentifier
+    | ReferencedType of typeName : TypeOrModuleIdentifier * typeParams : MentionableType list
+    | UnitType
+    | Arrow of fromType : MentionableType * toType : NEL<MentionableType>
+    | Parensed of MentionableType
 
 
 
 and RecordType =
-    { fields : Map<UnqualTypeOrModuleIdentifier, MentionableType> }
+    { fields : Map<UnqualValueIdentifier, MentionableType> }
 
 
 
@@ -52,11 +54,8 @@ and AliasType =
     { referent : MentionableType
       specifiedTypeParams : UnqualValueIdentifier list } // in case the underlying type needs it
 
-and TupleType = { types : MentionableType list } // could process into pairs and triples once we've eliminated the quads (although they should be recognised by the compiler, they are still forbidden). Should we account for single entry tuples? Well no because those are just the same as the type in the single tuple. What about zero case tuples? Well no because those are just the same as Unit.
-
-//type Pair<'a, 'b> = { fst : 'a; snd : 'b }
-
-//type Triple<'a, 'b, 'c> = { fst : 'a; snd : 'b; third : 'c }
+and TupleType =
+    { types : MentionableType * NEL<MentionableType> }
 
 type VariantCase =
     { label : UnqualTypeOrModuleIdentifier

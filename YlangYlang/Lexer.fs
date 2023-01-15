@@ -145,6 +145,7 @@ type TokenWithSource =
       endCol : uint
       chars : char list } // keep the original constituent chars around, for better error messages :)
     member this.charLength = List.length this.chars // bear in mind that the whitespace tokens will span multiple lines
+    override this.ToString () = String.ofSeq this.chars
 
 /// Simple alias for `TokenWithContext`
 type TknCtx = TokenWithSource
