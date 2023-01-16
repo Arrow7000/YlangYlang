@@ -149,6 +149,14 @@ module List =
         getLast List.empty list
 
 
+    let typedPartition f list =
+        List.foldBack
+            (fun item (lefts, rights) ->
+                match f item with
+                | Choice1Of2 a -> a :: lefts, rights
+                | Choice2Of2 b -> lefts, b :: rights)
+            list
+            (List.empty, List.empty)
 
 
 type Either<'a, 'b> =

@@ -3,6 +3,14 @@
 import Main.Other as MO
 import Main.OtherThing as MOT exposing (all,sorts,ofThings)
 
+type NewType =
+    OneThing () (Clowns -> ( ()   -> String a -> Int -> a  ))
+   | Blabla () String a
+
+type alias NewBla a b = { strings : String a}
+
+type Thingt = One
+
 
 whatever _ =
   case thing == okay   

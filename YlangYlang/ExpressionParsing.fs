@@ -1069,20 +1069,34 @@ let parseImport =
 
 
 
+type TypeOrValueDeclaration =
+    | TypeDeclaration of TypeDeclaration
+    | ValueDeclaration of ValueDeclaration
 
+
+let parseDeclarations =
+    either (parseValueDeclaration |> map ValueDeclaration) (parseTypeDeclaration |> map TypeDeclaration)
 
 
 let parseEntireModule =
-    succeed (fun moduleDeclaration imports values ->
+    succeed (fun moduleDeclaration imports declarations ->
+        let (typeDeclarations, valueDeclarations) =
+            List.typedPartition
+                (function
+                | TypeDeclaration t -> Choice1Of2 t
+                | ValueDeclaration v -> Choice2Of2 v)
+                declarations
+
         { moduleDecl = moduleDeclaration
           imports = imports
-          valueDeclarations = values })
+          typeDeclarations = typeDeclarations
+          valueDeclarations = valueDeclarations })
     |. spaces
     |= parseModuleDeclaration
     |. spaces
     |= repeat (parseImport |. spaces)
     |. spaces
-    |= repeat (parseValueDeclaration |. spaces)
+    |= repeat (parseDeclarations |. spaces)
     |. ensureEnd
 
 

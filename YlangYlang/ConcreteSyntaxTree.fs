@@ -263,5 +263,5 @@ type ImportDeclaration =
 type YlModule =
     { moduleDecl : ModuleDeclaration
       imports : ImportDeclaration list
-      //typeDeclarations : TypeDeclaration list
+      typeDeclarations : TypeDeclaration list
       valueDeclarations : ValueDeclaration list }
