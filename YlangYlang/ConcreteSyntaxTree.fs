@@ -35,43 +35,38 @@ and Unit = Unit // it's a type tho so we gotta include it
 
 /// For types that can be mentioned not at the top level of a file, e.g. records or types declared elsewhere. But e.g. you can't create an ad hoc sum type inside a record or another sum type. Sum types and aliases need to be declared at the top level of a module.
 and MentionableType =
-    | Record of RecordType
-    | Tuple of TupleType
-    | GenericTypeVar of UnqualValueIdentifier
-    | ReferencedType of typeName : TypeOrModuleIdentifier * typeParams : MentionableType list
     | UnitType
+    | GenericTypeVar of UnqualValueIdentifier
+    | Tuple of TupleType
+    | Record of RecordType
+    | ReferencedType of typeName : TypeOrModuleIdentifier * typeParams : MentionableType list
     | Arrow of fromType : MentionableType * toType : NEL<MentionableType>
     | Parensed of MentionableType
 
+
+
+and TupleType =
+    { types : MentionableType * NEL<MentionableType> }
 
 
 and RecordType =
     { fields : Map<UnqualValueIdentifier, MentionableType> }
 
 
-
-and AliasType =
-    { referent : MentionableType
-      specifiedTypeParams : UnqualValueIdentifier list } // in case the underlying type needs it
-
-and TupleType =
-    { types : MentionableType * NEL<MentionableType> }
-
 type VariantCase =
     { label : UnqualTypeOrModuleIdentifier
       contents : MentionableType list }
 
-type SumType = { variants : NEL<VariantCase> }
 
-
-type TypeOfTypeDeclaration =
-    | Sum of SumType
-    | Alias of AliasType
-
-/// A top level type declaration
 type TypeDeclaration =
-    { typeParams : UnqualValueIdentifier list // generic params, could be empty
-      typeOfTypeDeclaration : TypeOfTypeDeclaration }
+    | Alias of
+        name : UnqualTypeOrModuleIdentifier *
+        specifiedTypeParams : UnqualValueIdentifier list *  // in case the underlying type needs it
+        referent : MentionableType
+    | Sum of
+        name : UnqualTypeOrModuleIdentifier *
+        specifiedTypeParams : UnqualValueIdentifier list *
+        variants : NEL<VariantCase>
 
 
 

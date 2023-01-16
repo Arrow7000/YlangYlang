@@ -342,6 +342,14 @@ let rec parensifyParser parser =
 
 
 
+let parseModuleAliasOrUnqualTypeName : ExpressionParser<UnqualTypeOrModuleIdentifier> =
+    parseExpectedToken (ExpectedString "module name") (function
+        | Token.Identifier (TypeNameOrVariantOrTopLevelModule ident) -> Some ident
+        | _ -> None)
+
+
+
+
 let typeNameParser =
     parseExpectedToken (ExpectedString "type name") (function
         | Token.Identifier (ModuleSegmentsOrQualifiedTypeOrVariant ident) -> Some (QualifiedType ident)
@@ -895,10 +903,66 @@ and parseTypeExpression =
 
 
 
+let parseAliasDeclaration =
+    succeed (fun ident generics expr -> Alias (ident, generics, expr))
+    |. symbol AliasKeyword
+    |. spaces
+    |= parseModuleAliasOrUnqualTypeName
+    |= repeat (succeed id |. spaces |= parseSingleValueIdentifier)
+    |. spaces
+    |. symbol AssignmentEquals
+    |. spaces
+    |= parseTypeExpression
+
+
+let parseNewTypeDeclaration =
+    let parseVariant =
+        succeed (fun ident typeParams -> { label = ident; contents = typeParams })
+        |= parseModuleAliasOrUnqualTypeName
+        |= repeat (
+            succeed id
+
+            |. spaces
+            |= parseInherentlyDelimType
+        )
+
+    succeed (fun ident generics firstVariant otherVariants -> Sum (ident, generics, NEL.new_ firstVariant otherVariants))
+    |= parseModuleAliasOrUnqualTypeName
+    |= repeat (succeed id |. spaces |= parseSingleValueIdentifier)
+    |. spaces
+    |. symbol AssignmentEquals
+    |. spaces
+    |= parseVariant
+    |= repeat (
+        succeed id
+
+        |. spaces
+        |. symbol PipeChar
+        |. spaces
+        |= parseVariant
+    )
+
+
+let parseTypeDeclaration =
+    parseIndentedColBlock (
+        succeed id
+
+        |. symbol TypeKeyword
+        |. commit
+        |. spaces
+        |= either parseAliasDeclaration parseNewTypeDeclaration
+    )
 
 
 
 
+
+
+let parseTypeDeclarations =
+    succeed id
+
+    |= repeat (succeed id |. spaces |= parseTypeDeclaration)
+    |. spaces
 
 
 
@@ -911,11 +975,6 @@ let parseModuleName : ExpressionParser<QualifiedModuleOrTypeIdentifier> =
         | Token.Identifier (ModuleSegmentsOrQualifiedTypeOrVariant path) -> Some path
         | Token.Identifier (TypeNameOrVariantOrTopLevelModule ident) ->
             Some (QualifiedModuleOrTypeIdentifier <| NEL.make ident)
-        | _ -> None)
-
-let parseModuleAlias : ExpressionParser<UnqualTypeOrModuleIdentifier> =
-    parseExpectedToken (ExpectedString "module name") (function
-        | Token.Identifier (TypeNameOrVariantOrTopLevelModule ident) -> Some ident
         | _ -> None)
 
 let exposingAllParser =
@@ -979,7 +1038,7 @@ let parseImport =
         |. spaces
         |. symbol AsKeyword
         |. spaces
-        |= parseModuleAlias
+        |= parseModuleAliasOrUnqualTypeName
     )
     |= opt (
         succeed id
