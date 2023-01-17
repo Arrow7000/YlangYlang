@@ -131,8 +131,8 @@ type Token =
     | Backslash // to signify start of lambda
     | Underscore // to signify unused function param
     | Unit // ()
-    | Identifier of Identifier
     | DotFieldPath of fields : NEL<UnqualValueIdentifier> // for `<expression>.field.subfield` paths. For that dot field sequence this would only contain `field` and `subfield`, because the expression that is dotted into could be any arbitrary expression, it doesn't necessarily have to be an identifier
+    | Identifier of Identifier
     | Operator of Operator
 
 
@@ -541,6 +541,7 @@ module Matchers =
         | _ -> NoMatch
 
 
+    /// This parses both dot field name sequences of record expressions, but also first class record getters - depending on context and if there are more than one field path in the sequence
     let dotFieldPath cursor =
         function
         | MultiCharRegex "(?:\.[a-z]\w*)+" str ->
@@ -550,8 +551,9 @@ module Matchers =
             |> (function
             | [] -> failwithf "Dot field sequence was somehow empty"
             | head :: rest -> makeTokenWithCtx cursor (DotFieldPath (NEL (head, rest))) str)
-
         | _ -> NoMatch
+
+
 
     /// Only run this after all the keywords have been tried!
     let valueIdentifier cursor =

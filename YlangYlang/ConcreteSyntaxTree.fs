@@ -122,8 +122,9 @@ type InfixOpDeclaration =
 
 type CompoundValues =
     | List of Expression list
-    | Record of (UnqualValueIdentifier * Expression) list
     | Tuple of Expression * NEL<Expression> // Because a tuple has at least two members
+    | Record of (UnqualValueIdentifier * Expression) list
+    | RecordExtension of recordToExtend : UnqualValueIdentifier * additions : NEL<UnqualValueIdentifier * Expression>
 
 // Not sure yet if it makes sense to have this as a separate type
 and CustomTypeValues =
@@ -142,6 +143,8 @@ and ExplicitValue =
 
     // functions and other values might be unified by just giving all values a possibly-empty list of parameters
     | Function of FunctionValue // for the parameters
+    /// A `.someField` expression which are first class getters for record fields. A `.someField` getter is a function that takes a record that has a `someField` field and returns the value at that field
+    | DotGetter of recordField : UnqualValueIdentifier
 
 /// @TODO: allow for destructured params here at some point
 and LetBinding =

@@ -491,15 +491,18 @@ let parseParamList =
 
 
 
-
-
-let parseDotGetter : ExpressionParser<NEL<UnqualValueIdentifier>> =
-    parseExpectedToken (ExpectedString "dot accessed field") (function
-        | DotFieldPath fields -> Some fields
+let parseDotGetter =
+    parseExpectedToken (ExpectedString "dot getter function") (function
+        | DotFieldPath fields ->
+            match fields with
+            | NEL.NEL (first, []) -> Some first
+            | _ -> None
         | _ -> None)
 
-
-
+let parseDotFieldPath : ExpressionParser<NEL<UnqualValueIdentifier>> =
+    parseExpectedToken (ExpectedString "dot accessed fields") (function
+        | DotFieldPath fields -> Some fields
+        | _ -> None)
 
 
 let rec private combineEndParser expr opAndFuncParam : Expression =
@@ -622,9 +625,29 @@ and parseRecord =
           endToken = BracesClose
           separator = Comma
           spaces = spaces
-          item = lazyParser (fun _ -> parseRecordKeyValue)
+          item = parseRecordKeyValue
           supportsTrailingSeparator = false }
     |> addCtxToStack PCtx.Record
+
+
+and parseExtendedRecord =
+    succeed (fun recordToExtend firstField otherFields ->
+        RecordExtension (recordToExtend, NEL.new_ firstField otherFields))
+    |. symbol BracesOpen
+    |. spaces
+    |= parseSingleValueIdentifier
+    |. spaces
+    |. symbol PipeChar
+    |. spaces
+    |= parseRecordKeyValue
+    |. spaces
+    |= repeat (
+        succeed id |. spaces |. symbol Comma
+        |= parseRecordKeyValue
+        |. spaces
+    )
+    |. symbol BracesClose
+
 
 and parseList =
     sequence
@@ -679,13 +702,18 @@ and parseDelimExpressions =
                         parseRecord
                         |> map (Record >> Compound >> ExplicitValue)
 
+                        parseExtendedRecord
+                        |> map (Compound >> ExplicitValue)
+
                         parseList
                         |> map (List >> Compound >> ExplicitValue)
 
                         parsePrimitiveLiteral
-                        |> map (Primitive >> ExplicitValue) ])
+                        |> map (Primitive >> ExplicitValue)
+
+                        parseDotGetter |> map (DotGetter >> ExplicitValue) ])
             parseTupleOrParensedExpr)
-    |= opt parseDotGetter
+    |= opt parseDotFieldPath
     |> addCtxToStack PCtx.DelimitedExpressions
 
 
@@ -810,6 +838,7 @@ let parseValueDeclaration =
         |= repeat (parseTopLevelParam |. spaces)
         |. spaces
         |. symbol Token.AssignmentEquals
+        |. commit
         |. spaces
         |= lazyParser (fun _ -> parseExpression)
     )
@@ -968,6 +997,8 @@ let parseTypeDeclarations =
 
 
 
+
+
 (* Parse module *)
 
 let parseModuleName : ExpressionParser<QualifiedModuleOrTypeIdentifier> =
@@ -1016,10 +1047,12 @@ let parseModuleDeclaration : ExpressionParser<ModuleDeclaration> =
             | None -> ExportExposings.ExposeAll
             | Some exports' -> ExportExposings.ExplicitExposeds exports' })
     |. symbol ModuleKeyword
+    |. commit
     |. spaces
     |= parseModuleName
     |. spaces
     |. symbol ExposingKeyword
+    |. commit
     |. spaces
     |= either (succeed None |. exposingAllParser) (succeed Some |= explicitExports)
 
@@ -1030,6 +1063,7 @@ let parseImport =
           alias = alias
           exposingMode = exposeMode |> Option.defaultValue NoExposeds })
     |. symbol ImportKeyWord
+    |. commit
     |. spaces
     |= parseModuleName
     |= opt (
@@ -1045,6 +1079,7 @@ let parseImport =
 
         |. spaces
         |. symbol ExposingKeyword
+        |. commit
         |. spaces
         |= either
             (succeed ExposeAll |. exposingAllParser)

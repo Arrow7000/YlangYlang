@@ -3,27 +3,7 @@
 import Main.Other as MO
 import Main.OtherThing as MOT exposing (all,sorts,ofThings)
 
-type NewType =
-    OneThing () (Clowns -> ( ()   -> String a -> Int -> a  ))
-   | Blabla () String a
+thing = List.map .cacks lists
 
-type alias NewBla a b = { strings : String a}
-
-type Thingt = One
-
-
-whatever _ =
-  case thing == okay   
-    of
-   Test   a b ((c,f) as bla)  -> 
-     let
-         xsdfasdfasdf = (3.ert)
-         _ = Debug.log "" ()
-         dfg=3-1
-    in
-      ( if a then b d cl (3,4,67.9) sdf.da.d + f a (b sd f) k 8 - 3 else 
-                                                c,()  ) 
-
-   _ :: tail -> sub.field param1 alsoParam
-
-cmds df = 613
+extendedRecord = {otherThing |   fieldOne = 233}
+extendedRecord2 = {bla| fieldOne = 233,fieldTwo = ()}
