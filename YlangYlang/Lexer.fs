@@ -136,7 +136,6 @@ type Token =
     | Operator of Operator
 
 
-/// Not yet used, but to add later for better debugging messages
 type TokenWithSource =
     { token : Token
       startLine : uint // the line of the starting character. Is 1-indexed.

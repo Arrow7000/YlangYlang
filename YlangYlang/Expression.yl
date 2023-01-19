@@ -3,7 +3,10 @@
 import Main.Other as MO
 import Main.OtherThing as MOT exposing (all,sorts,ofThings)
 
+
+type Thing a b = Thingy a | Bingy b
+
 thing = List.map .cacks lists
 
-extendedRecord = {otherThing |   fieldOne = 233}
+extendedRecord a b = {otherThing |   fieldOne = 233}
 extendedRecord2 = {bla| fieldOne = 233,fieldTwo = ()}
