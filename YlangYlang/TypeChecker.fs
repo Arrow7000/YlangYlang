@@ -35,21 +35,60 @@ module Cst = ConcreteSyntaxTree
 *)
 
 
-/// This will probably be used in a nested way for each of the parameters of a type that has type parameters, to achieve gradual typing of its fields
-type NamedValueTypeState<'a> =
-    | NotTypedYet
-    | GenericWithName of UnqualValueIdentifier
-    | SpecificTypeConstraint of 'a
-    /// Type clash information with references for where and why each type constraint was inferred from
-    | TypeClash of 'a list
+/// Not _really_ type classes, but the built-in Elm ones
+type TypeClass =
+    /// Includes both Ints and Floats
+    | Number
+    /// Values that can be compared for order or size, e.g. Strings, Ints, Chars
+    | Comparable
+    /// Values that can be appended, e.g. Strings and Lists
+    | Appendable
 
 
+/// Describes a single type constraint due to a function
+type TypeConstraint<'a> =
+    | GenericParam of UnqualValueIdentifier
+    | TypeClass of TypeClass
+    | Concrete of 'a
 
+
+type TypeConstraints<'a> =
+    /// No constraints whatsoever, this is a param that isn't used at all
+    | Unconstrained
+    | SingleConstraint of constraints : TypeConstraint<'a> * source : TknSrc
+    /// @TODO: might be good to make this more specific that it can relate to:
+    /// - multiple generics, which therefore means that generic params `a` and `b` have to match, and any occurrence of `b` is effectively an occurrence of `a`
+    /// - that generic `a` is actually a concrete type `A`, so any `a` is actually concrete type `A`
+    /// - that it has multiple constraints of being generics, "type classes", and/or a concrete type
+    /// Anything else would mean multiple concrete constraints, which are impossible
+    | CompatibleConstraints of (TypeConstraint<'a> * TknSrc) nel
+    | IncompatibleConstraints of (TypeConstraint<'a> * TknSrc) nel
 
 
 type ConcreteOrGenericVar<'a> =
     | Generic of UnqualValueIdentifier
     | Concrete of 'a
+
+
+
+
+type TypeJudgment<'a> =
+    | NotTypedYet
+    //| GenericWithName of ConcreteOrGenericVar<'a>
+    | SpecificTypeConstraint of ConcreteOrGenericVar<'a>
+    /// Value is declared to be of type, either in an annotation or a parameter of a typed function
+    | Declared of 'a
+
+
+/// This will probably be used in a nested way for each of the parameters of a type that has type parameters, to achieve gradual typing of its fields
+type NamedValueTypeState<'a> =
+    | Judgment of judgment : TypeJudgment<'a> * source : TokenWithSource
+    /// Type clash information with references for where and why each type constraint was inferred from
+    | TypeClash of (TypeJudgment<'a> * TokenWithSource) list
+
+
+
+
 
 
 
