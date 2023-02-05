@@ -11,19 +11,21 @@ let formatTokensAsText (tokens : TokenWithSource list) =
 
 
 /// Get a nicer formatted version of the `OneOrMultipleErrs`
-let rec private makeErrsStringly result errs =
+let rec private makeErrsStringly ctx errs =
     match errs with
     | OneErr err ->
         One
             {| err = err.err
                prevTokens = formatTokensAsText err.prevTokens
                contextStack = List.rev err.contextStack
-               committed = result.committed |}
-    | MultipleErrs errs' -> Multiple (List.map (makeErrsStringly result) errs')
+               committed = ctx.committed |}
+    | MultipleErrs errs' -> Multiple (List.map (makeErrsStringly ctx) errs')
 
 
 /// Return a result with either the success result, or a friendlier formatted error data
 let formatErrors res =
     match res with
-    | { parseResult = NoParsingMatch errs } as result -> Error <| makeErrsStringly result errs
+    | { parseResult = NoParsingMatch errs } as result ->
+        Error
+        <| makeErrsStringly result.parsingContext errs
     | { parseResult = ParsingSuccess s } as result -> Ok result

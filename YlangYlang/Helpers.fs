@@ -55,7 +55,10 @@ type NonEmptyList<'a> =
     /// Appends the list to the end of the NEL
     static member appendList (list : 'a list) (NEL (head, tail)) = NEL (head, tail @ list)
 
-    static member fold f state (NEL (head, tail)) = tail |> List.fold f (f state head)
+    static member fold<'State, 'Item> (f : 'State -> 'Item -> 'State) (state : 'State) (NEL (head, tail)) =
+        tail |> List.fold f (f state head)
+
+    static member foldBack f state (NEL (head, tail)) = List.foldBack f tail state |> f head
 
     static member last (NEL (head, tail)) =
         match List.tryLast tail with
@@ -65,6 +68,8 @@ type NonEmptyList<'a> =
 /// A convenient alias for NonEmptyList
 and NEL<'a> = NonEmptyList<'a>
 
+/// Non-empty list
+type 'a nel = NonEmptyList<'a>
 
 
 type Option<'a> with
@@ -165,10 +170,17 @@ type Either<'a, 'b> =
 
     static member mapLeft f either =
         match either with
-        | Left l -> Left <| f l
+        | Left l -> Left (f l)
         | Right r -> Right r
 
     static member mapRight f either =
         match either with
         | Left l -> Left l
-        | Right r -> Right <| f r
+        | Right r -> Right (f r)
+
+
+
+/// A list of type 'T but containing exactly one item of type 'U
+type ListWithOneDifferentType<'T, 'U> =
+    | NotUniqueYet of item : 'T * rest : ListWithOneDifferentType<'T, 'U>
+    | UniqueNow of item : 'U * rest : 'T list

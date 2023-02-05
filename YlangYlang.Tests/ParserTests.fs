@@ -58,10 +58,11 @@ let makeResult parseResult prevTokens tokensLeft =
             )
 
     { parseResult = result
-      contextStack = List.empty
-      prevTokens = prevTokens
-      tokensLeft = tokensLeft
-      committed = List.empty }
+      parsingContext =
+        { contextStack = List.empty
+          prevTokens = prevTokens
+          tokensLeft = tokensLeft
+          committed = List.empty } }
 
 
 let parseSingleTestToken token : TestParser<TestToken> =
@@ -339,7 +340,7 @@ let testCommitment =
                                 prevTokens = [ A; B ]
                                 contextStack = List.empty }
                       )
-                  committed = [ () ] }
+                  parsingContext = { coreExpected.parsingContext with committed = [ () ] } }
 
           expectEqual actual expected None)
 
@@ -359,7 +360,7 @@ let testCommitment =
                                 prevTokens = [ A; B; C ]
                                 contextStack = List.empty }
                       )
-                  committed = [ () ] }
+                  parsingContext = { coreExpected.parsingContext with committed = [ () ] } }
 
           expectEqual actual expected None)
 
@@ -410,7 +411,7 @@ let testCommitment =
                                 prevTokens = [ A; B; C; D ]
                                 contextStack = List.empty }
                       )
-                  committed = [ (); () ] }
+                  parsingContext = { coreExpected.parsingContext with committed = [ (); () ] } }
 
           expectEqual actual expected None)
 
@@ -439,7 +440,7 @@ let testCommitment =
                                                prevTokens = [ A; B ]
                                                contextStack = List.empty } ]
                       )
-                  committed = [ () ] }
+                  parsingContext = { coreExpected.parsingContext with committed = [ () ] } }
 
           expectEqual actual expected None)
 
@@ -513,7 +514,7 @@ let testCommitment =
                                 prevTokens = [ A; B; C ]
                                 contextStack = List.empty }
                       )
-                  committed = [ (); () ] }
+                  parsingContext = { coreExpected.parsingContext with committed = [ (); () ] } }
 
           expectEqual actual expected None)
 
@@ -548,7 +549,7 @@ let testCommitment =
                                 prevTokens = [ A; B; C ]
                                 contextStack = List.empty }
                       )
-                  committed = [ () ] }
+                  parsingContext = { coreExpected.parsingContext with committed = [ () ] } }
 
           expectEqual actual expected None) ]
     |> testList "Test committing"

@@ -146,8 +146,8 @@ type TokenWithSource =
     member this.charLength = List.length this.chars // bear in mind that the whitespace tokens will span multiple lines
     override this.ToString () = String.ofSeq this.chars
 
-/// Simple alias for `TokenWithContext`
-type TknCtx = TokenWithSource
+/// Simple alias for `TokenWithSource`
+type TknSrc = TokenWithSource
 
 type FileCursor = { endLine : uint; endCol : uint }
 

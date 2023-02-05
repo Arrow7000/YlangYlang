@@ -3,14 +3,27 @@
 open Lexer
 
 
+/// Structure to contain both a CST node and reference to the parsed tokens and source text
+type CstNode<'a> =
+    { node : 'a
+      source : TokenWithSource list }
+
+
+let makeCstNode node source = { node = node; source = source }
+
+
+let getNode { node = node } = node
+
 (* Names and identifiers *)
 
 
+
+
 type DestructuredPattern =
-    | DestructuredRecord of Identifier list
-    | DestructuredTuple of AssignmentPattern list // This should really be a type that we can ensure has at least 2 members
-    | DestructuredCons of NEL<AssignmentPattern>
-    | DestructuredTypeVariant of constructor : TypeOrModuleIdentifier * AssignmentPattern list
+    | DestructuredRecord of CstNode<Identifier> list
+    | DestructuredTuple of CstNode<AssignmentPattern> list // This should really be a type that we can ensure has at least 2 members
+    | DestructuredCons of NEL<CstNode<AssignmentPattern>>
+    | DestructuredTypeVariant of constructor : CstNode<TypeOrModuleIdentifier> * CstNode<AssignmentPattern> list
 
 
 
@@ -20,53 +33,53 @@ and AssignmentPattern =
     | Ignored // i.e. the underscore
     | Unit
     | DestructuredPattern of DestructuredPattern
-    | Aliased of AssignmentPattern * alias : UnqualValueIdentifier
+    | Aliased of pattern : CstNode<AssignmentPattern> * alias : CstNode<UnqualValueIdentifier>
+
+
+
+
+
+
+
+
 
 
 (* Types *)
 
-type TypeReference =
-    | Concrete of QualifiedModuleOrTypeIdentifier // name of the type referenced
-    | Generic of UnqualValueIdentifier // name of the type param. This includes unused parameters in functions and case matches
-
-
-
-and Unit = Unit // it's a type tho so we gotta include it
-
 /// For types that can be mentioned not at the top level of a file, e.g. records or types declared elsewhere. But e.g. you can't create an ad hoc sum type inside a record or another sum type. Sum types and aliases need to be declared at the top level of a module.
-and MentionableType =
+type MentionableType =
     | UnitType
     | GenericTypeVar of UnqualValueIdentifier
     | Tuple of TupleType
     | Record of RecordType
-    | ReferencedType of typeName : TypeOrModuleIdentifier * typeParams : MentionableType list
-    | Arrow of fromType : MentionableType * toType : NEL<MentionableType>
-    | Parensed of MentionableType
+    | ReferencedType of typeName : CstNode<TypeOrModuleIdentifier> * typeParams : CstNode<MentionableType> list
+    | Arrow of fromType : CstNode<MentionableType> * toType : NEL<CstNode<MentionableType>>
+    | Parensed of CstNode<MentionableType>
 
 
 
 and TupleType =
-    { types : MentionableType * NEL<MentionableType> }
+    { types : CstNode<MentionableType> * NEL<CstNode<MentionableType>> }
 
 
 and RecordType =
-    { fields : Map<UnqualValueIdentifier, MentionableType> }
+    { fields : Map<CstNode<UnqualValueIdentifier>, CstNode<MentionableType>> }
 
 
 type VariantCase =
-    { label : UnqualTypeOrModuleIdentifier
-      contents : MentionableType list }
+    { label : CstNode<UnqualTypeOrModuleIdentifier>
+      contents : CstNode<MentionableType> list }
 
 
 type TypeDeclaration =
     | Alias of
-        name : UnqualTypeOrModuleIdentifier *
-        specifiedTypeParams : UnqualValueIdentifier list *  // in case the underlying type needs it
-        referent : MentionableType
+        name : CstNode<UnqualTypeOrModuleIdentifier> *
+        specifiedTypeParams : CstNode<UnqualValueIdentifier> list *  // in case the underlying type needs it
+        referent : CstNode<MentionableType>
     | Sum of
-        name : UnqualTypeOrModuleIdentifier *
-        specifiedTypeParams : UnqualValueIdentifier list *
-        variants : NEL<VariantCase>
+        name : CstNode<UnqualTypeOrModuleIdentifier> *
+        specifiedTypeParams : CstNode<UnqualValueIdentifier> list *
+        variants : NEL<CstNode<VariantCase>>
 
 
 
@@ -82,9 +95,9 @@ type BuiltInPrimitiveTypes =
 
 // Not sure if this is useful yet
 type BuiltInCompoundTypes =
-    | List of MentionableType // or of it makes sense to have these subtypes on the compound type variants yet
-    | Record of (UnqualValueIdentifier * MentionableType) list
-    | Tuple of TupleType
+    | List of CstNode<MentionableType> // or of it makes sense to have these subtypes on the compound type variants yet
+    | Record of (CstNode<UnqualValueIdentifier> * CstNode<MentionableType>) list
+    | Tuple of CstNode<TupleType>
 
 
 
@@ -121,19 +134,21 @@ type InfixOpDeclaration =
 
 
 type CompoundValues =
-    | List of Expression list
-    | Tuple of Expression * NEL<Expression> // Because a tuple has at least two members
-    | Record of (UnqualValueIdentifier * Expression) list
-    | RecordExtension of recordToExtend : UnqualValueIdentifier * additions : NEL<UnqualValueIdentifier * Expression>
+    | List of CstNode<Expression> list
+    | Tuple of CstNode<Expression> * NEL<CstNode<Expression>> // Because a tuple has at least two members
+    | Record of (CstNode<UnqualValueIdentifier> * CstNode<Expression>) list
+    | RecordExtension of
+        recordToExtend : CstNode<UnqualValueIdentifier> *
+        additions : NEL<CstNode<UnqualValueIdentifier> * CstNode<Expression>>
 
 // Not sure yet if it makes sense to have this as a separate type
 and CustomTypeValues =
-    { label : UnqualTypeOrModuleIdentifier
-      values : ExplicitValue list }
+    { label : CstNode<UnqualTypeOrModuleIdentifier>
+      values : CstNode<ExplicitValue> list }
 
 and FunctionValue =
-    { params_ : NEL<AssignmentPattern> // cos if it didn't have any then it would just be a regular value expression
-      body : Expression }
+    { params_ : NEL<CstNode<AssignmentPattern>> // cos if it didn't have any then it would just be a regular value expression
+      body : CstNode<Expression> }
 
 
 and ExplicitValue =
@@ -148,28 +163,28 @@ and ExplicitValue =
 
 /// @TODO: allow for destructured params here at some point
 and LetBinding =
-    { bindPattern : AssignmentPattern
-      value : Expression }
+    { bindPattern : CstNode<AssignmentPattern>
+      value : CstNode<Expression> }
 
 and ControlFlowExpression =
-    | IfExpression of condition : Expression * ifTrue : Expression * ifFalse : Expression
-    | CaseMatch of exprToMatch : Expression * branches : NEL<AssignmentPattern * Expression>
+    | IfExpression of condition : CstNode<Expression> * ifTrue : CstNode<Expression> * ifFalse : CstNode<Expression>
+    | CaseMatch of exprToMatch : CstNode<Expression> * branches : NEL<CstNode<AssignmentPattern> * CstNode<Expression>>
 
 
 
 and SingleValueExpression =
     | ExplicitValue of ExplicitValue
     | Identifier of Identifier // referencing some other expression...
-    | LetExpression of bindings : NEL<LetBinding> * inExpr : Expression // can't have lets outside of an expression
+    | LetExpression of bindings : NEL<CstNode<LetBinding>> * inExpr : CstNode<Expression> // can't have lets outside of an expression
     | ControlFlowExpression of ControlFlowExpression
 
 
 /// @TODO: would be good to flatten these constructors in the abstract syntax tree so we can represent the operators and function applications as a list, not a tree with heavy right hand side children
 and CompoundExpression =
     // Multiple operators in a row are in right nested expressions
-    | Operator of left : Expression * opSequence : NEL<Operator * Expression>
-    | FunctionApplication of funcExpr : Expression * params' : NEL<Expression>
-    | DotAccess of expr : Expression * dotSequence : NEL<UnqualValueIdentifier>
+    | Operator of left : CstNode<Expression> * opSequence : NEL<CstNode<Operator> * CstNode<Expression>>
+    | FunctionApplication of funcExpr : CstNode<Expression> * params' : NEL<CstNode<Expression>>
+    | DotAccess of expr : CstNode<Expression> * dotSequence : CstNode<NEL<UnqualValueIdentifier>>
 
 
 
@@ -181,25 +196,8 @@ and Expression =
 
 
 type ValueDeclaration =
-    { valueName : UnqualValueIdentifier
-      value : Expression }
-
-// Not sure if it makes sense to have these yet, when we haven't yet enforced that the types are consistent...
-// Unless... maybe these type getters can return a Result of either consistent types or of conflicting types, which can then be used for type errors or type hinting or somesuch...?
-let typeOfPrimitiveLiteralValue =
-    function
-    | NumberPrimitive num ->
-        match num with
-        | FloatLiteral _ -> Float
-        | IntLiteral _ -> Int
-    | CharPrimitive _ -> Char
-    | StringPrimitive _ -> String
-    | UnitPrimitive _ -> Unit
-
-//let typeOfCompoundLiteralValue =
-//    function
-//    | List
-
+    { valueName : CstNode<UnqualValueIdentifier>
+      value : CstNode<Expression> }
 
 
 
@@ -212,36 +210,22 @@ let typeOfPrimitiveLiteralValue =
 
 
 type ModuleExport =
-    { name : UnqualIdentifier
-      exposeVariants : bool }
+    { name : CstNode<UnqualIdentifier>
+      exposeVariants : CstNode<unit> option }
 
 
 type ExportExposings =
     | ExposeAll // exposing (..)
-    | ExplicitExposeds of ModuleExport list // exposing (Foo, Bar(..), baz)
+    | ExplicitExposeds of NEL<CstNode<ModuleExport>> // exposing (Foo, Bar(..), baz)
 
 
 
 type ModuleDeclaration =
-    { moduleName : QualifiedModuleOrTypeIdentifier
+    { moduleName : CstNode<QualifiedModuleOrTypeIdentifier>
       exposing : ExportExposings }
 
 
 
-
-
-// /// Use when parsing types works
-//type ValueOrTypeExport =
-//    | ValueExport of IdentifierName
-//    | TypeExport of TypeExport
-
-//type ExplicitExports =
-//    { types : TypeExport list
-//      values : IdentifierName list }
-
-//type Exports =
-//    | ExportAll
-//    | ExportExplicits of ValueOrTypeExport list
 
 
 //import <Identifier>{.<Identifier>} [[as <Identifier>] [exposing (..)]]
@@ -249,12 +233,12 @@ type ModuleDeclaration =
 
 type ImportExposings =
     | NoExposeds
-    | ExplicitExposeds of NEL<UnqualIdentifier> // exposing (Foo,Bar,baz)
-    | ExposeAll // exposing (..)
+    | ExplicitExposeds of NEL<CstNode<UnqualIdentifier>> // exposing (Foo,Bar,baz)
+    | ExposeAll of CstNode<unit> // exposing (..)
 
 type ImportDeclaration =
-    { moduleName : QualifiedModuleOrTypeIdentifier
-      alias : UnqualTypeOrModuleIdentifier option
+    { moduleName : CstNode<QualifiedModuleOrTypeIdentifier>
+      alias : CstNode<UnqualTypeOrModuleIdentifier> option
       exposingMode : ImportExposings }
 
 
@@ -265,6 +249,6 @@ type ImportDeclaration =
 // Representing a whole file/module
 type YlModule =
     { moduleDecl : ModuleDeclaration
-      imports : ImportDeclaration list
-      typeDeclarations : TypeDeclaration list
-      valueDeclarations : ValueDeclaration list }
+      imports : CstNode<ImportDeclaration> list
+      typeDeclarations : CstNode<TypeDeclaration> list
+      valueDeclarations : CstNode<ValueDeclaration> list }

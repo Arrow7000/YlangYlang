@@ -72,12 +72,17 @@ type ExpressionParser<'a> = Parser<'a, TokenWithSource, ParsingCtx, ParserError>
 type ExpressionParserResult<'a> = ParseResultWithContext<'a, TokenWithSource, ParsingCtx, ParserError>
 
 
-type OperatorSuffix = NEL<Operator * Expression>
+type OperatorSuffix = NEL<CstNode<Operator> * CstNode<Expression>>
 
 type private OpOrFunctionApplication =
     | Operator of OperatorSuffix
-    | FunctionApplication of NEL<Expression> * OperatorSuffix option
+    | FunctionApplication of NEL<CstNode<Expression>> * OperatorSuffix option
 
+
+
+
+let makeCstNode (parser : ExpressionParser<'a>) : ExpressionParser<CstNode<'a>> =
+    addParsedsAndMap ConcreteSyntaxTree.makeCstNode parser
 
 
 
@@ -301,6 +306,7 @@ let parseIdentifier =
     parseExpectedToken (ExpectedString "identifier") (function
         | Token.Identifier ident -> Some ident
         | _ -> None)
+    |> makeCstNode
     |> addCtxToStack PCtx.Identifier
 
 let parseSingleValueIdentifier =
@@ -367,10 +373,12 @@ let parseSimpleParam =
 
         // This just parses a single type variant without any data, because the latter would require being delimited, and is therefore parsed elsewhere
         (typeNameParser
+         |> makeCstNode
          |> map (fun typeName ->
              DestructuredTypeVariant (typeName, List.empty)
              |> DestructuredPattern))
 
+    |> makeCstNode
     |> addCtxToStack (PCtx.SingleParam SimpleParam)
 
 
@@ -397,7 +405,9 @@ let parseRecordDestructuringParam =
     |> addCtxToStack (PCtx.SingleParam RecordParam)
 
 let rec parseTupleDestructuredParam : ExpressionParser<DestructuredPattern> =
-    let parseTupleItem = lazyParser (fun _ -> parseDelimitedParam)
+    let parseTupleItem =
+        lazyParser (fun _ -> parseDelimitedParam)
+        |> makeCstNode
 
     succeed (fun first second rest -> DestructuredTuple (first :: second :: rest))
     |. symbol ParensOpen
@@ -422,19 +432,22 @@ let rec parseTupleDestructuredParam : ExpressionParser<DestructuredPattern> =
 and parseConsDestructuredParam =
     succeed (fun nel last -> DestructuredCons (NEL.appendList [ last ] nel))
     |= oneOrMore (
-        lazyParser (fun _ -> parseTopLevelParam)
+        lazyParser (fun _ -> parseTopLevelParam |> makeCstNode)
         |. spaces
         |. symbol (Lexer.Operator Operator.ConsOp)
         |. spaces
     )
-    |= lazyParser (fun _ -> parseTopLevelParam)
+    |= lazyParser (fun _ -> parseTopLevelParam |> makeCstNode)
     |> addCtxToStack (PCtx.SingleParam ConsParam)
 
 and parseTypeVariantDestructuredParam =
     succeed (fun typeName params' -> DestructuredTypeVariant (typeName, params'))
-    |= typeNameParser
+    |= (typeNameParser |> makeCstNode)
     |. spaces
-    |= repeat (lazyParser (fun _ -> parseTopLevelParam) |. spaces)
+    |= repeat (
+        lazyParser (fun _ -> parseTopLevelParam |> makeCstNode)
+        |. spaces
+    )
     |> addCtxToStack (PCtx.SingleParam TypeParam)
 
 and parseInherentlyDelimitedParam =
@@ -447,28 +460,29 @@ and parseNotInherentlyDelimitedParam =
 
 
 
-and parseDelimitedParam =
-    succeed (fun pattern aliasOpt ->
+and parseDelimitedParam : ExpressionParser<AssignmentPattern> =
+    succeed (fun (pattern : CstNode<AssignmentPattern>) (aliasOpt : CstNode<UnqualValueIdentifier> option) ->
         match aliasOpt with
         | Some alias -> Aliased (pattern, alias)
-        | None -> pattern)
+        | None -> getNode pattern)
+    |= (oneOf [ parseNotInherentlyDelimitedParam
+                |> map DestructuredPattern
 
-    |= oneOf [ parseNotInherentlyDelimitedParam
-               |> map DestructuredPattern
+                parseInherentlyDelimitedParam
+                |> map DestructuredPattern
 
-               parseInherentlyDelimitedParam
-               |> map DestructuredPattern
+                (parseSimpleParam |> map getNode)
 
-               parseSimpleParam
-
-               parensedParser (lazyParser <| fun _ -> parseDelimitedParam)
-               |> addCtxToStack (PCtx.SingleParam ParensedParam) ]
+                parensedParser (lazyParser (fun _ -> parseDelimitedParam))
+                |> addCtxToStack (PCtx.SingleParam ParensedParam) ]
+        |> makeCstNode)
     |. spaces
-    |= opt parseAlias
+    |= opt (parseAlias |> makeCstNode)
     |> addCtxToStack (PCtx.SingleParam DelimitedParam)
 
-and parseTopLevelParam =
-    oneOf [ parseSimpleParam
+
+and parseTopLevelParam : ExpressionParser<AssignmentPattern> =
+    oneOf [ parseSimpleParam |> map getNode
 
             parensedParser parseDelimitedParam
 
@@ -486,7 +500,7 @@ and parseTopLevelParam =
 
 
 let parseParamList =
-    oneOrMore (parseTopLevelParam |. spaces)
+    oneOrMore (parseTopLevelParam |> makeCstNode |. spaces)
     |> addCtxToStack PCtx.ParamList
 
 
@@ -511,12 +525,22 @@ let rec private combineEndParser expr opAndFuncParam : Expression =
         CompoundExpression.Operator (expr, opAndOperandNel)
         |> CompoundExpression
     | Some (FunctionApplication (paramExprList, nestedEndExprOpt)) ->
+        let combinedTokens =
+            expr.source
+            @ (NEL.fold<TokenWithSource list, CstNode<Expression>>
+                (fun state item -> state @ item.source)
+                List.empty
+                paramExprList)
+
         let firstExpr =
             CompoundExpression.FunctionApplication (expr, paramExprList)
             |> CompoundExpression
 
-        combineEndParser firstExpr (Option.map Operator nestedEndExprOpt)
-    | None -> expr
+        combineEndParser
+            { node = firstExpr
+              source = combinedTokens }
+            (Option.map Operator nestedEndExprOpt)
+    | None -> getNode expr
 
 
 
@@ -549,7 +573,7 @@ let infixOpDeclarationParser =
     |. spaces
     |. symbol AssignmentEquals
     |. spaces
-    |= parseIdentifier
+    |= (map getNode parseIdentifier)
 
 
 
@@ -562,31 +586,35 @@ let rec parseLambda =
     |. spaces
     |. symbol Token.Arrow
     |. spaces
-    |= lazyParser (fun _ -> parseExpression)
+    |= lazyParser (fun _ -> parseExpression |> makeCstNode)
     |> addCtxToStack PCtx.Lambda
 
 
 
 and singleLetAssignment =
     parseIndentedColBlock (
-        succeed (fun name params' (expr : Expression) ->
+        succeed (fun name params' (expr : CstNode<Expression>) ->
             { bindPattern = name
               value =
                 match params' with
                 | [] -> expr
                 | head :: tail ->
-                    ({ params_ = NEL.new_ head tail
-                       body = expr })
-                    |> Function
-                    |> ExplicitValue
-                    |> SingleValueExpression })
-        |= parseTopLevelParam
+                    let combinedTokens = params' |> List.collect (fun p -> p.source)
+
+                    { node =
+                        { params_ = NEL.new_ head tail
+                          body = expr }
+                        |> Function
+                        |> ExplicitValue
+                        |> SingleValueExpression
+                      source = combinedTokens } })
+        |= (parseTopLevelParam |> makeCstNode)
         |. spaces
-        |= repeat (parseTopLevelParam |. spaces)
+        |= repeat (parseTopLevelParam |> makeCstNode |. spaces)
         |. spaces
         |. symbol Token.AssignmentEquals
         |. spaces
-        |= lazyParser (fun _ -> parseExpression)
+        |= lazyParser (fun _ -> parseExpression |> makeCstNode)
         |. spaces
         |. ensureEnd // this ensures that the next let binding can't start more indented than this assignment did
     )
@@ -600,22 +628,22 @@ and parseLetBindingsList =
     |. commit
     |. spaces
     // this `parseSameColBlock` ensures that successive let bindings can't start on a lower indentation than the first let binding
-    |= parseSameColBlock (oneOrMore singleLetAssignment)
+    |= parseSameColBlock (oneOrMore (singleLetAssignment |> makeCstNode))
     |. spaces
     |. symbol InKeyword
     |. commit
     |. spaces
-    |= lazyParser (fun _ -> parseExpression)
+    |= lazyParser (fun _ -> parseExpression |> makeCstNode)
     |> addCtxToStack PCtx.LetBindingsAssignmentList
 
 
 and parseRecordKeyValue =
     succeed (fun key expression -> (key, expression))
-    |= parseSingleValueIdentifier
+    |= (parseSingleValueIdentifier |> makeCstNode)
     |. spaces
     |. symbol AssignmentEquals
     |. spaces
-    |= lazyParser (fun _ -> parseExpression)
+    |= lazyParser (fun _ -> parseExpression |> makeCstNode)
 
 
 and parseRecord =
@@ -635,7 +663,7 @@ and parseExtendedRecord =
         RecordExtension (recordToExtend, NEL.new_ firstField otherFields))
     |. symbol BracesOpen
     |. spaces
-    |= parseSingleValueIdentifier
+    |= (parseSingleValueIdentifier |> makeCstNode)
     |. spaces
     |. symbol PipeChar
     |. spaces
@@ -656,17 +684,17 @@ and parseList =
           endToken = BracketsClose
           separator = Comma
           spaces = spaces
-          item = lazyParser (fun _ -> parseExpression)
+          item = lazyParser (fun _ -> parseExpression |> makeCstNode)
           supportsTrailingSeparator = false }
     |> addCtxToStack PCtx.List
 
 
 and parseTupleOrParensedExpr =
-    let parseTupleItem = lazyParser (fun _ -> parseExpression)
+    let parseTupleItem = lazyParser (fun _ -> parseExpression |> makeCstNode)
 
     succeed (fun first more ->
         match more with
-        | [] -> ParensedExpression first
+        | [] -> ParensedExpression <| getNode first
         | head :: rest ->
             Tuple (first, NEL.new_ head rest)
             |> Compound
@@ -694,10 +722,10 @@ and parseDelimExpressions =
         match dotFieldsOpt with
         | Some dotFields -> DotAccess (expr, dotFields) |> CompoundExpression
 
-        | None -> expr)
+        | None -> getNode expr)
     |= (either
             (succeed SingleValueExpression
-             |= oneOf [ parseIdentifier |> map Identifier
+             |= oneOf [ parseIdentifier |> map (getNode >> Identifier)
 
                         parseRecord
                         |> map (Record >> Compound >> ExplicitValue)
@@ -711,16 +739,17 @@ and parseDelimExpressions =
                         parsePrimitiveLiteral
                         |> map (Primitive >> ExplicitValue)
 
-                        parseDotGetter |> map (DotGetter >> ExplicitValue) ])
-            parseTupleOrParensedExpr)
-    |= opt parseDotFieldPath
+                        parseDotGetter |> map (DotGetter >> ExplicitValue) ]
+             |> makeCstNode)
+            (parseTupleOrParensedExpr |> makeCstNode))
+    |= opt (parseDotFieldPath |> makeCstNode)
     |> addCtxToStack PCtx.DelimitedExpressions
 
 
 and private parseFuncAppSuffix =
     succeed (fun params' opSuffix -> FunctionApplication (params', opSuffix))
 
-    |= oneOrMore (parseDelimExpressions |. spaces)
+    |= oneOrMore (parseDelimExpressions |> makeCstNode |. spaces)
     |. spaces
     |= opt parseOperatorSuffix
 
@@ -728,9 +757,9 @@ and parseOperatorSuffix =
     oneOrMore (
         succeed (fun op operand -> (op, operand))
 
-        |= parseOperator
+        |= (parseOperator |> makeCstNode)
         |. spaces
-        |= lazyParser (fun _ -> parseExpression)
+        |= lazyParser (fun _ -> parseExpression |> makeCstNode)
     )
 
 
@@ -743,7 +772,7 @@ and private endParser =
 
 
 and parseIfExpression =
-    let parseExpr = lazyParser (fun _ -> parseExpression)
+    let parseExpr = lazyParser (fun _ -> parseExpression |> makeCstNode)
 
     succeed (fun condition ifTrue ifFalse -> IfExpression (condition, ifTrue, ifFalse))
     |. symbol IfKeyword
@@ -763,7 +792,7 @@ and parseIfExpression =
 
 
 and parseCaseMatch =
-    let parseExpr = lazyParser (fun _ -> parseExpression)
+    let parseExpr = lazyParser (fun _ -> parseExpression |> makeCstNode)
 
     succeed (fun exprToMatch branches -> CaseMatch (exprToMatch, branches))
     |. symbol CaseKeyword
@@ -777,7 +806,7 @@ and parseCaseMatch =
     |= oneOrMore (
         parseIndentedColBlock (
             succeed (fun assignment expr -> (assignment, expr))
-            |= parseDelimitedParam
+            |= (parseDelimitedParam |> makeCstNode)
             |. spaces
             |. symbol Lexer.Arrow
             |. spaces
@@ -794,7 +823,7 @@ and parseControlFlowExpression =
 and parseCompoundExpressions : ExpressionParser<Expression> =
     succeed combineEndParser
 
-    |= startParser
+    |= (startParser |> makeCstNode)
     |. spaces
     |= opt endParser
     |> addCtxToStack PCtx.CompoundExpression
@@ -822,25 +851,29 @@ and parseExpression : ExpressionParser<Expression> =
 
 let parseValueDeclaration =
     parseIndentedColBlock (
-        succeed (fun name params' (expr : Expression) ->
+        succeed (fun name params' expr ->
             { valueName = name
               value =
                 match params' with
                 | [] -> expr
                 | head :: tail ->
-                    ({ params_ = NEL.new_ head tail
-                       body = expr })
-                    |> Function
-                    |> ExplicitValue
-                    |> SingleValueExpression })
-        |= parseSingleValueIdentifier
+                    let combinedTokens = params' |> List.collect (fun p -> p.source)
+
+                    { node =
+                        { params_ = NEL.new_ head tail
+                          body = expr }
+                        |> Function
+                        |> ExplicitValue
+                        |> SingleValueExpression
+                      source = combinedTokens } })
+        |= (parseSingleValueIdentifier |> makeCstNode)
         |. spaces
-        |= repeat (parseTopLevelParam |. spaces)
+        |= repeat (parseTopLevelParam |> makeCstNode |. spaces)
         |. spaces
         |. symbol Token.AssignmentEquals
         |. commit
         |. spaces
-        |= lazyParser (fun _ -> parseExpression)
+        |= lazyParser (fun _ -> parseExpression |> makeCstNode)
     )
     |> addCtxToStack PCtx.SingleLetAssignment
 
@@ -853,11 +886,11 @@ let parseValueDeclaration =
 
 let rec parseKeyAndValueType =
     succeed (fun key value -> key, value)
-    |= parseSingleValueIdentifier
+    |= (parseSingleValueIdentifier |> makeCstNode)
     |. spaces
     |. symbol Colon
     |. spaces
-    |= lazyParser (fun _ -> parseTypeExpression)
+    |= lazyParser (fun _ -> parseTypeExpression |> makeCstNode)
 
 and parseRecordType =
     succeed (fun keyVals -> { fields = Map.ofList keyVals })
@@ -868,7 +901,7 @@ and parseRecordType =
     |. symbol BracesClose
 
 and parseTupleTypeOrParensed =
-    let parseMentionableType = lazyParser (fun _ -> parseTypeExpression)
+    let parseMentionableType = lazyParser (fun _ -> parseTypeExpression |> makeCstNode)
 
     succeed (fun first others ->
         match others with
@@ -888,6 +921,7 @@ and parseTupleTypeOrParensed =
     )
     |. symbol ParensClose
 
+
 and parseInherentlyDelimType =
     oneOf [ parseRecordType |> map MentionableType.Record
 
@@ -899,32 +933,33 @@ and parseInherentlyDelimType =
             parseUnit |> map (always UnitType)
 
             typeNameParser
+            |> makeCstNode
             |> map (fun typeName -> ReferencedType (typeName, List.empty)) ]
 
 and parseTypeReference =
     succeed (fun typeName typeParams -> ReferencedType (typeName, typeParams))
-    |= typeNameParser
+    |= (typeNameParser |> makeCstNode)
     |= repeat (
         succeed id
 
         |. spaces
-        |= parseInherentlyDelimType
+        |= (parseInherentlyDelimType |> makeCstNode)
     )
 
 and parseTypePrimitive = either parseTypeReference parseInherentlyDelimType
 
-and parseTypeExpression =
-    succeed (fun prim toType ->
+and parseTypeExpression : ExpressionParser<MentionableType> =
+    succeed (fun (prim : CstNode<MentionableType>) toType ->
         match toType with
-        | [] -> prim
+        | [] -> getNode prim
         | head :: rest -> Arrow (prim, NEL.new_ head rest))
-    |= parseTypePrimitive
+    |= (parseTypePrimitive |> makeCstNode)
     |= repeat (
         succeed id
         |. spaces
         |. symbol Lexer.Arrow
         |. spaces
-        |= parseTypePrimitive
+        |= (parseTypePrimitive |> makeCstNode)
     )
 
 
@@ -936,28 +971,35 @@ let parseAliasDeclaration =
     succeed (fun ident generics expr -> Alias (ident, generics, expr))
     |. symbol AliasKeyword
     |. spaces
-    |= parseModuleAliasOrUnqualTypeName
-    |= repeat (succeed id |. spaces |= parseSingleValueIdentifier)
+    |= (parseModuleAliasOrUnqualTypeName |> makeCstNode)
+    |= repeat (
+        succeed id |. spaces |= parseSingleValueIdentifier
+        |> makeCstNode
+    )
     |. spaces
     |. symbol AssignmentEquals
     |. spaces
-    |= parseTypeExpression
+    |= (parseTypeExpression |> makeCstNode)
 
 
 let parseNewTypeDeclaration =
     let parseVariant =
         succeed (fun ident typeParams -> { label = ident; contents = typeParams })
-        |= parseModuleAliasOrUnqualTypeName
+        |= (parseModuleAliasOrUnqualTypeName |> makeCstNode)
         |= repeat (
             succeed id
 
             |. spaces
-            |= parseInherentlyDelimType
+            |= (parseInherentlyDelimType |> makeCstNode)
         )
+        |> makeCstNode
 
     succeed (fun ident generics firstVariant otherVariants -> Sum (ident, generics, NEL.new_ firstVariant otherVariants))
-    |= parseModuleAliasOrUnqualTypeName
-    |= repeat (succeed id |. spaces |= parseSingleValueIdentifier)
+    |= (parseModuleAliasOrUnqualTypeName |> makeCstNode)
+    |= repeat (
+        succeed id |. spaces |= parseSingleValueIdentifier
+        |> makeCstNode
+    )
     |. spaces
     |. symbol AssignmentEquals
     |. spaces
@@ -1014,30 +1056,32 @@ let exposingAllParser =
     |. symbol DoubleDot
     |. spaces
     |. symbol ParensClose
+    |> makeCstNode
 
 let parseModuleDeclaration : ExpressionParser<ModuleDeclaration> =
     let explicitExportItem =
         succeed (fun ident exposedAll ->
             { name = ident
-              exposeVariants = Option.isSome exposedAll })
-        |= parseSingleValueOrTypeIdentifier
+              exposeVariants = exposedAll })
+        |= (parseSingleValueOrTypeIdentifier |> makeCstNode)
         |. spaces
         |= opt exposingAllParser
-        |. spaces
+        |> makeCstNode
 
     let explicitExports =
-        succeed (fun firsts last -> firsts @ [ last ])
+        succeed (fun first rest -> NEL.new_ first rest)
         |. symbol ParensOpen
         |. spaces
+        |= explicitExportItem
         |= repeat (
-            explicitExportItem
+            succeed id
+
             |. spaces
             |. symbol Comma
             |. spaces
+            |= explicitExportItem
         )
-        |= explicitExportItem
         |. symbol ParensClose
-
 
 
     succeed (fun moduleName exports ->
@@ -1049,12 +1093,13 @@ let parseModuleDeclaration : ExpressionParser<ModuleDeclaration> =
     |. symbol ModuleKeyword
     |. commit
     |. spaces
-    |= parseModuleName
+    |= (parseModuleName |> makeCstNode)
     |. spaces
     |. symbol ExposingKeyword
     |. commit
     |. spaces
-    |= either (succeed None |. exposingAllParser) (succeed Some |= explicitExports)
+    |= (either (succeed None |. exposingAllParser) (succeed Some |= explicitExports))
+
 
 
 let parseImport =
@@ -1065,7 +1110,7 @@ let parseImport =
     |. symbol ImportKeyWord
     |. commit
     |. spaces
-    |= parseModuleName
+    |= (parseModuleName |> makeCstNode)
     |= opt (
         succeed id
 
@@ -1073,6 +1118,7 @@ let parseImport =
         |. symbol AsKeyword
         |. spaces
         |= parseModuleAliasOrUnqualTypeName
+        |> makeCstNode
     )
     |= opt (
         succeed id
@@ -1082,11 +1128,11 @@ let parseImport =
         |. commit
         |. spaces
         |= either
-            (succeed ExposeAll |. exposingAllParser)
+            (succeed ExposeAll |= exposingAllParser)
             (succeed (fun first others -> NEL.new_ first others |> ExplicitExposeds)
              |. symbol ParensOpen
              |. spaces
-             |= parseSingleValueOrTypeIdentifier
+             |= (parseSingleValueOrTypeIdentifier |> makeCstNode)
              |= repeat (
                  succeed id
 
@@ -1094,6 +1140,7 @@ let parseImport =
                  |. symbol Comma
                  |. spaces
                  |= parseSingleValueOrTypeIdentifier
+                 |> makeCstNode
              )
              |. spaces
              |. symbol ParensClose)
@@ -1105,12 +1152,19 @@ let parseImport =
 
 
 type TypeOrValueDeclaration =
-    | TypeDeclaration of TypeDeclaration
-    | ValueDeclaration of ValueDeclaration
+    | TypeDeclaration of CstNode<TypeDeclaration>
+    | ValueDeclaration of CstNode<ValueDeclaration>
 
 
 let parseDeclarations =
-    either (parseValueDeclaration |> map ValueDeclaration) (parseTypeDeclaration |> map TypeDeclaration)
+    either
+        (parseValueDeclaration
+         |> makeCstNode
+         |> map ValueDeclaration)
+        (parseTypeDeclaration
+         |> makeCstNode
+         |> map TypeDeclaration)
+
 
 
 let parseEntireModule =
@@ -1129,7 +1183,7 @@ let parseEntireModule =
     |. spaces
     |= parseModuleDeclaration
     |. spaces
-    |= repeat (parseImport |. spaces)
+    |= repeat (parseImport |. spaces |> makeCstNode)
     |. spaces
     |= repeat (parseDeclarations |. spaces)
     |. ensureEnd
