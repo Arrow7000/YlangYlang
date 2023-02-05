@@ -59,7 +59,8 @@ type MentionableType =
 
 
 and TupleType =
-    { types : CstNode<MentionableType> * NEL<CstNode<MentionableType>> }
+    { /// Because there need to be at least two members for it to be a tuple type. Otherwise it's just a parensed expression.
+      types : CstNode<MentionableType> * NEL<CstNode<MentionableType>> }
 
 
 and RecordType =
@@ -117,6 +118,7 @@ type PrimitiveLiteralValue =
     | NumberPrimitive of NumberLiteralValue
     | CharPrimitive of char
     | StringPrimitive of string
+    | BoolPrimitive of bool
     | UnitPrimitive
 
 

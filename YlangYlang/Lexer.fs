@@ -73,6 +73,8 @@ type PrimitiveLiteral =
     | UfloatLiteral of float
     | StringLiteral of string
     | CharLiteral of char
+    | BoolLiteral of bool
+
 
 type Identifier =
     | ModuleSegmentsOrQualifiedTypeOrVariant of QualifiedModuleOrTypeIdentifier // when it has dots in so it could be either a module name or refer to a (partially) qualified type or type variant
@@ -293,8 +295,6 @@ let justKeepLexing (allMatchers : Matcher list) string =
 
 module Matchers =
 
-    let private charLen = uint 1
-
     /// For matches where the actual characters can be discarded
     let private simpleMatch token pattern cursor =
         function
@@ -416,6 +416,12 @@ module Matchers =
             | false, _ -> failwith $"Couldn't parse '{match'.group}' as char"
         | _ -> NoMatch
 
+
+    let boolMatcher cursor =
+        function
+        | MultiCharRegex "True\\b" str -> makeTokenWithCtx cursor (PrimitiveLiteral <| BoolLiteral true) str
+        | MultiCharRegex "False\\b" str -> makeTokenWithCtx cursor (PrimitiveLiteral <| BoolLiteral false) str
+        | _ -> NoMatch
 
     let letKeywordMatcher = simpleMatch LetKeyword "let(?=\s|$)"
 
@@ -583,6 +589,7 @@ module Matchers =
           whitespaceMatcher
           stringMatcher
           charLiteral
+          boolMatcher
           letKeywordMatcher
           inKeywordMatcher
           importKeyword

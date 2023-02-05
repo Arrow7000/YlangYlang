@@ -279,10 +279,16 @@ let parseUnit : ExpressionParser<PrimitiveLiteralValue> =
     |> addCtxToStack PCtx.Unit
 
 
+let parseBool : ExpressionParser<PrimitiveLiteralValue> =
+    parseChoosePrimitiveLiteral (function
+        | BoolLiteral b -> BoolPrimitive b |> Some
+        | _ -> None)
+
 
 let parsePrimitiveLiteral =
     oneOf [ parseFloat |> map NumberPrimitive
             parseInt |> map NumberPrimitive
+            parseBool
             parseChoosePrimitiveLiteral (function
                 | StringLiteral str -> StringPrimitive str |> Some
                 | CharLiteral c -> CharPrimitive c |> Some
@@ -639,10 +645,11 @@ and parseLetBindingsList =
 
 and parseRecordKeyValue =
     succeed (fun key expression -> (key, expression))
-    |= (parseSingleValueIdentifier |> makeCstNode)
+    |= makeCstNode parseSingleValueIdentifier
     |. spaces
     |. symbol AssignmentEquals
     |. spaces
+    |. commit
     |= lazyParser (fun _ -> parseExpression |> makeCstNode)
 
 
@@ -663,14 +670,19 @@ and parseExtendedRecord =
         RecordExtension (recordToExtend, NEL.new_ firstField otherFields))
     |. symbol BracesOpen
     |. spaces
-    |= (parseSingleValueIdentifier |> makeCstNode)
+    |= makeCstNode parseSingleValueIdentifier
     |. spaces
     |. symbol PipeChar
+    |. commit
     |. spaces
     |= parseRecordKeyValue
     |. spaces
     |= repeat (
-        succeed id |. spaces |. symbol Comma
+        succeed id
+
+        |. symbol Comma
+        |. commit
+        |. spaces
         |= parseRecordKeyValue
         |. spaces
     )
@@ -750,14 +762,13 @@ and private parseFuncAppSuffix =
     succeed (fun params' opSuffix -> FunctionApplication (params', opSuffix))
 
     |= oneOrMore (parseDelimExpressions |> makeCstNode |. spaces)
-    |. spaces
-    |= opt parseOperatorSuffix
+    |= opt (succeed id |. spaces |= parseOperatorSuffix)
 
 and parseOperatorSuffix =
     oneOrMore (
         succeed (fun op operand -> (op, operand))
 
-        |= (parseOperator |> makeCstNode)
+        |= makeCstNode parseOperator
         |. spaces
         |= lazyParser (fun _ -> parseExpression |> makeCstNode)
     )
@@ -806,7 +817,7 @@ and parseCaseMatch =
     |= oneOrMore (
         parseIndentedColBlock (
             succeed (fun assignment expr -> (assignment, expr))
-            |= (parseDelimitedParam |> makeCstNode)
+            |= makeCstNode parseDelimitedParam
             |. spaces
             |. symbol Lexer.Arrow
             |. spaces
@@ -823,9 +834,8 @@ and parseControlFlowExpression =
 and parseCompoundExpressions : ExpressionParser<Expression> =
     succeed combineEndParser
 
-    |= (startParser |> makeCstNode)
-    |. spaces
-    |= opt endParser
+    |= makeCstNode startParser
+    |= opt (succeed id |. spaces |= endParser)
     |> addCtxToStack PCtx.CompoundExpression
 
 
