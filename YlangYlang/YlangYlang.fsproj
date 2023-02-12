@@ -1,27 +1,20 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <TargetFramework>net6.0</TargetFramework>
+    <SelfContained>true</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="Test.yl">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
     <Compile Include="Helpers.fs" />
     <Compile Include="FileHelpers.fs" />
     <Compile Include="Lexer.fs" />
     <Compile Include="ConcreteSyntaxTree.fs" />
     <Compile Include="Parser.fs" />
-    <None Include="Expression.yl">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
     <Compile Include="DebugHelpers.fs" />
     <Compile Include="ExpressionParsing.fs" />
     <Compile Include="NameResolution.fs" />
     <Compile Include="TypeChecker.fs" />
-    <Compile Include="Program.fs" />
   </ItemGroup>
 
 </Project>
