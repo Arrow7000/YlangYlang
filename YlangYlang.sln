@@ -7,6 +7,10 @@ Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "YlangYlang", "YlangYlang\Yl
 EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "YlangYlang.Tests", "YlangYlang.Tests\YlangYlang.Tests.fsproj", "{0C91AA97-9785-465A-9EC5-F941657A15AE}"
 EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "YlangYlang.Compiler.Gui.Client", "YlangYlang.Compiler.Gui\src\YlangYlang.Compiler.Gui.Client\YlangYlang.Compiler.Gui.Client.fsproj", "{B4E0D5E9-9B20-4446-96B4-5F7ED6C612F8}"
+EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "YlangYlang.API", "YlangYlang.API\YlangYlang.API.fsproj", "{11BC7C2A-B4B1-4CF4-BD4B-DDA630E302D9}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +25,14 @@ Global
 		{0C91AA97-9785-465A-9EC5-F941657A15AE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0C91AA97-9785-465A-9EC5-F941657A15AE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0C91AA97-9785-465A-9EC5-F941657A15AE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B4E0D5E9-9B20-4446-96B4-5F7ED6C612F8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B4E0D5E9-9B20-4446-96B4-5F7ED6C612F8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B4E0D5E9-9B20-4446-96B4-5F7ED6C612F8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B4E0D5E9-9B20-4446-96B4-5F7ED6C612F8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{11BC7C2A-B4B1-4CF4-BD4B-DDA630E302D9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{11BC7C2A-B4B1-4CF4-BD4B-DDA630E302D9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{11BC7C2A-B4B1-4CF4-BD4B-DDA630E302D9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{11BC7C2A-B4B1-4CF4-BD4B-DDA630E302D9}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

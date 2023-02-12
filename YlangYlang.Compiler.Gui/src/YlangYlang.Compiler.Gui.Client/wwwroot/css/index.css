@@ -1,0 +1,28 @@
+html, body {
+    min-height: 100%;
+}
+
+body {
+}
+
+
+.page {
+    min-height: 100vh;
+    display: flex;
+    width: 100%;
+}
+
+.editor {
+    font-family: "Monaco", "Courier New", "Courier", monospace;
+    margin: 25px;
+    flex-grow: 1;
+    flex-basis: 0;
+}
+
+.sidebar {
+    display: flex;
+    padding: 50px;
+    font-family: "Monaco", "Courier New", "Courier", monospace;
+    flex-grow: 1;
+    flex-basis: 0;
+}
