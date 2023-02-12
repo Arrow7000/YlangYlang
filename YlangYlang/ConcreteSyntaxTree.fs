@@ -60,6 +60,7 @@ type MentionableType =
     | GenericTypeVar of UnqualValueIdentifier
     | Tuple of TupleType
     | Record of RecordType
+    | ExtendedRecord of ExtendedRecordType
     | ReferencedType of typeName : CstNode<TypeOrModuleIdentifier> * typeParams : CstNode<MentionableType> list
     | Arrow of fromType : CstNode<MentionableType> * toType : NEL<CstNode<MentionableType>>
     | Parensed of CstNode<MentionableType>
@@ -74,6 +75,9 @@ and TupleType =
 and RecordType =
     { fields : Map<CstNode<UnqualValueIdentifier>, CstNode<MentionableType>> }
 
+and ExtendedRecordType =
+    { extendedAlias : CstNode<UnqualValueIdentifier>
+      fields : Map<CstNode<UnqualValueIdentifier>, CstNode<MentionableType>> }
 
 type VariantCase =
     { label : CstNode<UnqualTypeOrModuleIdentifier>
@@ -188,9 +192,8 @@ and SingleValueExpression =
     | ControlFlowExpression of ControlFlowExpression
 
 
-/// @TODO: would be good to flatten these constructors in the abstract syntax tree so we can represent the operators and function applications as a list, not a tree with heavy right hand side children
+
 and CompoundExpression =
-    // Multiple operators in a row are in right nested expressions
     | Operator of left : CstNode<Expression> * opSequence : NEL<CstNode<Operator> * CstNode<Expression>>
     | FunctionApplication of funcExpr : CstNode<Expression> * params' : NEL<CstNode<Expression>>
     | DotAccess of expr : CstNode<Expression> * dotSequence : CstNode<NEL<UnqualValueIdentifier>>
@@ -208,6 +211,11 @@ type ValueDeclaration =
     { valueName : CstNode<UnqualValueIdentifier>
       value : CstNode<Expression> }
 
+
+
+type ValueAnnotation =
+    { valueName : CstNode<UnqualValueIdentifier>
+      annotatedType : MentionableType }
 
 
 (* The module as a whole *)
@@ -260,4 +268,5 @@ type YlModule =
     { moduleDecl : ModuleDeclaration
       imports : CstNode<ImportDeclaration> list
       typeDeclarations : CstNode<TypeDeclaration> list
+      valueAnnotations : CstNode<ValueAnnotation> list
       valueDeclarations : CstNode<ValueDeclaration> list }

@@ -14,7 +14,7 @@ type PathToDestructuredName =
     | InverseTypeVariant of index : uint * child : PathToDestructuredName
 
 
-/// Map that stores just parameter references
+/// Map that stores just parameter references.
 type ResolvedParams = Map<UnqualValueIdentifier, (TokenWithSource list * PathToDestructuredName) nel>
 
 
@@ -162,3 +162,7 @@ let resolveFuncParams ({ params_ = params_ } : FunctionValue) : ResolvedParams =
     NEL.map resolveParamAssignment params_
     |> NEL.toList
     |> combineReferenceMaps
+
+
+
+let resolveLetBinding ({ bindPattern = bindPattern } : LetBinding) : ResolvedParams = resolveParamAssignment bindPattern

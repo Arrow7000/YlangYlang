@@ -11,7 +11,7 @@ module Cst = ConcreteSyntaxTree
 
 (*
 
-@TODO list
+@TODO list:
 
 - [ ] resolve named values
     - [ ] in local scopes

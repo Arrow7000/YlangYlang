@@ -164,6 +164,16 @@ module List =
             (List.empty, List.empty)
 
 
+    let typedPartition2 f list =
+        List.foldBack
+            (fun item (lefts, middles, rights) ->
+                match f item with
+                | Choice1Of3 a -> a :: lefts, middles, rights
+                | Choice2Of3 b -> lefts, b :: middles, rights
+                | Choice3Of3 c -> lefts, middles, c :: rights)
+            list
+            (List.empty, List.empty, List.empty)
+
 type Either<'a, 'b> =
     | Left of 'a
     | Right of 'b

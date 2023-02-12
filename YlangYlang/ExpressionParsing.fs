@@ -356,7 +356,7 @@ let rec parensifyParser parser =
 
 
 let parseModuleAliasOrUnqualTypeName : ExpressionParser<UnqualTypeOrModuleIdentifier> =
-    parseExpectedToken (ExpectedString "module name") (function
+    parseExpectedToken (ExpectedString "unqualified type or module name") (function
         | Token.Identifier (TypeNameOrVariantOrTopLevelModule ident) -> Some ident
         | _ -> None)
 
@@ -364,7 +364,7 @@ let parseModuleAliasOrUnqualTypeName : ExpressionParser<UnqualTypeOrModuleIdenti
 
 
 let typeNameParser =
-    parseExpectedToken (ExpectedString "type name") (function
+    parseExpectedToken (ExpectedString "qualified or unqualified type or module name") (function
         | Token.Identifier (ModuleSegmentsOrQualifiedTypeOrVariant ident) -> Some (QualifiedType ident)
         | Token.Identifier (TypeNameOrVariantOrTopLevelModule ident) -> Some (UnqualType ident)
         | _ -> None)
@@ -924,10 +924,43 @@ let rec parseKeyAndValueType =
     |= lazyParser (fun _ -> parseTypeExpression |> addCstNode)
 
 and parseRecordType =
-    succeed (fun keyVals -> { fields = Map.ofList keyVals })
+    succeed (fun first others -> { fields = Map.ofList (first :: others) })
     |. symbol BracesOpen
     |. spaces
-    |= repeat parseKeyAndValueType
+    |= parseKeyAndValueType
+    |. commit
+    |= repeat (
+        succeed id
+
+        |. spaces
+        |. symbol Comma
+        |. spaces
+        |= parseKeyAndValueType
+    )
+    |. spaces
+    |. symbol BracesClose
+
+
+and parseExtendedRecordType =
+    succeed (fun alias first others ->
+        { extendedAlias = alias
+          fields = Map.ofList (first :: others) })
+    |. symbol BracesOpen
+    |. spaces
+    |= parseSingleValueIdentifier
+    |. spaces
+    |. symbol PipeChar
+    |. commit
+    |. spaces
+    |= parseKeyAndValueType
+    |= repeat (
+        succeed id
+
+        |. spaces
+        |. symbol Comma
+        |. spaces
+        |= parseKeyAndValueType
+    )
     |. spaces
     |. symbol BracesClose
 
@@ -956,6 +989,9 @@ and parseTupleTypeOrParensed =
 and parseInherentlyDelimType =
     oneOf [ parseRecordType |> map MentionableType.Record
 
+            parseExtendedRecordType
+            |> map MentionableType.ExtendedRecord
+
             parseTupleTypeOrParensed
 
             parseSingleValueIdentifier
@@ -963,18 +999,19 @@ and parseInherentlyDelimType =
 
             parseUnit |> map (always UnitType)
 
+            // parses a single type name without any type params
             typeNameParser
             |> addCstNode
             |> map (fun typeName -> ReferencedType (typeName, List.empty)) ]
 
 and parseTypeReference =
     succeed (fun typeName typeParams -> ReferencedType (typeName, typeParams))
-    |= (typeNameParser |> addCstNode)
+    |= addCstNode typeNameParser
     |= repeat (
         succeed id
 
         |. spaces
-        |= (parseInherentlyDelimType |> addCstNode)
+        |= addCstNode parseInherentlyDelimType
     )
 
 and parseTypePrimitive = either parseTypeReference parseInherentlyDelimType
@@ -984,13 +1021,13 @@ and parseTypeExpression : ExpressionParser<MentionableType> =
         match toType with
         | [] -> getNode prim
         | head :: rest -> Arrow (prim, NEL.new_ head rest))
-    |= (parseTypePrimitive |> addCstNode)
+    |= addCstNode parseTypePrimitive
     |= repeat (
         succeed id
         |. spaces
         |. symbol Lexer.Arrow
         |. spaces
-        |= (parseTypePrimitive |> addCstNode)
+        |= addCstNode parseTypePrimitive
     )
 
 
@@ -1001,8 +1038,9 @@ and parseTypeExpression : ExpressionParser<MentionableType> =
 let parseAliasDeclaration =
     succeed (fun ident generics expr -> Alias (ident, generics, expr))
     |. symbol AliasKeyword
+    |. commit
     |. spaces
-    |= (parseModuleAliasOrUnqualTypeName |> addCstNode)
+    |= addCstNode parseModuleAliasOrUnqualTypeName
     |= repeat (
         succeed id |. spaces |= parseSingleValueIdentifier
 
@@ -1010,13 +1048,13 @@ let parseAliasDeclaration =
     |. spaces
     |. symbol AssignmentEquals
     |. spaces
-    |= (parseTypeExpression |> addCstNode)
+    |= addCstNode parseTypeExpression
 
 
 let parseNewTypeDeclaration =
     let parseVariant =
         succeed (fun ident typeParams -> { label = ident; contents = typeParams })
-        |= (parseModuleAliasOrUnqualTypeName |> addCstNode)
+        |= addCstNode parseModuleAliasOrUnqualTypeName
         |= repeat (
             succeed id
 
@@ -1053,15 +1091,19 @@ let parseTypeDeclaration =
     )
 
 
-
-
-
-
-let parseTypeDeclarations =
-    succeed id
-
-    |= repeat (succeed id |. spaces |= parseTypeDeclaration)
+let parseValueAnnotation =
+    succeed (fun name type_ ->
+        { valueName = name
+          annotatedType = type_ })
+    |= parseSingleValueIdentifier
     |. spaces
+    |. symbol Colon
+    |. commit
+    |. spaces
+    |= parseTypeExpression
+
+
+
 
 
 
@@ -1182,31 +1224,35 @@ let parseImport =
 type TypeOrValueDeclaration =
     | TypeDeclaration of CstNode<TypeDeclaration>
     | ValueDeclaration of CstNode<ValueDeclaration>
+    | ValueTypeAnnotation of CstNode<ValueAnnotation>
 
 
 let parseDeclarations =
-    either
-        (parseValueDeclaration
-         |> addCstNode
-         |> map ValueDeclaration)
-        (parseTypeDeclaration
-         |> addCstNode
-         |> map TypeDeclaration)
-
+    oneOf [ (parseValueDeclaration
+             |> addCstNode
+             |> map ValueDeclaration)
+            (parseTypeDeclaration
+             |> addCstNode
+             |> map TypeDeclaration)
+            (parseValueAnnotation
+             |> addCstNode
+             |> map ValueTypeAnnotation) ]
 
 
 let parseEntireModule =
     succeed (fun moduleDeclaration imports declarations ->
-        let (typeDeclarations, valueDeclarations) =
-            List.typedPartition
+        let (typeDeclarations, valueDeclarations, valueAnnotations) =
+            List.typedPartition2
                 (function
-                | TypeDeclaration t -> Choice1Of2 t
-                | ValueDeclaration v -> Choice2Of2 v)
+                | TypeDeclaration t -> Choice1Of3 t
+                | ValueDeclaration v -> Choice2Of3 v
+                | ValueTypeAnnotation a -> Choice3Of3 a)
                 declarations
 
         { moduleDecl = moduleDeclaration
           imports = imports
           typeDeclarations = typeDeclarations
+          valueAnnotations = valueAnnotations
           valueDeclarations = valueDeclarations })
     |. spaces
     |= parseModuleDeclaration
