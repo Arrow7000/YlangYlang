@@ -36,14 +36,14 @@ type NonEmptyList<'a> =
     static member head (NEL (head', _)) = head'
     static member tail (NEL (_, tail')) = tail'
 
-    static member map f (NEL (first, rest)) = NEL (f first, List.map f rest)
+    static member map<'a, 'b> (f : 'a -> 'b) (NEL (first, rest) : 'a nel) = NEL (f first, List.map f rest)
 
     static member fromList (l : 'a list) : NEL<'a> option =
         match l with
         | [] -> None
         | head :: rest -> Some <| NEL.new_ head rest
 
-    static member toList (NEL (head, tail)) = head :: tail
+    static member toList (NEL (head, tail) : 'a nel) = head :: tail
 
     static member append : (NEL<'a> -> NEL<'a> -> NEL<'a>) =
         fun (NEL (head1, rest1)) (NEL (head2, rest2)) ->
@@ -55,7 +55,7 @@ type NonEmptyList<'a> =
     /// Appends the list to the end of the NEL
     static member appendList (list : 'a list) (NEL (head, tail)) = NEL (head, tail @ list)
 
-    static member fold<'State, 'Item> (f : 'State -> 'Item -> 'State) (state : 'State) (NEL (head, tail)) =
+    static member fold (f : 'State -> 'Item -> 'State) (state : 'State) (NEL (head, tail) : 'Item nel) : 'State =
         tail |> List.fold f (f state head)
 
     static member foldBack f state (NEL (head, tail)) = List.foldBack f tail state |> f head
@@ -69,7 +69,7 @@ type NonEmptyList<'a> =
 and NEL<'a> = NonEmptyList<'a>
 
 /// Non-empty list
-type 'a nel = NonEmptyList<'a>
+and 'a nel = NonEmptyList<'a>
 
 
 type Option<'a> with

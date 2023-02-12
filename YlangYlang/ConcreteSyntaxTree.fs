@@ -14,16 +14,24 @@ let makeCstNode node source = { node = node; source = source }
 
 let getNode { node = node } = node
 
+let mapNode f node =
+    { source = node.source
+      node = f node.node }
+
 (* Names and identifiers *)
 
 
 
 
 type DestructuredPattern =
-    | DestructuredRecord of CstNode<Identifier> list
-    | DestructuredTuple of CstNode<AssignmentPattern> list // This should really be a type that we can ensure has at least 2 members
-    | DestructuredCons of NEL<CstNode<AssignmentPattern>>
-    | DestructuredTypeVariant of constructor : CstNode<TypeOrModuleIdentifier> * CstNode<AssignmentPattern> list
+    /// Destructured records need to have one destructured member
+    | DestructuredRecord of CstNode<UnqualValueIdentifier> nel
+    /// Destructured tuples need to have at least two members
+    | DestructuredTuple of first : CstNode<AssignmentPattern> * tail : CstNode<AssignmentPattern> nel
+    | DestructuredCons of first : CstNode<AssignmentPattern> * tail : CstNode<AssignmentPattern> nel
+    | DestructuredTypeVariant of
+        constructor : CstNode<TypeOrModuleIdentifier> *
+        params' : CstNode<AssignmentPattern> list
 
 
 
@@ -97,7 +105,7 @@ type BuiltInPrimitiveTypes =
 // Not sure if this is useful yet
 type BuiltInCompoundTypes =
     | List of CstNode<MentionableType> // or of it makes sense to have these subtypes on the compound type variants yet
-    | Record of (CstNode<UnqualValueIdentifier> * CstNode<MentionableType>) list
+    | Record of (CstNode<UnqualValueIdentifier> * CstNode<MentionableType>) nel
     | Tuple of CstNode<TupleType>
 
 
@@ -163,7 +171,6 @@ and ExplicitValue =
     /// A `.someField` expression which are first class getters for record fields. A `.someField` getter is a function that takes a record that has a `someField` field and returns the value at that field
     | DotGetter of recordField : UnqualValueIdentifier
 
-/// @TODO: allow for destructured params here at some point
 and LetBinding =
     { bindPattern : CstNode<AssignmentPattern>
       value : CstNode<Expression> }

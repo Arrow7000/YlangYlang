@@ -226,7 +226,10 @@ let addParseds (parser : Parser<'a, 'token, 'ctx, 'err>) : Parser<'a * 'token li
         mapResult (fun r -> r, parsedTokens) result)
 
 
-let addParsedsAndMap f parser : Parser<'b, 'token, 'ctx, 'err> =
+let addParsedsAndMap
+    (f : 'a -> 'token list -> 'b)
+    (parser : Parser<'a, 'token, 'ctx, 'err>)
+    : Parser<'b, 'token, 'ctx, 'err> =
     parser
     |> addParseds
     |> map (fun (res, parseds) -> f res parseds)
