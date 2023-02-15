@@ -3,6 +3,10 @@
 open Lexer
 open Parser
 
+(*
+@TODO: have a way to get the tokens directly from each CST node instead of displaying all the source code tokens along with it, which is annoying
+*)
+
 
 /// Get the actual constituent string from the `TokenWithContext`s
 let formatTokensAsText (tokens : TokenWithSource list) =

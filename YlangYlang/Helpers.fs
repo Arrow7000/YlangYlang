@@ -1,6 +1,9 @@
 ﻿[<AutoOpen>]
 module Helpers
 
+open System
+
+
 let tee f x =
     f x
     x
@@ -133,6 +136,8 @@ module String =
     let toList (str : string) = str.ToCharArray () |> List.ofArray
 
     let tail = toList >> List.tail
+
+    let join (sep : string) (seq : string seq) = String.Join (sep, seq)
 
 
 module List =

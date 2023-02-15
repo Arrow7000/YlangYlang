@@ -2,10 +2,6 @@ html, body {
     min-height: 100%;
 }
 
-body {
-}
-
-
 .page {
     min-height: 100vh;
     display: flex;
@@ -25,4 +21,9 @@ body {
     font-family: "Monaco", "Courier New", "Courier", monospace;
     flex-grow: 1;
     flex-basis: 0;
+    white-space: pre;
 }
+
+    .sidebar.loading {
+        opacity: 0.5;
+    }
