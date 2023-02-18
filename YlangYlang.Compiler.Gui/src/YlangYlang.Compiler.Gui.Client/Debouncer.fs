@@ -2,14 +2,13 @@
 
 
 open System
-//open Fable.Core
 open Elmish
 
 type Id = string
 
 type State = { PendingMessages : Map<Id, int> }
 
-let create () = { PendingMessages = Map.empty }
+let initial = { PendingMessages = Map.empty }
 
 type SelfMessage<'AppMsg> =
     | Timeout of id : Id * appMsg : 'AppMsg

@@ -10,6 +10,7 @@ let main argv =
         tee (List.map (fun t -> t.token) >> printfn "%A")
         >> ExpressionParsing.run ExpressionParsing.parseEntireModule
         >> DebugHelpers.formatErrors
+        >> Result.map (fun r -> r.parseResult)
     )
     |> printfn "%A"
 

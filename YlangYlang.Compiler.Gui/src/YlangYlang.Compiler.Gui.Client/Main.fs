@@ -8,8 +8,6 @@ open Bolero
 open Bolero.Html
 open Elmish
 
-//module Debouncer = Thoth.Elmish.Debouncer
-
 
 /// Routing endpoints definition.
 type Page =
@@ -82,68 +80,6 @@ type Page =
 //        .Value(model.counter, (fun v -> dispatch (SetCounter v)))
 //        .Elt ()
 
-////let dataPage model dispatch =
-////    Main
-////        .Data()
-////        .Reload(fun _ -> dispatch GetBooks)
-////        .Rows(
-////            cond model.books
-////            <| function
-////                | None -> Main.EmptyData().Elt ()
-////                | Some books ->
-////                    forEach books
-////                    <| fun book ->
-////                        tr {
-////                            td { book.title }
-////                            td { book.author }
-////                            td { book.publishDate.ToString ("yyyy-MM-dd") }
-////                            td { book.isbn }
-////                        }
-////        )
-////        .Elt ()
-
-
-////let menuItem (model : Model) (page : Page) (text : string) =
-////    Main
-////        .MenuItem()
-////        .Active(
-////            if model.page = page then
-////                "is-active"
-////            else
-////                ""
-////        )
-////        .Url(router.Link page)
-////        .Text(text)
-////        .Elt ()
-
-////let view model dispatch =
-////    Main()
-////        .Menu(
-////            concat {
-////                menuItem model Home "Home"
-////                menuItem model Counter "Counter"
-////                menuItem model Data "Download data"
-////            }
-////        )
-////        .Body(
-////            cond model.page
-////            <| function
-////                | Home -> homePage model dispatch
-////                | Counter -> counterPage model dispatch
-////                | Data -> dataPage model dispatch
-////        )
-////        .Error(
-////            cond model.error
-////            <| function
-////                | None -> empty ()
-////                | Some err ->
-////                    Main
-////                        .ErrorNotification()
-////                        .Text(err)
-////                        .Hide(fun _ -> dispatch ClearError)
-////                        .Elt ()
-////        )
-////        .Elt ()
 
 type CodeResult =
     //| AwaitingDebounce // I think that this is just signified by there not being anything in the codeResult Map for this particular string
@@ -151,16 +87,16 @@ type CodeResult =
     | Compiled of string
 
 
-type NewModel =
+type Model =
     { code : string
       compileDebouncer : Debouncer.State
       codeResultMap : Map<string, CodeResult>
-      compilationResultShown : string option
+      shownResultCache : string option
       page : Page }
 
 
-type NewMsg =
-    | DebouncerSelfMsg of Debouncer.SelfMessage<NewMsg>
+type Msg =
+    | DebouncerSelfMsg of Debouncer.SelfMessage<Msg>
     | EditCode of string
     | EndOfInput
     | CompileSucceeded of forCode : string * result : string // should really be the actual compilation result entity but oh well
@@ -168,9 +104,9 @@ type NewMsg =
 
 let newInitModel =
     { code = String.Empty
-      compileDebouncer = Debouncer.create ()
+      compileDebouncer = Debouncer.initial
       codeResultMap = Map.empty
-      compilationResultShown = None
+      shownResultCache = None
       page = Home }
 
 
@@ -184,7 +120,7 @@ let compileCode code =
             )
     }
 
-let router = Router.infer NewMsg.SetPage (fun model -> model.page)
+let router = Router.infer Msg.SetPage (fun model -> model.page)
 
 
 let update_ msg model =
@@ -197,12 +133,12 @@ let update_ msg model =
         let shownCompileResult =
             match Map.tryFind str model.codeResultMap with
             | Some (Compiled result) -> Some result
-            | Some CompileStarted -> model.compilationResultShown // might want to add a loading indicator here at some point
-            | None -> model.compilationResultShown
+            | Some CompileStarted -> model.shownResultCache // might want to add a loading indicator here at some point
+            | None -> model.shownResultCache
 
         { model with
             code = str
-            compilationResultShown = shownCompileResult
+            shownResultCache = shownCompileResult
             compileDebouncer = debouncerModel },
         Cmd.map DebouncerSelfMsg debouncerCmd
 
@@ -211,7 +147,7 @@ let update_ msg model =
     | CompileSucceeded (code, result) ->
         { model with
             codeResultMap = Map.add code (Compiled result) model.codeResultMap
-            compilationResultShown = Some result },
+            shownResultCache = Some result },
         Cmd.none
 
     | DebouncerSelfMsg debouncerMsg ->
@@ -272,7 +208,7 @@ let view model dispatch =
                     else
                         List.empty)
 
-            model.compilationResultShown
+            model.shownResultCache
             |> Option.defaultValue "Start typing..."
         }
 
@@ -283,7 +219,7 @@ let view model dispatch =
 
 
 type MyApp () =
-    inherit ProgramComponent<NewModel, NewMsg> ()
+    inherit ProgramComponent<Model, Msg> ()
 
     //[<Inject>]
     //member val HttpClient = Unchecked.defaultof<HttpClient> with get, set
