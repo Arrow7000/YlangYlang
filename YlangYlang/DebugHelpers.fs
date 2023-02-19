@@ -2,6 +2,7 @@
 
 open Lexer
 open Parser
+open ConcreteSyntaxTree
 
 (*
 @TODO: have a way to get the tokens directly from each CST node instead of displaying all the source code tokens along with it, which is annoying
@@ -32,4 +33,5 @@ let formatErrors res =
     | { parseResult = NoParsingMatch errs } as result ->
         Error
         <| makeErrsStringly result.parsingContext errs
+
     | { parseResult = ParsingSuccess s } as result -> Ok result

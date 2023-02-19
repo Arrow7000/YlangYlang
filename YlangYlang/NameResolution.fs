@@ -19,18 +19,22 @@ type ResolvedParams = Map<UnqualValueIdentifier, (TokenWithSource list * PathToD
 
 
 
+type ExpressionOrTypeRef =
+    | Expr of assignmentPattern : PathToDestructuredName * assignedExpression : CstNode<Expression>
+    | VariantConstructor of VariantCase
+
 
 /// A reference to either a real concrete expression or an assignment parameter
 type ValueReference =
     /// Reference a real expression
-    | ExpressionRef of PathToDestructuredName * CstNode<Expression>
+    | ExpressionRef of ExpressionOrTypeRef
     /// If this assignment pattern is an alias for a greater deconstructed parameter expression
     | AssignmentParam of subPattern : PathToDestructuredName
 
 
 /// Map that stores references to either parameters or real expressions.
 /// The tokens list is about where the *name* is in the source.
-type ResolvedValueNames = Map<UnqualValueIdentifier, (TokenWithSource list * ValueReference) nel>
+type ResolvedValueNames = Map<UnqualIdentifier, (TokenWithSource list * ValueReference) nel>
 
 
 /// Adds a new param to a `ResolvedParams` map.
@@ -44,7 +48,6 @@ let addNewParamsReference
         (fun oldValueOpt ->
             let newValueAndPath = ident.source, path
 
-
             match oldValueOpt with
             | Some referenceList -> Some (NEL.cons newValueAndPath referenceList)
             | None -> Some (NEL.make newValueAndPath))
@@ -53,7 +56,7 @@ let addNewParamsReference
 
 /// Adds a new param to a `ResolvedValueNames` map.
 let addNewValueReference
-    (ident : CstNode<UnqualValueIdentifier>)
+    (ident : CstNode<UnqualIdentifier>)
     (newValue : ValueReference)
     (map : ResolvedValueNames)
     : ResolvedValueNames =
@@ -166,3 +169,29 @@ let resolveFuncParams ({ params_ = params_ } : FunctionValue) : ResolvedParams =
 
 
 let resolveLetBinding ({ bindPattern = bindPattern } : LetBinding) : ResolvedParams = resolveParamAssignment bindPattern
+
+/// @TODO: this obviously doesn't create a guaranteed unique ID, so we should update how we reference identifiers so that this does work correctly
+let createUniqueNameForAnonConstructorParams () = System.Guid.NewGuid ()
+
+
+//let makeTypeConstructor (typeDeclaration : TypeDeclaration) =
+//    match typeDeclaration with
+
+
+(*
+@TODO: should assign a new kind of reference from type constructors, the value of which is different to expressions or param aliases, but in fact stores the name of the constructors and also how many and which kinds of parameters each constructor has
+*)
+
+let resolveTypeConstructors (typeDeclaration : TypeDeclaration) : ResolvedValueNames =
+    match typeDeclaration with
+    | Alias _ -> Map.empty // We're not accounting for alias constructors just yet
+    //| Alias (name = name) -> addNewValueReference (mapNode TypeIdentifier name)
+    | Sum (name = name; variants = variants) ->
+        variants
+        |> NEL.fold<_, _>
+            (fun map variant ->
+                addNewValueReference
+                    (mapNode TypeIdentifier name)
+                    (ExpressionRef <| VariantConstructor variant.node)
+                    map)
+            Map.empty

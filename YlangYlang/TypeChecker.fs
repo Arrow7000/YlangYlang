@@ -1,10 +1,7 @@
 ﻿module TypeChecker
 
 
-open ConcreteSyntaxTree
 open Lexer
-
-
 module Cst = ConcreteSyntaxTree
 
 
@@ -45,46 +42,118 @@ type TypeClass =
     | Appendable
 
 
-/// Describes a single type constraint due to a function
-type TypeConstraint<'a> =
+/// Describes a single type constraint due to how a value is used
+type SingleTypeConstraint<'a> =
     | GenericParam of UnqualValueIdentifier
-    | TypeClass of TypeClass
+    /// @TODO: I think leave the type classes for later, because they're just going to complicate things for now
+    //| TypeClass of TypeClass
     | Concrete of 'a
 
 
 type TypeConstraints<'a> =
     /// No constraints whatsoever, this is a param that isn't used at all
     | Unconstrained
-    | SingleConstraint of constraints : TypeConstraint<'a> * source : TknSrc
+    | SingleConstraint of constraint_ : SingleTypeConstraint<'a>
     /// @TODO: might be good to make this more specific that it can relate to:
     /// - multiple generics, which therefore means that generic params `a` and `b` have to match, and any occurrence of `b` is effectively an occurrence of `a`
     /// - that generic `a` is actually a concrete type `A`, so any `a` is actually concrete type `A`
     /// - that it has multiple constraints of being generics, "type classes", and/or a concrete type
     /// Anything else would mean multiple concrete constraints, which are impossible
-    | CompatibleConstraints of (TypeConstraint<'a> * TknSrc) nel
-    | IncompatibleConstraints of (TypeConstraint<'a> * TknSrc) nel
+    | MultipleConstraints of SingleTypeConstraint<'a> nel
 
 
-type ConcreteOrGenericVar<'a> =
-    | Generic of UnqualValueIdentifier
-    | Concrete of 'a
+//type ConcreteOrGenericVar<'a> =
+//    | Generic of UnqualValueIdentifier
+//    | Concrete of 'a
+
+
+type TypeState<'a> =
+    { inferState : TypeConstraints<'a>
+      /// The type declaration for the value
+      typeDeclaration : SingleTypeConstraint<'a> option }
 
 
 
 
-type TypeJudgment<'a> =
-    | NotTypedYet
-    //| GenericWithName of ConcreteOrGenericVar<'a>
-    | SpecificTypeConstraint of ConcreteOrGenericVar<'a>
-    /// Value is declared to be of type, either in an annotation or a parameter of a typed function
-    | Declared of 'a
+//type TypeJudgment<'a> =
+//    //| NotTypedYet
+//    //| GenericWithName of ConcreteOrGenericVar<'a>
+//    | SpecificTypeConstraint of ConcreteOrGenericVar<'a>
+//    /// Value is declared to be of type, either in an annotation or a parameter of a typed function.
+//    /// If declared and inferred type constraints are different generics then that implies that those generics are actually not independent but need to be the same as each other.
+//    | Declared of ConcreteOrGenericVar<'a>
+
+
+type SimpleJudgment<'a> =
+    | SimpleUnconstrained
+    | SimpleUnified of 'a
+    | SimpleConflicting of 'a * 'a nel
+
+
 
 
 /// This will probably be used in a nested way for each of the parameters of a type that has type parameters, to achieve gradual typing of its fields
-type NamedValueTypeState<'a> =
-    | Judgment of judgment : TypeJudgment<'a> * source : TokenWithSource
-    /// Type clash information with references for where and why each type constraint was inferred from
-    | TypeClash of (TypeJudgment<'a> * TokenWithSource) list
+type TypeJudgment<'a> =
+    /// `unifiedType` will be `None` if the value is unconstrained
+    | Unified of unifiedType : SingleTypeConstraint<'a> option
+    /// Conflicts between inferred types
+    | ConflictingInferences of
+        typeDeclaration : SingleTypeConstraint<'a> option *
+        inferences : (SingleTypeConstraint<'a> * SingleTypeConstraint<'a> nel)
+    /// Conflict between declared type and the one otherwise unified inferred type
+    | ConflictDeclarationInferences of
+        declaredType : SingleTypeConstraint<'a> *
+        unifiedInferredTypes : SingleTypeConstraint<'a>
+    /// Conflict both between declared type and also among the inferred types
+    | ConflictDeclarationAndBetweenInferences of
+        declaredType : SingleTypeConstraint<'a> *
+        inferredTypes : (SingleTypeConstraint<'a> * SingleTypeConstraint<'a> nel)
+
+
+
+/// Dear lord this is a big one - and doesn't even contain the actual unifier logic
+/// But, ultimately this is the function that will let us do the type judgment on multiple type constraints!
+let tryUnifyTypes
+    (unifier : SimpleJudgment<SingleTypeConstraint<'a>>
+                   -> SingleTypeConstraint<'a>
+                   -> SimpleJudgment<SingleTypeConstraint<'a>>)
+    (typeState : TypeState<'a>)
+    : TypeJudgment<'a> =
+    match typeState.typeDeclaration with
+    | None ->
+        match typeState.inferState with
+        | Unconstrained -> Unified None
+        | SingleConstraint constr -> Unified (Some constr)
+        | MultipleConstraints constraints ->
+            match NEL.fold<SimpleJudgment<SingleTypeConstraint<'a>>, SingleTypeConstraint<'a>>
+                      unifier
+                      SimpleUnconstrained
+                      constraints
+                with
+            | SimpleUnconstrained -> Unified None
+            | SimpleUnified unifiedInferredConstraint -> Unified (Some unifiedInferredConstraint)
+            | SimpleConflicting (firstClash, otherClashes) -> ConflictingInferences (None, (firstClash, otherClashes))
+
+    | Some declaration ->
+        match typeState.inferState with
+        | Unconstrained -> Unified (Some declaration)
+        | SingleConstraint constr ->
+            match unifier (SimpleUnified constr) declaration with
+            | SimpleUnconstrained -> Unified (Some declaration)
+            | SimpleUnified unified -> Unified (Some unified)
+            | SimpleConflicting _ -> ConflictDeclarationInferences (declaration, constr)
+
+        | MultipleConstraints constraints ->
+            match NEL.fold<_, _> unifier SimpleUnconstrained constraints with
+            | SimpleUnconstrained -> Unified (Some declaration)
+            | SimpleUnified unifiedInferreds ->
+                match unifier (SimpleUnified unifiedInferreds) declaration with
+                | SimpleUnconstrained -> Unified (Some declaration)
+                | SimpleUnified fullyUnified -> Unified (Some fullyUnified)
+                | SimpleConflicting _ -> ConflictDeclarationInferences (declaration, unifiedInferreds)
+
+            | SimpleConflicting (firstClash, otherClashes) ->
+                ConflictingInferences (Some declaration, (firstClash, otherClashes))
 
 
 
@@ -92,31 +161,259 @@ type NamedValueTypeState<'a> =
 
 
 
+type BuiltInPrimitiveTypes =
+    | Float
+    | Int
+    | String
+    | Char
+    | Unit
+    | Bool
 
-// Not sure if it makes sense to have these yet, when we haven't yet enforced that the types are consistent...
-// Unless... maybe these type getters can return a Result of either consistent types or of conflicting types, which can then be used for type errors or type hinting or somesuch...?
-let typeOfPrimitiveLiteralValue =
-    function
-    | NumberPrimitive num ->
+
+/// Represents a correct type without clashes
+type DefinitiveType =
+    | UnitType
+    | PrimitiveType of BuiltInPrimitiveTypes
+    /// I.e. could denote a constraint or invariant between multiple parameters.
+    /// Could be bound or unbound.
+    | GenericTypeVar of UnqualValueIdentifier
+    | Tuple of TupleType
+    | List of DefinitiveType
+    | Record of RecordType
+    | ExtendedRecord of ExtendedRecordType
+    | ReferencedType of typeName : TypeOrModuleIdentifier * typeParams : DefinitiveType list
+    | Arrow of fromType : DefinitiveType * toType : DefinitiveType
+
+
+/// Because these are heterogeneous
+and TupleType =
+    { types : DefinitiveType * NEL<DefinitiveType> }
+
+
+and RecordType =
+    { fields : Map<UnqualValueIdentifier, DefinitiveType> }
+
+
+and ExtendedRecordType =
+    { extendedAlias : UnqualValueIdentifier
+      fields : Map<UnqualValueIdentifier, DefinitiveType> }
+
+and Dt = DefinitiveType
+
+
+/// Represents an inferred type, whether full or partial
+type InferredType =
+    | Unit of VariablesConstraints
+    | Primitive of BuiltInPrimitiveTypes * VariablesConstraints
+    | Tuple of InferredTypeAndFoundConstraints * InferredTypeAndFoundConstraints nel
+    | List of InferredTypeAndFoundConstraints
+    /// @TODO: this might not catch a possible clash, which is having the same name declared multiple times with a different type for each
+    /// @TODO: also, let's do the specific ones first, and the record types with their different, set-like types, later
+
+    | Record of Map<UnqualValueIdentifier, InferredTypeAndFoundConstraints>
+    | ExtendedRecord of Map<UnqualValueIdentifier, InferredTypeAndFoundConstraints>
+    | ReferencedType of typeName : TypeOrModuleIdentifier * typeParams : InferredTypeAndFoundConstraints list
+    | Arrow of fromType : TypeInferenceState * toType : TypeInferenceState * inferredVariables : VariablesConstraints
+
+
+/// Represents a set of type constraints
+and TypeInferenceState = TypeConstraints<InferredType>
+
+and VariablesConstraints = Map<UnqualValueIdentifier, TypeInferenceState>
+
+/// Represents inferred type information for the expression, and also any constraints inferred on variables used in the expression
+and InferredTypeAndFoundConstraints =
+    { typeOfExpression : TypeInferenceState
+      /// These are the constraints that were deduced from variables used in the expression
+      variablesConstrained : VariablesConstraints }
+
+
+// Not sure if this is useful yet
+//type BuiltInCompoundTypes =
+//    | List of MentionableType // or of it makes sense to have these subtypes on the compound type variants yet
+//    | Record of (UnqualValueIdentifier * MentionableType) nel
+//    | Tuple of TupleType
+
+
+
+
+let typeOfPrimitiveLiteralValue : Cst.PrimitiveLiteralValue -> DefinitiveType =
+    (function
+    | Cst.NumberPrimitive num ->
         match num with
-        | FloatLiteral _ -> Float
-        | IntLiteral _ -> Int
-    | CharPrimitive _ -> Char
-    | StringPrimitive _ -> String
-    | UnitPrimitive _ -> BuiltInPrimitiveTypes.Unit
+        | Cst.FloatLiteral _ -> Float
+        | Cst.IntLiteral _ -> Int
+    | Cst.CharPrimitive _ -> Char
+    | Cst.StringPrimitive _ -> String
+    | Cst.UnitPrimitive _ -> BuiltInPrimitiveTypes.Unit
+    | Cst.BoolPrimitive _ -> Bool)
+    >> PrimitiveType
 
 
 
-type BinaryExpr<'a, 'b> =
-    | Left of 'a
-    | Right of 'b
+let combineSingleConstraints
+    (constraintA : SingleTypeConstraint<'a>)
+    (constraintB : SingleTypeConstraint<'a>)
+    : TypeConstraints<'a> =
+    if constraintA = constraintB then
+        SingleConstraint constraintA
+    else
+        MultipleConstraints (NEL.new_ constraintA [ constraintB ])
+
+
+
+let combineManySingleConstraints (constraints : SingleTypeConstraint<'a> nel) : TypeConstraints<'a> =
+    NEL.fold<_, _>
+        (fun typeConstraints singleConstraint ->
+            match typeConstraints with
+            | Unconstrained -> SingleConstraint singleConstraint
+            | SingleConstraint constr -> combineSingleConstraints singleConstraint constr
+            | MultipleConstraints list ->
+                singleConstraint :: NEL.toList list
+                |> Set.ofList
+                |> Set.toList
+                |> function
+                    | [] -> Unconstrained
+                    | [ onlyOne ] -> SingleConstraint onlyOne
+                    | head :: rest -> MultipleConstraints (NEL.new_ head rest))
+        Unconstrained
+        constraints
+
+
+
+let combineTypeConstraints
+    (constraintA : TypeConstraints<'a>)
+    (constraintB : TypeConstraints<'a>)
+    : TypeConstraints<'a> =
+    match constraintA, constraintB with
+    | Unconstrained, constraint_
+    | constraint_, Unconstrained -> constraint_
+
+    | SingleConstraint a, SingleConstraint b -> combineSingleConstraints a b
+
+    | SingleConstraint a, MultipleConstraints b
+    | MultipleConstraints b, SingleConstraint a -> combineManySingleConstraints (NEL.cons a b)
+
+    | MultipleConstraints a, MultipleConstraints b -> combineManySingleConstraints (NEL.append a b)
+
+
+let combineConstrainedVariables (mapA : VariablesConstraints) (mapB : VariablesConstraints) : VariablesConstraints =
+    Map.map
+        (fun key value ->
+            match Map.tryFind key mapB with
+            | None -> value
+            | Some valueInB -> combineTypeConstraints value valueInB)
+        mapA
+
+let combineConstraintsAndVariables
+    (cavA : InferredTypeAndFoundConstraints)
+    (cavB : InferredTypeAndFoundConstraints)
+    : InferredTypeAndFoundConstraints =
+    { typeOfExpression = combineTypeConstraints cavA.typeOfExpression cavB.typeOfExpression
+      variablesConstrained = combineConstrainedVariables cavA.variablesConstrained cavB.variablesConstrained }
+
+
+#nowarn "40"
+
+let rec typeOfExpression : Cst.Expression -> InferredTypeAndFoundConstraints =
+    fun _ -> failwithf "Not implemented yet!"
+
+
+and typeOfCompoundValue : Cst.CompoundValues -> InferredTypeAndFoundConstraints =
+    let rec listFolder items =
+        match items with
+        | [] ->
+            { typeOfExpression = Unconstrained
+              variablesConstrained = Map.empty }
+        | head :: tail ->
+            let headConstraint = typeOfExpression head
+
+            combineConstraintsAndVariables headConstraint (listFolder tail)
+
+    function
+    | Cst.List exprs -> exprs |> List.map Cst.getNode |> listFolder
+
+    | Cst.CompoundValues.Tuple (first, rest) ->
+        let firstConstraint = typeOfExpression first.node
+
+        NEL.toList rest
+        |> List.map Cst.getNode
+        |> listFolder
+        |> combineConstraintsAndVariables firstConstraint
+
+    | Cst.CompoundValues.Record list ->
+
+        let mapFolder : Map<UnqualValueIdentifier, InferredTypeAndFoundConstraints>
+            -> (Cst.CstNode<UnqualValueIdentifier> * Cst.CstNode<Cst.Expression>)
+            -> Map<UnqualValueIdentifier, InferredTypeAndFoundConstraints> =
+            fun dict (key, value) ->
+                let typeOfValue = typeOfExpression value.node
+
+                match Map.tryFind key.node dict with
+                | None -> Map.add key.node typeOfValue dict
+                | Some existingType ->
+                    if existingType = typeOfValue then
+                        Map.add key.node typeOfValue dict
+                    else
+                        Map.add key.node (combineConstraintsAndVariables existingType typeOfValue) dict
+
+        { typeOfExpression =
+            list
+            |> List.fold mapFolder Map.empty
+            |> Record
+            |> Concrete
+            |> SingleConstraint
+          variablesConstrained = Map.empty }
+
+    | Cst.CompoundValues.RecordExtension (recordToExtend, additions) ->
+
+        let mapFolder : Map<UnqualValueIdentifier, InferredTypeAndFoundConstraints>
+            -> (Cst.CstNode<UnqualValueIdentifier> * Cst.CstNode<Cst.Expression>)
+            -> Map<UnqualValueIdentifier, InferredTypeAndFoundConstraints> =
+            fun dict (key, value) ->
+                let typeOfValue = typeOfExpression value.node
+
+                match Map.tryFind key.node dict with
+                | None -> Map.add key.node typeOfValue dict
+                | Some existingType ->
+                    if existingType = typeOfValue then
+                        Map.add key.node typeOfValue dict
+                    else
+                        Map.add key.node (combineConstraintsAndVariables existingType typeOfValue) dict
+
+        let typeOfRecord =
+            NEL.toList additions
+            |> List.fold mapFolder Map.empty
+            |> ExtendedRecord
+            |> Concrete
+            |> SingleConstraint
+
+        { typeOfExpression = typeOfRecord
+          variablesConstrained = Map.add recordToExtend.node typeOfRecord Map.empty }
+
+
+/// @TODO: hmmmm, this guy kinda needs to be able to bubble up constraints upwards, onto the parameter as a whole, based on the shape of the destructuring that we do to the parameters.
+/// I think the way to do this is that each one of these guys needs to bubble up the sub-shapes inside of itself, and thereby informs the caller of this function what this specific assignment pattern is. Whether this function is called by a top level parameter or a destructured part of it doesn't matter, because the consequences of that will just be handled by whatever calls this function.
+let typeOfAssignmentPattern (assignmentPattern: Cst.AssignmentPattern) : InferredTypeAndFoundConstraints
+
+//let typeOfFunction (functionValue: Cst.FunctionValue) :InferredTypeAndFoundConstraints =
+    
 
 
 
 
 
-type ExpressionWithBoundVariables =
-    { boundVars : Map<Identifier, ConcreteOrGenericVar<MentionableType>> } // should probably not be limited to mentionable types, but actual types, the difference being that instead of a referenced type by identifier it should be an actual reference to the newtype
+
+
+
+
+
+
+
+//type BinaryExpr<'a, 'b> =
+//    | Left of 'a
+//    | Right of 'b
+
 
 
 

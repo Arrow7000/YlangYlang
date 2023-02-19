@@ -4,9 +4,13 @@ open Lexer
 
 
 /// Structure to contain both a CST node and reference to the parsed tokens and source text
+//[<StructuredFormatDisplay("Node({str})")>]
 type CstNode<'a> =
     { node : 'a
       source : TokenWithSource list }
+
+    member this.str = sprintf "%A" this.node
+
 
 
 let makeCstNode node source = { node = node; source = source }
@@ -99,20 +103,6 @@ type TypeDeclaration =
 
 
 
-type BuiltInPrimitiveTypes =
-    | Float
-    | Int
-    | String
-    | Char
-    | Unit
-
-// Not sure if this is useful yet
-type BuiltInCompoundTypes =
-    | List of CstNode<MentionableType> // or of it makes sense to have these subtypes on the compound type variants yet
-    | Record of (CstNode<UnqualValueIdentifier> * CstNode<MentionableType>) nel
-    | Tuple of CstNode<TupleType>
-
-
 
 
 
@@ -120,19 +110,6 @@ type BuiltInCompoundTypes =
 
 
 (* Values *)
-
-type NumberLiteralValue =
-    | FloatLiteral of float
-    | IntLiteral of int
-
-
-type PrimitiveLiteralValue =
-    | NumberPrimitive of NumberLiteralValue
-    | CharPrimitive of char
-    | StringPrimitive of string
-    | BoolPrimitive of bool
-    | UnitPrimitive
-
 
 type InfixOpAssociativity =
     | Left
@@ -145,6 +122,21 @@ type InfixOpDeclaration =
       precedence : int
       /// The value should be a function taking exactly two parameters
       value : Identifier }
+
+
+
+
+type NumberLiteralValue =
+    | FloatLiteral of float
+    | IntLiteral of int
+
+
+type PrimitiveLiteralValue =
+    | NumberPrimitive of NumberLiteralValue
+    | CharPrimitive of char
+    | StringPrimitive of string
+    | BoolPrimitive of bool
+    | UnitPrimitive
 
 
 type CompoundValues =
@@ -239,7 +231,7 @@ type ExportExposings =
 
 type ModuleDeclaration =
     { moduleName : CstNode<QualifiedModuleOrTypeIdentifier>
-      exposing : ExportExposings }
+      exposing : CstNode<ExportExposings> }
 
 
 
@@ -259,14 +251,15 @@ type ImportDeclaration =
       exposingMode : ImportExposings }
 
 
-//type ValueDeclaration =
-//    { typeSignature : TypeDeclaration list option // either it's explicit or it'll have to be inferred
-//      body : Expression } // aaand heeere's where the magic happens!
+
+type Declaration =
+    | ImportDeclaration of ImportDeclaration
+    | TypeDeclaration of TypeDeclaration
+    | ValueTypeAnnotation of ValueAnnotation
+    | ValueDeclaration of ValueDeclaration
+
 
 // Representing a whole file/module
 type YlModule =
     { moduleDecl : ModuleDeclaration
-      imports : CstNode<ImportDeclaration> list
-      typeDeclarations : CstNode<TypeDeclaration> list
-      valueAnnotations : CstNode<ValueAnnotation> list
-      valueDeclarations : CstNode<ValueDeclaration> list }
+      declarations : CstNode<Declaration> list }

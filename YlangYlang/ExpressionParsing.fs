@@ -1157,18 +1157,22 @@ let parseModuleDeclaration : ExpressionParser<ModuleDeclaration> =
     succeed (fun moduleName exports ->
         { moduleName = moduleName
           exposing =
-            match exports with
-            | None -> ExportExposings.ExposeAll
-            | Some exports' -> ExportExposings.ExplicitExposeds exports' })
+            makeCstNode
+                (match exports.node with
+                 | None -> ExportExposings.ExposeAll
+                 | Some exports' -> ExportExposings.ExplicitExposeds exports')
+                exports.source
+
+        })
     |. symbol ModuleKeyword
     |. commit
     |. spaces
-    |= (parseModuleName |> addCstNode)
+    |= addCstNode parseModuleName
     |. spaces
     |. symbol ExposingKeyword
     |. commit
     |. spaces
-    |= (either (succeed None |. exposingAllParser) (succeed Some |= explicitExports))
+    |= addCstNode (either (succeed None |. exposingAllParser) (succeed Some |= explicitExports))
 
 
 
@@ -1180,7 +1184,7 @@ let parseImport =
     |. symbol ImportKeyWord
     |. commit
     |. spaces
-    |= (parseModuleName |> addCstNode)
+    |= addCstNode parseModuleName
     |= opt (
         succeed id
 
@@ -1209,8 +1213,7 @@ let parseImport =
                  |. spaces
                  |. symbol Comma
                  |. spaces
-                 |= parseSingleValueOrTypeIdentifier
-                 |> addCstNode
+                 |= addCstNode parseSingleValueOrTypeIdentifier
              )
              |. spaces
              |. symbol ParensClose)
@@ -1221,49 +1224,22 @@ let parseImport =
 
 
 
-type TypeOrValueDeclaration =
-    | TypeDeclaration of CstNode<TypeDeclaration>
-    | ValueDeclaration of CstNode<ValueDeclaration>
-    | ValueTypeAnnotation of CstNode<ValueAnnotation>
-
-
 let parseDeclarations =
-    oneOf [ (parseValueDeclaration
-             |> addCstNode
-             |> map ValueDeclaration)
-            (parseTypeDeclaration
-             |> addCstNode
-             |> map TypeDeclaration)
-            (parseValueAnnotation
-             |> addCstNode
-             |> map ValueTypeAnnotation) ]
+    oneOf [ parseImport |> map ImportDeclaration
+            parseValueDeclaration |> map ValueDeclaration
+            parseTypeDeclaration |> map TypeDeclaration
+            parseValueAnnotation |> map ValueTypeAnnotation ]
 
 
 let parseEntireModule =
-    succeed (fun moduleDeclaration imports declarations ->
-        let (typeDeclarations, valueDeclarations, valueAnnotations) =
-            List.typedPartition2
-                (function
-                | TypeDeclaration t -> Choice1Of3 t
-                | ValueDeclaration v -> Choice2Of3 v
-                | ValueTypeAnnotation a -> Choice3Of3 a)
-                declarations
-
+    succeed (fun moduleDeclaration declarations ->
         { moduleDecl = moduleDeclaration
-          imports = imports
-          typeDeclarations = typeDeclarations
-          valueAnnotations = valueAnnotations
-          valueDeclarations = valueDeclarations })
+          declarations = declarations })
     |. spaces
     |= parseModuleDeclaration
     |. spaces
-    |= repeat (parseImport |. spaces |> addCstNode)
-    |. spaces
-    |= repeat (parseDeclarations |. spaces)
+    |= repeat (addCstNode parseDeclarations |. spaces)
     |. ensureEnd
-
-
-
 
 
 

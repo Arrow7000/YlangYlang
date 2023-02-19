@@ -61,6 +61,8 @@ type NonEmptyList<'a> =
     static member fold (f : 'State -> 'Item -> 'State) (state : 'State) (NEL (head, tail) : 'Item nel) : 'State =
         tail |> List.fold f (f state head)
 
+    static member reduce (f : 'T -> 'T -> 'T) (NEL (head, tail) : 'T nel) : 'T = List.fold f head tail
+
     static member foldBack f state (NEL (head, tail)) = List.foldBack f tail state |> f head
 
     static member last (NEL (head, tail)) =
@@ -169,7 +171,7 @@ module List =
             (List.empty, List.empty)
 
 
-    let typedPartition2 f list =
+    let typedPartition3 f list =
         List.foldBack
             (fun item (lefts, middles, rights) ->
                 match f item with
@@ -178,6 +180,18 @@ module List =
                 | Choice3Of3 c -> lefts, middles, c :: rights)
             list
             (List.empty, List.empty, List.empty)
+
+    let typedPartition4 f list =
+        List.foldBack
+            (fun item (firsts, seconds, thirds, fourths) ->
+                match f item with
+                | Choice1Of4 a -> a :: firsts, seconds, thirds, fourths
+                | Choice2Of4 b -> firsts, b :: seconds, thirds, fourths
+                | Choice3Of4 c -> firsts, seconds, c :: thirds, fourths
+                | Choice4Of4 d -> firsts, seconds, thirds, d :: fourths)
+            list
+            (List.empty, List.empty, List.empty, List.empty)
+
 
 type Either<'a, 'b> =
     | Left of 'a
