@@ -166,7 +166,7 @@ type BuiltInPrimitiveTypes =
     | Int
     | String
     | Char
-    | Unit
+    //| Unit
     | Bool
 
 
@@ -227,6 +227,10 @@ and InferredTypeAndFoundConstraints =
       /// These are the constraints that were deduced from variables used in the expression
       variablesConstrained : VariablesConstraints }
 
+let makeInfTypeAndFndCnstrts (type_ : TypeInferenceState) variables : InferredTypeAndFoundConstraints =
+    { typeOfExpression = type_
+      variablesConstrained = variables }
+
 
 // Not sure if this is useful yet
 //type BuiltInCompoundTypes =
@@ -238,16 +242,16 @@ and InferredTypeAndFoundConstraints =
 
 
 let typeOfPrimitiveLiteralValue : Cst.PrimitiveLiteralValue -> DefinitiveType =
-    (function
+    function
     | Cst.NumberPrimitive num ->
         match num with
-        | Cst.FloatLiteral _ -> Float
-        | Cst.IntLiteral _ -> Int
-    | Cst.CharPrimitive _ -> Char
-    | Cst.StringPrimitive _ -> String
-    | Cst.UnitPrimitive _ -> BuiltInPrimitiveTypes.Unit
-    | Cst.BoolPrimitive _ -> Bool)
-    >> PrimitiveType
+        | Cst.FloatLiteral _ -> PrimitiveType Float
+        | Cst.IntLiteral _ -> PrimitiveType Int
+    | Cst.CharPrimitive _ -> PrimitiveType Char
+    | Cst.StringPrimitive _ -> PrimitiveType String
+    | Cst.UnitPrimitive _ -> UnitType
+    | Cst.BoolPrimitive _ -> PrimitiveType Bool
+
 
 
 
@@ -394,26 +398,64 @@ and typeOfCompoundValue : Cst.CompoundValues -> InferredTypeAndFoundConstraints 
 
 /// @TODO: hmmmm, this guy kinda needs to be able to bubble up constraints upwards, onto the parameter as a whole, based on the shape of the destructuring that we do to the parameters.
 /// I think the way to do this is that each one of these guys needs to bubble up the sub-shapes inside of itself, and thereby informs the caller of this function what this specific assignment pattern is. Whether this function is called by a top level parameter or a destructured part of it doesn't matter, because the consequences of that will just be handled by whatever calls this function.
-let typeOfAssignmentPattern (assignmentPattern: Cst.AssignmentPattern) : InferredTypeAndFoundConstraints
+let rec typeOfAssignmentPattern (assignmentPattern : Cst.AssignmentPattern) : InferredTypeAndFoundConstraints =
+    match assignmentPattern with
+    | Cst.Named _ -> makeInfTypeAndFndCnstrts Unconstrained Map.empty
+    | Cst.Ignored -> makeInfTypeAndFndCnstrts Unconstrained Map.empty
+    | Cst.Unit -> makeInfTypeAndFndCnstrts (SingleConstraint (Concrete (Unit Map.empty))) Map.empty
+    | Cst.Aliased (pattern, alias) ->
+        let subType = typeOfAssignmentPattern pattern.node
+
+        { subType with variablesConstrained = Map.add alias.node subType.typeOfExpression subType.variablesConstrained }
+    | Cst.DestructuredPattern pattern -> typeOfDestructuredPattern pattern
+
+
+and typeOfDestructuredPattern (destructuredPattern : Cst.DestructuredPattern) : InferredTypeAndFoundConstraints =
+    match destructuredPattern with
+    | Cst.DestructuredRecord fieldNames ->
+        let justTheFieldNames = fieldNames |> NEL.map Cst.getNode
+
+        let varConstraints : VariablesConstraints =
+            justTheFieldNames
+            |> NEL.map (fun fieldName -> fieldName, Unconstrained)
+            |> NEL.toList
+            |> Map.ofSeq
+
+        let extendedRecordType =
+            justTheFieldNames
+            |> NEL.map (fun fieldName -> fieldName, makeInfTypeAndFndCnstrts Unconstrained Map.empty)
+            |> NEL.toList
+            |> Map.ofSeq
+            |> ExtendedRecord
+
+        makeInfTypeAndFndCnstrts (SingleConstraint (Concrete extendedRecordType)) varConstraints
+
+    | Cst.DestructuredTuple (first, tail) ->
+        let inferredType =
+            Tuple (typeOfAssignmentPattern first.node, NEL.map (Cst.getNode >> typeOfAssignmentPattern) tail)
+
+        makeInfTypeAndFndCnstrts inferredType Map.empty
+
+    //let folder
+    //    (combined : InferredTypeAndFoundConstraints)
+    //    (tupleItem : Cst.CstNode<Cst.AssignmentPattern>)
+    //    : InferredTypeAndFoundConstraints =
+    //    // @TODO: hm I don't think this actually captures the fact that this assignment pattern as a whole has to have the tuple structure of however many members and whichever inferred types
+    //    combineConstraintsAndVariables (typeOfAssignmentPattern tupleItem.node) combined
+
+    //tail
+    //|> NEL.fold<_, _> folder (typeOfAssignmentPattern first.node)
+
+    | Cst.DestructuredCons (first, tail) ->
+        let inferredType =
+            List (typeOfAssignmentPattern first, NEL.map typeOfAssignmentPattern tail)
+
+        makeInfTypeAndFndCnstrts inferredType Map.empty
+
+
+
 
 //let typeOfFunction (functionValue: Cst.FunctionValue) :InferredTypeAndFoundConstraints =
-    
-
-
-
-
-
-
-
-
-
-
-
-
-//type BinaryExpr<'a, 'b> =
-//    | Left of 'a
-//    | Right of 'b
-
 
 
 
