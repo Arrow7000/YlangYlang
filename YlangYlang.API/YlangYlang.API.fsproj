@@ -15,7 +15,9 @@
     <Compile Include="Program.fs" />
   </ItemGroup>
 
-  <ItemGroup />
+  <ItemGroup>
+    <PackageReference Include="Thoth.Json.Net" Version="11.0.0" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\YlangYlang\YlangYlang.fsproj" />

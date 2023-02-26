@@ -9,13 +9,17 @@ open System.Diagnostics
 
 
 /// So that we don't have to reproduce the contextStack implementation details before we actuals with expecteds
-let private stripContexts ctx : ExpressionParsing.ExpressionParserResult<'a> = { ctx with contextStack = List.empty }
+//let private stripContexts (ctx : ParseContext<'token, 'ctx, 'err>) = { ctx with contextStack = List.empty }
+let private stripContexts result =
+    { result with parsingContext = { result.parsingContext with contextStack = List.empty } }
 
 let private makeSuccess tokensParsed v =
     blankParseCtx
     |> makeParseResultWithCtx (ParsingSuccess v)
-    |> fun ctx -> { ctx with prevTokens = tokensParsed }
+    |> fun result -> { result with parsingContext = { result.parsingContext with prevTokens = tokensParsed } }
 
+
+let makeBlankCstNode node = makeCstNode node List.empty
 
 let private makeNumberExpression =
     NumberPrimitive
@@ -55,7 +59,8 @@ let testOperatorExpression =
                     (stripContexts res')
                     (CompoundExpression (
                         Operator (
-                            makeNumberExpression (FloatLiteral -4.6),
+                            makeNumberExpression (FloatLiteral -4.6)
+                            |> makeBlankCstNode,
                             NEL.make (
                                 AppendOp,
                                 SingleValueExpression (ExplicitValue (Primitive (StringPrimitive "test")))

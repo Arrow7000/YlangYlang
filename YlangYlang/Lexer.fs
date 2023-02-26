@@ -148,7 +148,7 @@ type TokenWithSource =
       chars : char list } // keep the original constituent chars around, for better error messages :)
     member this.charLength = List.length this.chars // bear in mind that the whitespace tokens will span multiple lines
     override this.ToString () = String.ofSeq this.chars
-    member this.charStr = this.ToString ()
+    member private this.charStr = this.ToString ()
 
 /// Simple alias for `TokenWithSource`
 type TknSrc = TokenWithSource
