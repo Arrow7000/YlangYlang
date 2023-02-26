@@ -193,6 +193,16 @@ module List =
             (List.empty, List.empty, List.empty, List.empty)
 
 
+
+module Map =
+    let mapKeyVal (f : 'Key -> 'T -> ('NKey * 'U)) map =
+        Map.fold
+            (fun newMap key value ->
+                let (newKey, newVal) = f key value
+                Map.add newKey newVal newMap)
+            Map.empty
+            map
+
 type Either<'a, 'b> =
     | Left of 'a
     | Right of 'b

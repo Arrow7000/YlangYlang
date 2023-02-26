@@ -36,6 +36,12 @@ type ValueReference =
 /// The tokens list is about where the *name* is in the source.
 type ResolvedValueNames = Map<UnqualIdentifier, (TokenWithSource list * ValueReference) nel>
 
+(*
+The head is always the closest scope, so pop it off when we leave a given scope
+*)
+
+type NamesInScope = ResolvedValueNames list
+
 
 /// Adds a new param to a `ResolvedParams` map.
 let addNewParamsReference
@@ -87,6 +93,15 @@ let combineReferenceMaps (mapList : Map<'a, 'b nel> list) : Map<'a, 'b nel> =
 
     List.fold listFolder Map.empty mapList
 
+
+
+let convertParamsToValuesMap (resolvedParams : ResolvedParams) : ResolvedValueNames =
+    Map.mapKeyVal
+        (fun key tokensAndValues ->
+            ValueIdentifier key,
+            tokensAndValues
+            |> NEL.map (fun (tokens, value) -> (tokens, AssignmentParam value)))
+        resolvedParams
 
 
 /// I think this is the kind of thing we need for collecting the destructured parts of a single assignment pattern, and this could then be used by `resolveParamAssignment`
