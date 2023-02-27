@@ -77,6 +77,51 @@ and NEL<'a> = NonEmptyList<'a>
 and 'a nel = NonEmptyList<'a>
 
 
+
+/// List of Two Or More™
+type TwoOrMore<'a> =
+    | TOM of head : 'a * neck : 'a * tail : 'a list
+
+    /// Make new TOM with head, neck, and tail
+    static member new_ (head : 'a) (neck : 'a) tail : TOM<'a> = TOM (head, neck, tail)
+
+    /// Make new TOM by just giving it a head and neck
+    static member make (head : 'a) (neck : 'a) : TOM<'a> = TOM.new_ head neck List.empty
+
+    (* Simple getters *)
+
+    static member head (TOM (head', _, _)) = head'
+    static member neck (TOM (_, neck', _)) = neck'
+    static member tail (TOM (_, _, tail')) = tail'
+
+    static member map<'a, 'b> (f : 'a -> 'b) (TOM (head, neck, rest) : 'a tom) = TOM (f head, f neck, List.map f rest)
+
+    static member fromList (l : 'a list) : TOM<'a> option =
+        match l with
+        | [] -> None
+        | [ _ ] -> None
+        | head :: neck :: tail -> Some <| TOM.new_ head neck tail
+
+    static member toList (TOM (head, neck, tail) : 'a tom) = head :: neck :: tail
+
+    static member cons (newHead : 'a) (TOM (oldHead, neck, tail)) = TOM (newHead, oldHead, neck :: tail)
+
+    static member append : (TOM<'a> -> TOM<'a> -> TOM<'a>) =
+        fun (TOM (head1, neck1, rest1)) (TOM (head2, neck2, rest2)) ->
+
+            TOM (head1, neck1, rest1 @ (head2 :: neck2 :: rest2))
+
+    static member appendList (list : 'a list) (TOM (head, neck, tail)) = TOM (head, neck, tail @ list)
+
+
+
+and TOM<'a> = TwoOrMore<'a>
+
+/// List of two or more
+and 'a tom = TwoOrMore<'a>
+
+
+
 type Option<'a> with
     static member combine f fst snd =
         match fst, snd with

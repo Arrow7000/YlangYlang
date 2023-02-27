@@ -83,21 +83,24 @@ and ExtendedRecordType =
     { extendedAlias : CstNode<UnqualValueIdentifier>
       fields : Map<CstNode<UnqualValueIdentifier>, CstNode<MentionableType>> }
 
+
 type VariantCase =
     { label : CstNode<UnqualTypeOrModuleIdentifier>
       contents : CstNode<MentionableType> list }
 
+type NewTypeDeclaration =
+    { specifiedTypeParams : CstNode<UnqualValueIdentifier> list
+      variants : NEL<CstNode<VariantCase>> }
+
+
+type AliasDeclaration =
+    { specifiedTypeParams : CstNode<UnqualValueIdentifier> list // in case the underlying type needs it
+      referent : CstNode<MentionableType> }
+
 
 type TypeDeclaration =
-    | Alias of
-        name : CstNode<UnqualTypeOrModuleIdentifier> *
-        specifiedTypeParams : CstNode<UnqualValueIdentifier> list *  // in case the underlying type needs it
-        referent : CstNode<MentionableType>
-    | Sum of
-        name : CstNode<UnqualTypeOrModuleIdentifier> *
-        specifiedTypeParams : CstNode<UnqualValueIdentifier> list *
-        variants : NEL<CstNode<VariantCase>>
-
+    | Alias of AliasDeclaration
+    | Sum of NewTypeDeclaration
 
 
 
@@ -254,7 +257,7 @@ type ImportDeclaration =
 
 type Declaration =
     | ImportDeclaration of ImportDeclaration
-    | TypeDeclaration of TypeDeclaration
+    | TypeDeclaration of name : CstNode<UnqualTypeOrModuleIdentifier> * declaration : TypeDeclaration
     | ValueTypeAnnotation of ValueAnnotation
     | ValueDeclaration of ValueDeclaration
 

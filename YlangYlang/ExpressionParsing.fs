@@ -1036,7 +1036,11 @@ and parseTypeExpression : ExpressionParser<MentionableType> =
 
 
 let parseAliasDeclaration =
-    succeed (fun ident generics expr -> Alias (ident, generics, expr))
+    succeed (fun ident generics expr ->
+        (ident,
+         Alias
+             { specifiedTypeParams = generics
+               referent = expr }))
     |. symbol AliasKeyword
     |. commit
     |. spaces
@@ -1063,7 +1067,11 @@ let parseNewTypeDeclaration =
         )
         |> addCstNode
 
-    succeed (fun ident generics firstVariant otherVariants -> Sum (ident, generics, NEL.new_ firstVariant otherVariants))
+    succeed (fun ident generics firstVariant otherVariants ->
+        (ident,
+         Sum
+             { specifiedTypeParams = generics
+               variants = NEL.new_ firstVariant otherVariants }))
     |= (parseModuleAliasOrUnqualTypeName |> addCstNode)
     |= repeat (succeed id |. spaces |= parseSingleValueIdentifier)
     |. spaces
