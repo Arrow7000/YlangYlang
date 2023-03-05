@@ -31,8 +31,8 @@ type DestructuredPattern =
     /// Destructured records need to have one destructured member
     | DestructuredRecord of CstNode<UnqualValueIdentifier> nel
     /// Destructured tuples need to have at least two members
-    | DestructuredTuple of first : CstNode<AssignmentPattern> * tail : CstNode<AssignmentPattern> nel
-    | DestructuredCons of first : CstNode<AssignmentPattern> * tail : CstNode<AssignmentPattern> nel
+    | DestructuredTuple of CstNode<AssignmentPattern> tom
+    | DestructuredCons of CstNode<AssignmentPattern> tom
     | DestructuredTypeVariant of
         constructor : CstNode<TypeOrModuleIdentifier> *
         params' : CstNode<AssignmentPattern> list
@@ -153,7 +153,7 @@ type CompoundValues =
 // Not sure yet if it makes sense to have this as a separate type
 and CustomTypeValues =
     { label : CstNode<UnqualTypeOrModuleIdentifier>
-      values : CstNode<ExplicitValue> list }
+      values : CstNode<Expression> list }
 
 and FunctionValue =
     { params_ : NEL<CstNode<AssignmentPattern>> // cos if it didn't have any then it would just be a regular value expression
@@ -210,7 +210,7 @@ type ValueDeclaration =
 
 type ValueAnnotation =
     { valueName : CstNode<UnqualValueIdentifier>
-      annotatedType : MentionableType }
+      annotatedType : CstNode<MentionableType> }
 
 
 (* The module as a whole *)

@@ -70,6 +70,7 @@ type NonEmptyList<'a> =
         | None -> head
         | Some last -> last
 
+
 /// A convenient alias for NonEmptyList
 and NEL<'a> = NonEmptyList<'a>
 
@@ -112,6 +113,13 @@ type TwoOrMore<'a> =
             TOM (head1, neck1, rest1 @ (head2 :: neck2 :: rest2))
 
     static member appendList (list : 'a list) (TOM (head, neck, tail)) = TOM (head, neck, tail @ list)
+
+    static member fold (f : 'State -> 'Item -> 'State) (state : 'State) (TOM (head, neck, tail) : 'Item tom) : 'State =
+        f state head
+        |> fun result -> f result neck
+        |> fun result -> List.fold f result tail
+
+    static member fromItemAndNel item (NEL (first, tail)) = TOM (item, first, tail)
 
 
 
@@ -262,6 +270,24 @@ type Either<'a, 'b> =
         | Left l -> Left l
         | Right r -> Right (f r)
 
+
+
+type EitherOrBoth<'a, 'b> =
+    | OnlyLeft of 'a
+    | OnlyRight of 'b
+    | Both of left : 'a * right : 'b
+
+    static member getLeft v =
+        match v with
+        | OnlyLeft l -> Some l
+        | OnlyRight _ -> None
+        | Both (l, _) -> Some l
+
+    static member getRight v =
+        match v with
+        | OnlyLeft _ -> None
+        | OnlyRight r -> Some r
+        | Both (_, r) -> Some r
 
 
 /// A list of type 'T but containing exactly one item of type 'U

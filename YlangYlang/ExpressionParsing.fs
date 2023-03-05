@@ -416,17 +416,18 @@ let parseRecordDestructuringParam =
     |. symbol BracesClose
     |> addCtxToStack (PCtx.SingleParam RecordParam)
 
-let rec parseTupleDestructuredParam : ExpressionParser<DestructuredPattern> =
+let rec parseTupleDestructuredParam : ExpressionParser<AssignmentPattern> =
     let parseTupleItem =
         lazyParser (fun _ -> parseDelimitedParam)
         |> addCstNode
 
-    succeed (fun first second rest -> DestructuredTuple (first, NEL.new_ second rest))
+    succeed (fun first rest ->
+        match rest with
+        | [] -> first.node
+        | neck :: tail ->
+            DestructuredTuple (TOM.new_ first neck tail)
+            |> DestructuredPattern)
     |. symbol ParensOpen
-    |. spaces
-    |= parseTupleItem
-    |. spaces
-    |. symbol Comma
     |. spaces
     |= parseTupleItem
     |= repeat (
@@ -455,7 +456,7 @@ let rec parseTupleDestructuredParam : ExpressionParser<DestructuredPattern> =
 and parseConsDestructuredParam =
     let parseItem = lazyParser (fun _ -> addCstNode parseTopLevelParam)
 
-    succeed (fun first tail -> DestructuredCons (first, tail))
+    succeed (fun first tail -> DestructuredCons (TOM.fromItemAndNel<_> first tail))
     |= parseItem
     |= oneOrMore (
         succeed id
@@ -478,7 +479,10 @@ and parseTypeVariantDestructuredParam =
     |> addCtxToStack (PCtx.SingleParam TypeParam)
 
 and parseInherentlyDelimitedParam =
-    either parseRecordDestructuringParam parseTupleDestructuredParam
+    either
+        (parseRecordDestructuringParam
+         |> map DestructuredPattern)
+        parseTupleDestructuredParam
     |> addCtxToStack (PCtx.SingleParam InherentlyDelimitedParam)
 
 and parseNotInherentlyDelimitedParam =
@@ -496,7 +500,6 @@ and parseDelimitedParam : ExpressionParser<AssignmentPattern> =
                 |> map DestructuredPattern
 
                 parseInherentlyDelimitedParam
-                |> map DestructuredPattern
 
                 (parseSimpleParam |> map getNode)
 
@@ -513,8 +516,7 @@ and parseTopLevelParam : ExpressionParser<AssignmentPattern> =
 
             parensedParser parseDelimitedParam
 
-            succeed DestructuredPattern
-            |= parseInherentlyDelimitedParam ]
+            parseInherentlyDelimitedParam ]
     |> addCtxToStack (PCtx.SingleParam TopLevelParam)
 
 
@@ -1108,7 +1110,7 @@ let parseValueAnnotation =
     |. symbol Colon
     |. commit
     |. spaces
-    |= parseTypeExpression
+    |= addCstNode parseTypeExpression
 
 
 

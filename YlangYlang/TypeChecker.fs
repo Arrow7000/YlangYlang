@@ -3,7 +3,7 @@
 
 open Lexer
 module Cst = ConcreteSyntaxTree
-
+open NameResolution
 
 
 (*
@@ -91,7 +91,7 @@ type TypeState<'a> =
 type SimpleJudgment<'a> =
     | SimpleUnconstrained
     | SimpleUnified of 'a
-    | SimpleConflicting of 'a * 'a nel
+    | SimpleConflicting of 'a tom
 
 
 
@@ -103,7 +103,7 @@ type TypeJudgment<'a> =
     /// Conflicts between inferred types
     | ConflictingInferences of
         typeDeclaration : SingleTypeConstraint<'a> option *
-        inferences : (SingleTypeConstraint<'a> * SingleTypeConstraint<'a> nel)
+        inferences : SingleTypeConstraint<'a> tom
     /// Conflict between declared type and the one otherwise unified inferred type
     | ConflictDeclarationInferences of
         declaredType : SingleTypeConstraint<'a> *
@@ -111,7 +111,7 @@ type TypeJudgment<'a> =
     /// Conflict both between declared type and also among the inferred types
     | ConflictDeclarationAndBetweenInferences of
         declaredType : SingleTypeConstraint<'a> *
-        inferredTypes : (SingleTypeConstraint<'a> * SingleTypeConstraint<'a> nel)
+        inferredTypes : SingleTypeConstraint<'a> tom
 
 
 
@@ -136,7 +136,7 @@ let tryUnifyTypes
                 with
             | SimpleUnconstrained -> Unified None
             | SimpleUnified unifiedInferredConstraint -> Unified (Some unifiedInferredConstraint)
-            | SimpleConflicting (firstClash, otherClashes) -> ConflictingInferences (None, (firstClash, otherClashes))
+            | SimpleConflicting clashes -> ConflictingInferences (None, clashes)
 
     | Some declaration ->
         match typeState.inferState with
@@ -156,8 +156,7 @@ let tryUnifyTypes
                 | SimpleUnified fullyUnified -> Unified (Some fullyUnified)
                 | SimpleConflicting _ -> ConflictDeclarationInferences (declaration, unifiedInferreds)
 
-            | SimpleConflicting (firstClash, otherClashes) ->
-                ConflictingInferences (Some declaration, (firstClash, otherClashes))
+            | SimpleConflicting clashes -> ConflictingInferences (Some declaration, clashes)
 
 
 
@@ -209,7 +208,7 @@ and Dt = DefinitiveType
 type InferredType =
     | Unit
     | Primitive of BuiltInPrimitiveTypes
-    | Tuple of TypeInferenceState * TypeInferenceState nel
+    | Tuple of TypeInferenceState tom
     | List of TypeInferenceState
     /// @TODO: this might not catch a possible clash, which is having the same name declared multiple times with a different type for each
     /// @TODO: also, let's do the specific ones first, and the record types with their different, set-like types, later
@@ -351,77 +350,79 @@ let combineGleanedInfos (cavA : GleanedInfo) (cavB : GleanedInfo) : GleanedInfo 
 
 #nowarn "40"
 
-let rec typeOfExpression : Cst.Expression -> GleanedInfo =
-    fun _ -> failwithf "Not implemented yet!"
+let rec typeOfExpression : NamesInScope -> Cst.Expression -> GleanedInfo =
+    fun _ _ -> failwithf "Not implemented yet!"
 
 
-and typeOfCompoundValue : Cst.CompoundValues -> GleanedInfo =
-    let rec listFolder items =
-        match items with
-        | [] -> emptyGleanedInfo
-        | head :: tail ->
-            let headConstraint = typeOfExpression head
+and typeOfCompoundValue : NamesInScope -> Cst.CompoundValues -> GleanedInfo =
+    fun namesInScope compoundValue ->
 
-            combineGleanedInfos headConstraint (listFolder tail)
+        let rec listFolder items =
+            match items with
+            | [] -> emptyGleanedInfo
+            | head :: tail ->
+                let headConstraint = typeOfExpression namesInScope head
 
-    function
-    | Cst.List exprs -> exprs |> List.map Cst.getNode |> listFolder
+                combineGleanedInfos headConstraint (listFolder tail)
 
-    | Cst.CompoundValues.Tuple (first, rest) ->
-        let firstConstraint = typeOfExpression first.node
+        match compoundValue with
+        | Cst.List exprs -> exprs |> List.map Cst.getNode |> listFolder
 
-        NEL.toList rest
-        |> List.map Cst.getNode
-        |> listFolder
-        |> combineGleanedInfos firstConstraint
+        | Cst.CompoundValues.Tuple (first, rest) ->
+            let firstConstraint = typeOfExpression namesInScope first.node
 
-    | Cst.CompoundValues.Record keyValList ->
+            NEL.toList rest
+            |> List.map Cst.getNode
+            |> listFolder
+            |> combineGleanedInfos firstConstraint
 
-        let (keyAndValsConstraints, constrainedVars) =
-            keyValList
-            |> List.fold
-                (fun (keyAndValsConstraints, vars) (key, value) ->
-                    let typeOfValue = typeOfExpression value.node
-                    let newFieldAndValConstraint = (key.node, typeOfValue.typeOfExpression)
+        | Cst.CompoundValues.Record keyValList ->
 
-                    let combinedVariables = combineConstrainedVars vars typeOfValue.variablesConstrained
+            let (keyAndValsConstraints, constrainedVars) =
+                keyValList
+                |> List.fold
+                    (fun (keyAndValsConstraints, vars) (key, value) ->
+                        let typeOfValue = typeOfExpression namesInScope value.node
+                        let newFieldAndValConstraint = (key.node, typeOfValue.typeOfExpression)
 
-                    (newFieldAndValConstraint :: keyAndValsConstraints, combinedVariables))
-                (List.empty, Map.empty)
+                        let combinedVariables = combineConstrainedVars vars typeOfValue.variablesConstrained
 
-        makeGleanedInfo
-            (keyAndValsConstraints
-             |> Map.ofList
-             |> Record
-             |> Concrete
-             |> SingleConstraint)
-            constrainedVars
+                        (newFieldAndValConstraint :: keyAndValsConstraints, combinedVariables))
+                    (List.empty, Map.empty)
 
-    | Cst.CompoundValues.RecordExtension (recordToExtend, keyValList) ->
+            makeGleanedInfo
+                (keyAndValsConstraints
+                 |> Map.ofList
+                 |> Record
+                 |> Concrete
+                 |> SingleConstraint)
+                constrainedVars
 
-        let (keyAndValsConstraints, constrainedVars) =
-            keyValList
-            |> NEL.toList
-            |> List.fold
-                (fun (keyAndValsConstraints, vars) (key, value) ->
-                    let typeOfValue = typeOfExpression value.node
-                    let newFieldAndValConstraint = (key.node, typeOfValue.typeOfExpression)
+        | Cst.CompoundValues.RecordExtension (recordToExtend, keyValList) ->
 
-                    let combinedVariables = combineConstrainedVars vars typeOfValue.variablesConstrained
+            let (keyAndValsConstraints, constrainedVars) =
+                keyValList
+                |> NEL.toList
+                |> List.fold
+                    (fun (keyAndValsConstraints, vars) (key, value) ->
+                        let typeOfValue = typeOfExpression namesInScope value.node
+                        let newFieldAndValConstraint = (key.node, typeOfValue.typeOfExpression)
 
-                    (newFieldAndValConstraint :: keyAndValsConstraints, combinedVariables))
-                (List.empty, Map.empty)
+                        let combinedVariables = combineConstrainedVars vars typeOfValue.variablesConstrained
 
-        let thisType =
-            keyAndValsConstraints
-            |> Map.ofList
-            |> ExtendedRecord
-            |> Concrete
-            |> SingleConstraint
+                        (newFieldAndValConstraint :: keyAndValsConstraints, combinedVariables))
+                    (List.empty, Map.empty)
 
-        // Need to ensure that we're constraining the record being extended to be the same as the key/val constraints we've got here
-        Map.add recordToExtend.node thisType constrainedVars
-        |> makeGleanedInfo thisType
+            let thisType =
+                keyAndValsConstraints
+                |> Map.ofList
+                |> ExtendedRecord
+                |> Concrete
+                |> SingleConstraint
+
+            // Need to ensure that we're constraining the record being extended to be the same as the key/val constraints we've got here
+            Map.add recordToExtend.node thisType constrainedVars
+            |> makeGleanedInfo thisType
 
 
 /// @TODO: hmmmm, this guy kinda needs to be able to bubble up constraints upwards, onto the parameter as a whole, based on the shape of the destructuring that we do to the parameters.
@@ -458,35 +459,33 @@ and typeOfDestructuredPattern (destructuredPattern : Cst.DestructuredPattern) : 
 
         makeGleanedInfo (SingleConstraint (Concrete extendedRecordType)) varConstraints
 
-    | Cst.DestructuredTuple (first, tail) ->
-        let firstGleaned = typeOfAssignmentPattern first.node
-        let restGleaned = NEL.map (Cst.getNode >> typeOfAssignmentPattern) tail
+    | Cst.DestructuredTuple items ->
+        let gleaneds = TOM.map (Cst.getNode >> typeOfAssignmentPattern) items
 
         let combinedVars =
-            restGleaned
-            |> NEL.map getConstrainedVars
-            |> NEL.fold<_, _> combineConstrainedVars firstGleaned.variablesConstrained
+            gleaneds
+            |> TOM.map getConstrainedVars
+            |> TOM.fold<_, _> combineConstrainedVars Map.empty
 
         let inferredType =
-            Tuple (firstGleaned.typeOfExpression, NEL.map getTypeInfo restGleaned)
+            Tuple (TOM.map getTypeInfo gleaneds)
             |> Concrete
             |> SingleConstraint
 
         makeGleanedInfo inferredType combinedVars
 
 
-    | Cst.DestructuredCons (first, tail) ->
-        let firstGleaned = typeOfAssignmentPattern first.node
-        let restGleaned = NEL.map (Cst.getNode >> typeOfAssignmentPattern) tail
+    | Cst.DestructuredCons items ->
+        let gleaneds = TOM.map (Cst.getNode >> typeOfAssignmentPattern) items
 
         let combinedVars =
-            restGleaned
-            |> NEL.map getConstrainedVars
-            |> NEL.fold<_, _> combineConstrainedVars firstGleaned.variablesConstrained
+            gleaneds
+            |> TOM.map getConstrainedVars
+            |> TOM.fold<_, _> combineConstrainedVars Map.empty
 
         let constraints =
-            NEL.map getTypeInfo restGleaned
-            |> NEL.fold<_, _> combineTypeConstraints firstGleaned.typeOfExpression
+            TOM.map getTypeInfo gleaneds
+            |> TOM.fold<_, _> combineTypeConstraints Unconstrained
 
         let inferredType = List constraints |> Concrete |> SingleConstraint
 
