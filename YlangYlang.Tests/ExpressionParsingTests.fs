@@ -20,6 +20,8 @@ let private makeSuccess tokensParsed v =
 
 
 let makeBlankCstNode node = makeCstNode node List.empty
+let stripTokens cstNode = { cstNode with source = List.empty }
+
 
 let private makeNumberExpression =
     NumberPrimitive
@@ -62,8 +64,10 @@ let testOperatorExpression =
                             makeNumberExpression (FloatLiteral -4.6)
                             |> makeBlankCstNode,
                             NEL.make (
-                                AppendOp,
-                                SingleValueExpression (ExplicitValue (Primitive (StringPrimitive "test")))
+                                makeBlankCstNode AppendOp,
+                                makeBlankCstNode (
+                                    SingleValueExpression (ExplicitValue (Primitive (StringPrimitive "test")))
+                                )
                             )
                         )
                      )
@@ -120,8 +124,11 @@ let testCompoundExpression =
                     (ParensedExpression (
                         CompoundExpression (
                             Operator (
-                                makeNumberExpression (IntLiteral 34),
-                                NEL.make (PlusOp, makeNumberExpression (FloatLiteral -4.6))
+                                makeBlankCstNode (makeNumberExpression (IntLiteral 34)),
+                                NEL.make (
+                                    makeBlankCstNode PlusOp,
+                                    makeBlankCstNode (makeNumberExpression (FloatLiteral -4.6))
+                                )
                             )
                         )
                      )
@@ -145,15 +152,20 @@ let testParensExpressionWithMultiOperators =
                     (ParensedExpression (
                         CompoundExpression (
                             Operator (
-                                makeNumberExpression (IntLiteral 34),
+                                makeBlankCstNode (makeNumberExpression (IntLiteral 34)),
                                 NEL.make (
-                                    PlusOp,
-                                    (CompoundExpression (
-                                        Operator (
-                                            makeNumberExpression (FloatLiteral -4.6),
-                                            NEL.make (DivOp, makeNumberExpression (IntLiteral 7))
+                                    makeBlankCstNode PlusOp,
+                                    makeBlankCstNode (
+                                        CompoundExpression (
+                                            Operator (
+                                                makeBlankCstNode (makeNumberExpression (FloatLiteral -4.6)),
+                                                NEL.make (
+                                                    makeBlankCstNode DivOp,
+                                                    makeBlankCstNode (makeNumberExpression (IntLiteral 7))
+                                                )
+                                            )
                                         )
-                                    ))
+                                    )
                                 )
                             )
                         )

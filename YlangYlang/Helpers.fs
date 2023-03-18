@@ -91,9 +91,9 @@ type TwoOrMore<'a> =
 
     (* Simple getters *)
 
-    static member head (TOM (head', _, _)) = head'
-    static member neck (TOM (_, neck', _)) = neck'
-    static member tail (TOM (_, _, tail')) = tail'
+    static member head<'a> (TOM (head', _, _) : 'a tom) = head'
+    static member neck<'a> (TOM (_, neck', _) : 'a tom) = neck'
+    static member tail<'a> (TOM (_, _, tail') : 'a tom) = tail'
 
     static member map<'a, 'b> (f : 'a -> 'b) (TOM (head, neck, rest) : 'a tom) = TOM (f head, f neck, List.map f rest)
 
@@ -114,7 +114,11 @@ type TwoOrMore<'a> =
 
     static member appendList (list : 'a list) (TOM (head, neck, tail)) = TOM (head, neck, tail @ list)
 
-    static member fold (f : 'State -> 'Item -> 'State) (state : 'State) (TOM (head, neck, tail) : 'Item tom) : 'State =
+    static member fold<'State, 'Item>
+        (f : 'State -> 'Item -> 'State)
+        (state : 'State)
+        (TOM (head, neck, tail) : 'Item tom)
+        : 'State =
         f state head
         |> fun result -> f result neck
         |> fun result -> List.fold f result tail

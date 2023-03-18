@@ -5,6 +5,7 @@ open Lexer
 module Cst = ConcreteSyntaxTree
 
 open NameResolution
+open NameResolution.ResolvedNames
 open System
 
 
@@ -73,30 +74,9 @@ type TypeConstraintReason =
     | IsInHomogenousType
 
 
+type SingleTypeConstraint = InferredType
+
 /// Describes a single type constraint due to how a value is used
-type SingleTypeConstraint =
-    | GenericParam of param : RigidGeneric * reason : TypeConstraintReason
-    //| TypeClass of TypeClass
-    /// For records and extended records
-    | IsRecordsWithFields of
-        fieldNamesAndVals : (UnqualValueIdentifier * TypeConstraints) list *
-        reason : TypeConstraintReason
-    /// We don't know what the type is but we do know that this thing has to be the same as this other thing.
-    /// @TODO: I wonder if there is a way of "lifting" this kind of restriction so that it is a single restriction for all the affected values instead of carried separately on each of the affected values
-    | IsSameAs of otherGenerics : RigidGeneric nel * reason : TypeConstraintReason
-    /// For specific, concrete types
-    | Concrete of concreteType : InferredType * reason : TypeConstraintReason
-
-
-    static member getReason typeConstraint =
-        match typeConstraint with
-        | GenericParam (reason = reason) -> reason
-        | IsRecordsWithFields (reason = reason) -> reason
-        | IsSameAs (reason = reason) -> reason
-        | Concrete (reason = reason) -> reason
-
-
-
 and TypeConstraints =
     /// No constraints whatsoever, this is a param that isn't used at all
     | Unconstrained
@@ -121,23 +101,531 @@ and BuiltInPrimitiveTypes =
 
 /// Represents an inferred type, whether full or partial
 and InferredType =
+    /// I wonder if it makes sense to have generics as their own inferred type variant, instead of just having generically constrained params just be referenced via a constraint on one or both of the linked things... I think this makes sense here so I'll keep it here for now and we'll see how we go
+    | Generic of GenericParam
+
     | Unit
     | Primitive of BuiltInPrimitiveTypes
     | Tuple of TypeConstraints tom
     | List of TypeConstraints
     /// This describes a record with potentially more unknown fields, e.g. when a record is destructured, or extended, or some of its records accessed, whether directly by dot suffix, or with a dot getter function
     /// @TODO: this might not catch a possible clash, which is having the same name declared multiple times with a different type for each
-    | ExtendedRecord of
-        /// The record to extend - in Elm this is restricted to a named identifier, so we don't have to account for arbitrary expressions
-        /// but that extended record is only present in extended value declarations, this won't be present when only some fields from a record are accessed, like through dot getters or destructured parameters
-        extendedRecord : UnqualValueIdentifier option *
+    | RecordWith of
+        //extendedRecord : UnqualValueIdentifier option *
         /// The actual fields accessed or tried to destructure
         referencedFields : Map<UnqualValueIdentifier, TypeConstraints>
 
     /// This denotes an exact record, e.g. as an explicit type declaration
-    | Record of Map<UnqualValueIdentifier, TypeConstraints>
+    | RecordExact of Map<UnqualValueIdentifier, TypeConstraints>
     | ReferencedType of typeName : TypeOrModuleIdentifier * typeParams : TypeConstraints list
-    | Arrow of fromType : TypeConstraints * toType : TypeConstraints
+    | Arrow of fromType : TypeConstraints * toType : TypeConstraints nel
+
+
+
+
+
+
+
+type VariablesConstraints = Map<Identifier, TypeConstraints>
+
+
+/// Represents inferred type information for the expression, and also any constraints inferred on variables used in the expression.
+/// @TODO: This may also need a field for bubbling up which inner variables could not be unified, so as to notify the developer of a type error
+type GleanedInfo =
+    { typeOfExpression : TypeConstraints
+      /// These are the constraints that were deduced from variables used in the expression
+      variablesConstrained : VariablesConstraints
+
+      /// @TODO: tbh we could probably stick all of the unresolved names in the same list, just in DUs for each type of thing
+      //valueNamesNotResolved : UnqualValueIdentifier list
+      //typeNamesNotResolved : UnqualTypeOrModuleIdentifier list
+
+      namesNotResolved : Set<Identifier> }
+
+let emptyGleanedInfo : GleanedInfo =
+    { typeOfExpression = Unconstrained
+      variablesConstrained = Map.empty
+      namesNotResolved = Set.empty }
+
+let makeGleanedInfo (type_ : TypeConstraints) variables : GleanedInfo =
+    { emptyGleanedInfo with
+        typeOfExpression = type_
+        variablesConstrained = variables }
+
+
+let getTypeInfo (gleaned : GleanedInfo) : TypeConstraints = gleaned.typeOfExpression
+let getConstrainedVars (gleaned : GleanedInfo) : VariablesConstraints = gleaned.variablesConstrained
+
+
+
+let convertTypeOrModuleIdentifierToIdentifier : TypeOrModuleIdentifier -> Identifier =
+    function
+    | QualifiedType ident -> ModuleSegmentsOrQualifiedTypeOrVariant ident
+    | UnqualType ident -> TypeNameOrVariantOrTopLevelModule ident
+
+// Not sure if this is useful yet
+//type BuiltInCompoundTypes =
+//    | List of MentionableType // or of it makes sense to have these subtypes on the compound type variants yet
+//    | Record of (UnqualValueIdentifier * MentionableType) nel
+//    | Tuple of TupleType
+
+
+
+
+//let typeOfPrimitiveLiteralValue : Cst.PrimitiveLiteralValue -> DefinitiveType =
+//    function
+//    | Cst.NumberPrimitive num ->
+//        match num with
+//        | Cst.FloatLiteral _ -> DtPrimitiveType Float
+//        | Cst.IntLiteral _ -> DtPrimitiveType Int
+//    | Cst.CharPrimitive _ -> DtPrimitiveType Char
+//    | Cst.StringPrimitive _ -> DtPrimitiveType String
+//    | Cst.UnitPrimitive _ -> DtUnitType
+//    | Cst.BoolPrimitive _ -> DtPrimitiveType Bool
+
+
+
+
+//type UnificationResult =
+//    Unified of InferredType
+//    | UnificationDependsOnGenerics of genericA : RigidGeneric * genericB : RigidGeneric
+//    |
+
+let rec unifier
+    (constraintA : InferredType)
+    (constraintB : InferredType)
+    : Result<InferredType, InferredType * InferredType> =
+    match constraintA, constraintB with
+    | Unit, Unit -> Ok Unit
+    | Generic genA, Generic genB ->
+        match genA, genB with
+        | Rigid r, Flexible _
+        | Flexible _, Rigid r -> Rigid r |> Generic |> Ok
+        | Rigid rA, Rigid rB ->
+            // @TODO: hmmm, need a way to capture here that it *could* be unified, but we just don't know yet until we know what the generic params are
+            Rigid rA |> Generic |> Ok
+        | Flexible a, Flexible _ -> Flexible a |> Generic |> Ok
+    | Primitive pA, Primitive pB ->
+        if pA = pB then
+            Primitive pA |> Ok
+        else
+            Error (constraintA, constraintB)
+    | Tuple listA, Tuple listB ->
+        let rec traverse a b =
+            match a, b with
+            | [], [] -> Ok ()
+            | headA :: restA, headB :: restB ->
+                match unifier headA headB with
+                | Ok _ -> traverse restA restB
+                | Error _ -> Error (constraintA, constraintB)
+            | [], _ :: _
+            | _ :: _, [] -> Error (constraintA, constraintB)
+
+        match traverse (TOM.toList listA) (TOM.toList listB) with
+        | Ok _ -> Tuple listA |> Ok
+        | Error err -> Error err
+
+
+
+
+
+
+//| Unit, Unit -> Ok Unit
+
+
+
+
+
+let combineSingleConstraints
+    (constraintA : SingleTypeConstraint)
+    (constraintB : SingleTypeConstraint)
+    : TypeConstraints =
+    if constraintA = constraintB then
+        SingleConstraint constraintA
+    else
+        MultipleConstraints (NEL.new_ constraintA [ constraintB ])
+
+
+
+let combineManySingleConstraints (constraints : SingleTypeConstraint nel) : TypeConstraints =
+    NEL.fold<_, _>
+        (fun typeConstraints singleConstraint ->
+            match typeConstraints with
+            | Unconstrained -> SingleConstraint singleConstraint
+            | SingleConstraint constr -> combineSingleConstraints singleConstraint constr
+            | MultipleConstraints list ->
+                singleConstraint :: NEL.toList list
+                |> Set.ofList
+                |> Set.toList
+                |> function
+                    | [] -> Unconstrained
+                    | [ onlyOne ] -> SingleConstraint onlyOne
+                    | head :: rest -> MultipleConstraints (NEL.new_ head rest))
+        Unconstrained
+        constraints
+
+
+
+let combineTypeConstraints (constraintA : TypeConstraints) (constraintB : TypeConstraints) : TypeConstraints =
+    match constraintA, constraintB with
+    | Unconstrained, constraint_
+    | constraint_, Unconstrained -> constraint_
+
+    | SingleConstraint a, SingleConstraint b -> combineSingleConstraints a b
+
+    | SingleConstraint a, MultipleConstraints b
+    | MultipleConstraints b, SingleConstraint a -> combineManySingleConstraints (NEL.cons a b)
+
+    | MultipleConstraints a, MultipleConstraints b -> combineManySingleConstraints (NEL.append a b)
+
+
+let combineConstrainedVars (mapA : VariablesConstraints) (mapB : VariablesConstraints) : VariablesConstraints =
+    Map.map
+        (fun key value ->
+            match Map.tryFind key mapB with
+            | None -> value
+            | Some valueInB -> combineTypeConstraints value valueInB)
+        mapA
+
+let combineGleanedInfos (cavA : GleanedInfo) (cavB : GleanedInfo) : GleanedInfo =
+    { typeOfExpression = combineTypeConstraints cavA.typeOfExpression cavB.typeOfExpression
+      variablesConstrained = combineConstrainedVars cavA.variablesConstrained cavB.variablesConstrained
+      namesNotResolved = Set.union cavA.namesNotResolved cavB.namesNotResolved }
+
+
+
+
+//let gatherGleanedInfos gleanedA gleanedB :
+
+
+
+
+
+/// Get the generic names of the parameters for a type declaration
+let private getTypeParams typeDecl =
+    match typeDecl with
+    | Cst.Alias { specifiedTypeParams = params' } -> List.map (Cst.getNode >> RigidGeneric) params'
+    | Cst.Sum { specifiedTypeParams = params' } -> List.map (Cst.getNode >> RigidGeneric) params'
+
+
+let private makeSimpleConstraintFromMentionableType t =
+    //SingleTypeConstraint (t, IsExplicitShape)
+    SingleConstraint t
+
+
+let rec private getInferredTypeFromMentionableType (mentionableType : Cst.MentionableType) : InferredType =
+    match mentionableType with
+    | Cst.GenericTypeVar name -> Generic (Rigid (RigidGeneric name))
+    | Cst.UnitType -> Unit
+    | Cst.Tuple { types = types } ->
+        TOM.map
+            (Cst.getNode
+             >> getInferredTypeFromMentionableType
+             >> makeSimpleConstraintFromMentionableType)
+            types
+        |> Tuple
+    | Cst.Record { fields = fields } ->
+        fields
+        |> Map.mapKeyVal (fun fieldName type' ->
+            fieldName.node,
+            getInferredTypeFromMentionableType type'.node
+            |> makeSimpleConstraintFromMentionableType)
+        |> RecordExact
+    | Cst.ExtendedRecord { fields = fields } ->
+        // @TODO: need to actually figure out the semantics of what it means to have `{ a | otherFields : otherType }`, is a the exact same record as the whole thing? Is it all the fields *except* for `otherFields`? Need to clarify
+        fields
+        |> Map.mapKeyVal (fun fieldName type' ->
+            fieldName.node,
+            getInferredTypeFromMentionableType type'.node
+            |> makeSimpleConstraintFromMentionableType)
+        |> RecordWith
+    | Cst.ReferencedType (typeName, typeParams) ->
+        ReferencedType (
+            typeName.node,
+            List.map
+                (Cst.getNode
+                 >> getInferredTypeFromMentionableType
+                 >> makeSimpleConstraintFromMentionableType)
+                typeParams
+        )
+    | Cst.Arrow (fromType, toType) ->
+        Arrow (
+            fromType.node
+            |> getInferredTypeFromMentionableType
+            |> makeSimpleConstraintFromMentionableType,
+            toType
+            |> NEL.map (
+                Cst.getNode
+                >> getInferredTypeFromMentionableType
+                >> makeSimpleConstraintFromMentionableType
+            )
+        )
+    | Cst.Parensed { node = node } -> getInferredTypeFromMentionableType node
+
+
+
+//and getTypeConstraints (mentionableType : Cst.MentionableType) : InferredType =
+//    Concrete (t, IsExplicitShape) |> SingleConstraint
+
+
+#nowarn "40"
+
+
+
+
+
+
+
+
+
+let typeOfPrimitiveLiteralValue : Cst.PrimitiveLiteralValue -> InferredType =
+    function
+    | Cst.NumberPrimitive num ->
+        match num with
+        | Cst.FloatLiteral _ -> Primitive Float
+        | Cst.IntLiteral _ -> Primitive Int
+    | Cst.CharPrimitive _ -> Primitive Char
+    | Cst.StringPrimitive _ -> Primitive String
+    | Cst.UnitPrimitive _ -> Unit
+    | Cst.BoolPrimitive _ -> Primitive Bool
+
+
+
+let rec typeOfExpression : ResolvedNames -> Cst.Expression -> GleanedInfo =
+    fun _ _ -> failwithf "Not implemented yet!"
+
+
+/// @TODO: this should contain the logic to type check resolved named values
+and typeOfNamedValueIdentifier : ResolvedNames -> Identifier -> GleanedInfo =
+    fun resolvedNames ident ->
+        match ident with
+        | SingleValueIdentifier name ->
+            match ResolvedNames.tryFindValue name resolvedNames with
+            | Some (_, Value (_, expr)) -> typeOfExpression resolvedNames expr
+            | Some (_, Parameter _) -> makeGleanedInfo Unconstrained Map.empty
+            | None ->
+                { emptyGleanedInfo with
+                    typeOfExpression = Unconstrained
+                    namesNotResolved = Set.singleton (SingleValueIdentifier name) }
+
+        | TypeNameOrVariantOrTopLevelModule name ->
+            // I.e. it's a type constructor... I think
+
+            match ResolvedNames.tryFindTypeConstructor (UnqualType name) resolvedNames with
+            | Some (_, variantConstructor) ->
+                let paramsForVariant =
+                    variantConstructor.variantParams
+                    |> List.map (
+                        getInferredTypeFromMentionableType
+                        >> makeSimpleConstraintFromMentionableType
+                    )
+
+                let inferredType = ReferencedType (variantConstructor.typeName, paramsForVariant)
+
+                makeGleanedInfo (SingleConstraint inferredType) Map.empty
+
+            | None ->
+                { emptyGleanedInfo with
+                    typeOfExpression = Unconstrained
+                    namesNotResolved = Set.singleton (TypeNameOrVariantOrTopLevelModule name) }
+
+
+        | ModuleSegmentsOrQualifiedTypeOrVariant _ -> failwithf "Not implemented yet!"
+
+        | QualifiedPathValueIdentifier _ -> failwithf "Not implemented yet!"
+
+
+
+//and typeOfSingleValueExpression : ResolvedNames -> Cst.SingleValueExpression -> GleanedInfo =
+//    fun resolvedNames expr ->
+//        match expr with
+//        |
+
+
+
+
+
+and typeOfExplicitCompoundValue : ResolvedNames -> Cst.CompoundValues -> GleanedInfo =
+    fun namesInScope compoundValue ->
+
+        let rec listFolder items =
+            match items with
+            | [] -> emptyGleanedInfo
+            | head :: tail ->
+                let headConstraint = typeOfExpression namesInScope head
+
+                listFolder tail
+                |> combineGleanedInfos headConstraint
+
+        match compoundValue with
+        | Cst.List exprs -> exprs |> List.map Cst.getNode |> listFolder
+
+        | Cst.CompoundValues.Tuple list ->
+            list
+            |> TOM.map Cst.getNode
+            |> TOM.toList
+            |> listFolder
+
+        | Cst.CompoundValues.Record keyValList ->
+            let (keyAndValsConstraints, constrainedVars) =
+                keyValList
+                |> List.fold
+                    (fun (keyAndValsConstraints, vars) (key, value) ->
+                        let typeOfValue = typeOfExpression namesInScope value.node
+                        let newFieldAndValConstraint = (key.node, typeOfValue.typeOfExpression)
+
+                        let combinedVariables = combineConstrainedVars vars typeOfValue.variablesConstrained
+
+                        (newFieldAndValConstraint :: keyAndValsConstraints, combinedVariables))
+                    (List.empty, Map.empty)
+
+            let inferredType = keyAndValsConstraints |> Map.ofList |> RecordExact
+
+            makeGleanedInfo (SingleConstraint inferredType) constrainedVars
+
+        | Cst.CompoundValues.RecordExtension (recordToExtend, keyValList) ->
+            let (keyAndValsConstraints, constrainedVars) =
+                keyValList
+                |> NEL.toList
+                |> List.fold
+                    (fun (keyAndValsConstraints, vars) (key, value) ->
+                        let typeOfValue = typeOfExpression namesInScope value.node
+                        let newFieldAndValConstraint = (key.node, typeOfValue.typeOfExpression)
+
+                        let combinedVariables = combineConstrainedVars vars typeOfValue.variablesConstrained
+
+                        (newFieldAndValConstraint :: keyAndValsConstraints, combinedVariables))
+                    (List.empty, Map.empty)
+
+            let constraints = RecordWith (Map.ofList keyAndValsConstraints)
+
+            let thisType = SingleConstraint constraints
+
+            // Need to ensure that we're constraining the record being extended to be the same as the key/val constraints we've got here
+            Map.add (SingleValueIdentifier recordToExtend.node) thisType constrainedVars
+            |> makeGleanedInfo thisType
+
+
+/// @TODO: hmmmm, this guy kinda needs to be able to bubble up constraints upwards, onto the parameter as a whole, based on the shape of the destructuring that we do to the parameters.
+/// I think the way to do this is that each one of these guys needs to bubble up the sub-shapes inside of itself, and thereby informs the caller of this function what this specific assignment pattern is. Whether this function is called by a top level parameter or a destructured part of it doesn't matter, because the consequences of that will just be handled by whatever calls this function.
+let rec typeOfAssignmentPattern resolvedNames (assignmentPattern : Cst.AssignmentPattern) : GleanedInfo =
+    match assignmentPattern with
+    | Cst.Named _ -> makeGleanedInfo Unconstrained Map.empty
+    | Cst.Ignored -> makeGleanedInfo Unconstrained Map.empty
+    | Cst.Unit -> makeGleanedInfo (SingleConstraint Unit) Map.empty
+    | Cst.Aliased (pattern, alias) ->
+        let subType = typeOfAssignmentPattern resolvedNames pattern.node
+
+        { subType with
+            variablesConstrained =
+                Map.add (SingleValueIdentifier alias.node) subType.typeOfExpression subType.variablesConstrained }
+    | Cst.DestructuredPattern pattern -> typeOfDestructuredPattern resolvedNames pattern
+
+
+and typeOfDestructuredPattern (resolvedNames : ResolvedNames) (pattern : Cst.DestructuredPattern) : GleanedInfo =
+    match pattern with
+    | Cst.DestructuredRecord fieldNames ->
+        let justTheFieldNames = fieldNames |> NEL.map Cst.getNode
+
+        let varConstraints : VariablesConstraints =
+            justTheFieldNames
+            |> NEL.map (fun fieldName -> SingleValueIdentifier fieldName, Unconstrained)
+            |> NEL.toList
+            |> Map.ofSeq
+
+        let extendedRecordType =
+            justTheFieldNames
+            |> NEL.map (fun fieldName -> fieldName, Unconstrained)
+            |> NEL.toList
+            |> Map.ofSeq
+            |> RecordWith
+
+        makeGleanedInfo (SingleConstraint extendedRecordType) varConstraints
+
+    | Cst.DestructuredTuple items ->
+        let gleaneds =
+            TOM.map
+                (Cst.getNode
+                 >> typeOfAssignmentPattern resolvedNames)
+                items
+
+        let combinedVars =
+            gleaneds
+            |> TOM.map getConstrainedVars
+            |> TOM.fold<_, _> combineConstrainedVars Map.empty
+
+        let inferredType =
+            Tuple (TOM.map getTypeInfo gleaneds)
+            |> SingleConstraint
+
+        makeGleanedInfo inferredType combinedVars
+
+
+    | Cst.DestructuredCons items ->
+        let gleaneds =
+            TOM.map
+                (Cst.getNode
+                 >> typeOfAssignmentPattern resolvedNames)
+                items
+
+        let combinedVars =
+            gleaneds
+            |> TOM.map getConstrainedVars
+            |> TOM.fold<_, _> combineConstrainedVars Map.empty
+
+        let constraints =
+            TOM.map getTypeInfo gleaneds
+            |> TOM.fold<_, _> combineTypeConstraints Unconstrained
+
+        let inferredType = List constraints
+
+        makeGleanedInfo (SingleConstraint inferredType) combinedVars
+
+    | Cst.DestructuredTypeVariant (constructor, params_) ->
+        let resolvedConstructor =
+            ResolvedNames.tryFindTypeConstructor constructor.node resolvedNames
+            |> Option.map snd
+
+        match resolvedConstructor with
+        | Some constructor ->
+            // @TODO: need to ensure here that the number of assignment params from the variant constructor pattern matches that actual number of params in the variant constructor definition!
+            let typesOfParams =
+                params_
+                |> List.map (
+                    Cst.getNode
+                    >> typeOfAssignmentPattern resolvedNames
+                )
+
+            //let (_, typeOfConstructor) =
+            //    ResolvedNames.findTypeDeclaration constructor.typeName resolvedNames
+
+            { emptyGleanedInfo with
+                typeOfExpression = typeOfConstructor
+                variablesConstrained = [ constructor.typeName ] }
+        | None ->
+            { emptyGleanedInfo with
+                namesNotResolved =
+                    Set.singleton
+                    <| convertTypeOrModuleIdentifierToIdentifier constructor.node }
+
+//failwithf "Implement this!"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -150,14 +638,6 @@ type TypeState =
 
 
 
-
-//type TypeJudgment<'a> =
-//    //| NotTypedYet
-//    //| GenericWithName of ConcreteOrGenericVar<'a>
-//    | SpecificTypeConstraint of ConcreteOrGenericVar<'a>
-//    /// Value is declared to be of type, either in an annotation or a parameter of a typed function.
-//    /// If declared and inferred type constraints are different generics then that implies that those generics are actually not independent but need to be the same as each other.
-//    | Declared of ConcreteOrGenericVar<'a>
 
 
 type SimpleJudgment<'a> =
@@ -261,287 +741,3 @@ and ExtendedRecordType =
       fields : Map<UnqualValueIdentifier, DefinitiveType> }
 
 and Dt = DefinitiveType
-
-
-
-
-
-
-
-type VariablesConstraints = Map<UnqualValueIdentifier, TypeConstraints>
-
-
-/// Represents inferred type information for the expression, and also any constraints inferred on variables used in the expression.
-/// @TODO: This may also need a field for bubbling up which inner variables could not be unified, so as to notify the developer of a type error
-and GleanedInfo =
-    { typeOfExpression : TypeConstraints
-      /// These are the constraints that were deduced from variables used in the expression
-      variablesConstrained : VariablesConstraints
-
-      valueNamesNotResolved : UnqualValueIdentifier list
-      typeNamesNotResolved : UnqualTypeOrModuleIdentifier list
-
-     }
-
-let emptyGleanedInfo : GleanedInfo =
-    { typeOfExpression = Unconstrained
-      variablesConstrained = Map.empty
-      valueNamesNotResolved = List.empty
-      typeNamesNotResolved = List.empty }
-
-let makeGleanedInfo (type_ : TypeConstraints) variables : GleanedInfo =
-    { emptyGleanedInfo with
-        typeOfExpression = type_
-        variablesConstrained = variables }
-
-
-let getTypeInfo (gleaned : GleanedInfo) : TypeConstraints = gleaned.typeOfExpression
-let getConstrainedVars (gleaned : GleanedInfo) : VariablesConstraints = gleaned.variablesConstrained
-
-// Not sure if this is useful yet
-//type BuiltInCompoundTypes =
-//    | List of MentionableType // or of it makes sense to have these subtypes on the compound type variants yet
-//    | Record of (UnqualValueIdentifier * MentionableType) nel
-//    | Tuple of TupleType
-
-
-
-
-let typeOfPrimitiveLiteralValue : Cst.PrimitiveLiteralValue -> DefinitiveType =
-    function
-    | Cst.NumberPrimitive num ->
-        match num with
-        | Cst.FloatLiteral _ -> DtPrimitiveType Float
-        | Cst.IntLiteral _ -> DtPrimitiveType Int
-    | Cst.CharPrimitive _ -> DtPrimitiveType Char
-    | Cst.StringPrimitive _ -> DtPrimitiveType String
-    | Cst.UnitPrimitive _ -> DtUnitType
-    | Cst.BoolPrimitive _ -> DtPrimitiveType Bool
-
-
-
-
-let combineSingleConstraints
-    (constraintA : SingleTypeConstraint)
-    (constraintB : SingleTypeConstraint)
-    : TypeConstraints =
-    if constraintA = constraintB then
-        SingleConstraint constraintA
-    else
-        MultipleConstraints (NEL.new_ constraintA [ constraintB ])
-
-
-
-let combineManySingleConstraints (constraints : SingleTypeConstraint nel) : TypeConstraints =
-    NEL.fold<_, _>
-        (fun typeConstraints singleConstraint ->
-            match typeConstraints with
-            | Unconstrained -> SingleConstraint singleConstraint
-            | SingleConstraint constr -> combineSingleConstraints singleConstraint constr
-            | MultipleConstraints list ->
-                singleConstraint :: NEL.toList list
-                |> Set.ofList
-                |> Set.toList
-                |> function
-                    | [] -> Unconstrained
-                    | [ onlyOne ] -> SingleConstraint onlyOne
-                    | head :: rest -> MultipleConstraints (NEL.new_ head rest))
-        Unconstrained
-        constraints
-
-
-
-let combineTypeConstraints (constraintA : TypeConstraints) (constraintB : TypeConstraints) : TypeConstraints =
-    match constraintA, constraintB with
-    | Unconstrained, constraint_
-    | constraint_, Unconstrained -> constraint_
-
-    | SingleConstraint a, SingleConstraint b -> combineSingleConstraints a b
-
-    | SingleConstraint a, MultipleConstraints b
-    | MultipleConstraints b, SingleConstraint a -> combineManySingleConstraints (NEL.cons a b)
-
-    | MultipleConstraints a, MultipleConstraints b -> combineManySingleConstraints (NEL.append a b)
-
-
-let combineConstrainedVars (mapA : VariablesConstraints) (mapB : VariablesConstraints) : VariablesConstraints =
-    Map.map
-        (fun key value ->
-            match Map.tryFind key mapB with
-            | None -> value
-            | Some valueInB -> combineTypeConstraints value valueInB)
-        mapA
-
-let combineGleanedInfos (cavA : GleanedInfo) (cavB : GleanedInfo) : GleanedInfo =
-    { typeOfExpression = combineTypeConstraints cavA.typeOfExpression cavB.typeOfExpression
-      variablesConstrained = combineConstrainedVars cavA.variablesConstrained cavB.variablesConstrained
-
-      valueNamesNotResolved =
-          cavA.valueNamesNotResolved
-          @ cavB.valueNamesNotResolved
-          |> List.distinct
-
-      typeNamesNotResolved =
-          cavA.typeNamesNotResolved
-          @ cavB.typeNamesNotResolved
-          |> List.distinct }
-
-
-#nowarn "40"
-
-let rec typeOfExpression : NamesInScope -> Cst.Expression -> GleanedInfo =
-    fun _ _ -> failwithf "Not implemented yet!"
-
-
-/// @TODO: this should contain the logic to type check resolved named values
-and typeOfNamedValueIdentifier : NamesInScope -> UnqualValueIdentifier -> GleanedInfo =
-    fun _ _ -> failwithf "Not implemented yet!"
-
-
-and typeOfExplicitCompoundValue : NamesInScope -> Cst.CompoundValues -> GleanedInfo =
-    fun namesInScope compoundValue ->
-
-        let rec listFolder items =
-            match items with
-            | [] -> emptyGleanedInfo
-            | head :: tail ->
-                let headConstraint = typeOfExpression namesInScope head
-
-                combineGleanedInfos headConstraint (listFolder tail)
-
-        match compoundValue with
-        | Cst.List exprs -> exprs |> List.map Cst.getNode |> listFolder
-
-        | Cst.CompoundValues.Tuple (first, rest) ->
-            let firstConstraint = typeOfExpression namesInScope first.node
-
-            NEL.toList rest
-            |> List.map Cst.getNode
-            |> listFolder
-            |> combineGleanedInfos firstConstraint
-
-        | Cst.CompoundValues.Record keyValList ->
-
-            let (keyAndValsConstraints, constrainedVars) =
-                keyValList
-                |> List.fold
-                    (fun (keyAndValsConstraints, vars) (key, value) ->
-                        let typeOfValue = typeOfExpression namesInScope value.node
-                        let newFieldAndValConstraint = (key.node, typeOfValue.typeOfExpression)
-
-                        let combinedVariables = combineConstrainedVars vars typeOfValue.variablesConstrained
-
-                        (newFieldAndValConstraint :: keyAndValsConstraints, combinedVariables))
-                    (List.empty, Map.empty)
-
-            let inferredType = keyAndValsConstraints |> Map.ofList |> Record
-
-            let constraints =
-                Concrete (inferredType, IsExplicitShape)
-                |> SingleConstraint
-
-            makeGleanedInfo constraints constrainedVars
-
-        | Cst.CompoundValues.RecordExtension (recordToExtend, keyValList) ->
-
-            let (keyAndValsConstraints, constrainedVars) =
-                keyValList
-                |> NEL.toList
-                |> List.fold
-                    (fun (keyAndValsConstraints, vars) (key, value) ->
-                        let typeOfValue = typeOfExpression namesInScope value.node
-                        let newFieldAndValConstraint = (key.node, typeOfValue.typeOfExpression)
-
-                        let combinedVariables = combineConstrainedVars vars typeOfValue.variablesConstrained
-
-                        (newFieldAndValConstraint :: keyAndValsConstraints, combinedVariables))
-                    (List.empty, Map.empty)
-
-            //let extendedType =
-            //    SingleValueIdentifier recordToExtend.node
-            //    |> Cst.Identifier
-            //    |> Cst.SingleValueExpression
-            //    |> typeOfExpression namesInScope
-
-            let constraints =
-                ExtendedRecord (Some recordToExtend.node, Map.ofList keyAndValsConstraints)
-
-
-            let thisType = SingleConstraint (Concrete (constraints, IsExplicitShape))
-
-            // Need to ensure that we're constraining the record being extended to be the same as the key/val constraints we've got here
-            Map.add recordToExtend.node thisType constrainedVars
-            |> makeGleanedInfo thisType
-
-
-/// @TODO: hmmmm, this guy kinda needs to be able to bubble up constraints upwards, onto the parameter as a whole, based on the shape of the destructuring that we do to the parameters.
-/// I think the way to do this is that each one of these guys needs to bubble up the sub-shapes inside of itself, and thereby informs the caller of this function what this specific assignment pattern is. Whether this function is called by a top level parameter or a destructured part of it doesn't matter, because the consequences of that will just be handled by whatever calls this function.
-let rec typeOfAssignmentPattern (assignmentPattern : Cst.AssignmentPattern) : GleanedInfo =
-    match assignmentPattern with
-    | Cst.Named _ -> makeGleanedInfo Unconstrained Map.empty
-    | Cst.Ignored -> makeGleanedInfo Unconstrained Map.empty
-    | Cst.Unit -> makeGleanedInfo (SingleConstraint (Concrete (Unit, IsExplicitShape))) Map.empty
-    | Cst.Aliased (pattern, alias) ->
-        let subType = typeOfAssignmentPattern pattern.node
-
-        { subType with variablesConstrained = Map.add alias.node subType.typeOfExpression subType.variablesConstrained }
-    | Cst.DestructuredPattern pattern -> typeOfDestructuredPattern pattern
-
-
-and typeOfDestructuredPattern (destructuredPattern : Cst.DestructuredPattern) : GleanedInfo =
-    match destructuredPattern with
-    | Cst.DestructuredRecord fieldNames ->
-        let justTheFieldNames = fieldNames |> NEL.map Cst.getNode
-
-        let varConstraints : VariablesConstraints =
-            justTheFieldNames
-            |> NEL.map (fun fieldName -> fieldName, Unconstrained)
-            |> NEL.toList
-            |> Map.ofSeq
-
-        let extendedRecordType =
-            justTheFieldNames
-            |> NEL.map (fun fieldName -> fieldName, Unconstrained)
-            |> NEL.toList
-            |> Map.ofSeq
-            |> fun map -> ExtendedRecord (None, map)
-
-        let inferredType =
-            Concrete (extendedRecordType, DestructuredPattern)
-            |> SingleConstraint
-
-        makeGleanedInfo inferredType varConstraints
-
-    | Cst.DestructuredTuple items ->
-        let gleaneds = TOM.map (Cst.getNode >> typeOfAssignmentPattern) items
-
-        let combinedVars =
-            gleaneds
-            |> TOM.map getConstrainedVars
-            |> TOM.fold<_, _> combineConstrainedVars Map.empty
-
-        let inferredType =
-            Tuple (TOM.map getTypeInfo gleaneds)
-            |> fun tupleType -> Concrete (tupleType, DestructuredPattern)
-            |> SingleConstraint
-
-        makeGleanedInfo inferredType combinedVars
-
-
-    | Cst.DestructuredCons items ->
-        let gleaneds = TOM.map (Cst.getNode >> typeOfAssignmentPattern) items
-
-        let combinedVars =
-            gleaneds
-            |> TOM.map getConstrainedVars
-            |> TOM.fold<_, _> combineConstrainedVars Map.empty
-
-        let constraints =
-            TOM.map getTypeInfo gleaneds
-            |> TOM.fold<_, _> combineTypeConstraints Unconstrained
-
-        let inferredType = Concrete (List constraints, DestructuredPattern)
-
-        makeGleanedInfo (SingleConstraint inferredType) combinedVars
-
-    | Cst.DestructuredTypeVariant (constructor, params_) -> failwithf "Implement this!"

@@ -71,9 +71,9 @@ type MentionableType =
 
 
 
+/// Because there need to be at least two members for it to be a tuple type. Otherwise it's just a parensed expression.
 and TupleType =
-    { /// Because there need to be at least two members for it to be a tuple type. Otherwise it's just a parensed expression.
-      types : CstNode<MentionableType> * NEL<CstNode<MentionableType>> }
+    { types : CstNode<MentionableType> tom }
 
 
 and RecordType =
@@ -144,7 +144,7 @@ type PrimitiveLiteralValue =
 
 type CompoundValues =
     | List of CstNode<Expression> list
-    | Tuple of CstNode<Expression> * NEL<CstNode<Expression>> // Because a tuple has at least two members
+    | Tuple of CstNode<Expression> tom
     | Record of (CstNode<UnqualValueIdentifier> * CstNode<Expression>) list
     | RecordExtension of
         recordToExtend : CstNode<UnqualValueIdentifier> *

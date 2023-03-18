@@ -15,6 +15,11 @@ type SingleOrDuplicate<'a> =
         | Duplicate tom -> Duplicate (TOM.map f tom)
 
 
+    static member getFirst (sod : SingleOrDuplicate<'a>) =
+        match sod with
+        | Single a -> a
+        | Duplicate tom -> TOM.head tom
+
 /// Type that describes the path to where a given name is declared.
 /// @TODO: hmmm how do we capture the fact that a name is the nth parameter of a function...? Maybe we don't need to actually? Because the name itself references it?
 type PathToDestructuredName =
@@ -25,44 +30,87 @@ type PathToDestructuredName =
     | InverseTypeVariant of constructor : TypeOrModuleIdentifier * index : uint * child : PathToDestructuredName
 
 
-///// Map that stores just parameter references.
-//type ResolvedParams = Map<UnqualValueIdentifier, SingleOrDuplicate<TokenWithSource list * PathToDestructuredName>>
-
-
-
-//type ExpressionOrTypeRef =
-//    | Expr of assignmentPattern : PathToDestructuredName * assignedExpression : CstNode<Expression>
-
 
 
 
 module ResolvedNames =
-    ///// A reference to either a real concrete expression or an assignment parameter
-    ///// This should really also let us store the referenced value's declared type
-    //type NameReference =
-    //    /// Reference a real expression
-    //    | ExpressionRef of assignmentPattern : PathToDestructuredName * assignedExpression : CstNode<Expression>
-    //    /// If this assignment pattern is an alias for a greater deconstructed parameter expression, or just a function or match expression case parameter
-    //    | Parameter of subPattern : PathToDestructuredName
-    //    | TypeRef of TypeDeclaration
-    //    /// The type name should always be in the same resolved names map
-    //    | VariantConstructor of typeName : UnqualTypeOrModuleIdentifier * variantParams : MentionableType list
 
-    ///// Map that stores references to either parameters or real expressions.
-    ///// The tokens list is about where the *name* is in the source.
-    //type ResolvedNames = Map<UnqualIdentifier, SingleOrDuplicate<TokenWithSource list * NameReference>>
+    /// Special token returned from type variant constructor getter that lets you get the type declaration in one go, because if you can see the constructors you should for sure be able to see the type declaration, and so shouldn't have to worry about the possibility of not finding it. And this little helper type lets us circumvent the try getter approach if we have the thing itself
+    type AssuredTypeDeclaration<'a> =
+        private
+        | AssuredTypeDeclaration of 'a
+
+        static member getValue : AssuredTypeDeclaration<'a> -> 'a =
+            function
+            | AssuredTypeDeclaration type' -> type'
+
+    type VariantConstructor =
+        { typeName : TypeOrModuleIdentifier
+          typeDeclaration : NewTypeDeclaration
+          variantParams : MentionableType list }
+
+    type ValueOrParameter =
+        | Value of assignmentPattern : PathToDestructuredName * assignedExpression : Expression
+        /// If this assignment pattern is an alias for a greater deconstructed parameter expression, or just a function or match expression case parameter
+        | Parameter of subPattern : PathToDestructuredName
 
 
 
-    type UppercaseReference =
-        /// A type that has been declared. Could be an alias or a new type.
-        | TypeRef of TypeDeclaration
-        /// A type constructor.
-        /// The type name should always be in the same resolved names map
-        | VariantConstructor of typeName : TypeOrModuleIdentifier * variantParams : MentionableType list
+    type TypeDeclarations = Map<TypeOrModuleIdentifier, SingleOrDuplicate<TokenWithSource list * TypeDeclaration>>
 
-    /// For types and type constructors
-    type ResolvedUppercaseds = Map<TypeOrModuleIdentifier, SingleOrDuplicate<TokenWithSource list * UppercaseReference>>
+    type TypeConstructors = Map<TypeOrModuleIdentifier, SingleOrDuplicate<TokenWithSource list * VariantConstructor>>
+
+    type ValueDeclarations = Map<UnqualValueIdentifier, SingleOrDuplicate<TokenWithSource list * ValueOrParameter>>
+
+    type ValueTypeDeclarations = Map<UnqualValueIdentifier, SingleOrDuplicate<TokenWithSource list * MentionableType>>
+
+
+
+    type ResolvedNames =
+        { typeDeclarations : TypeDeclarations
+          typeConstructors : TypeConstructors
+          valueDeclarations : ValueDeclarations
+          valueTypeDeclarations : ValueTypeDeclarations }
+
+
+    let getTypeDeclarations names : TypeDeclarations = names.typeDeclarations
+    let getTypeConstructors names : TypeConstructors = names.typeConstructors
+    let getValueDeclarations names : ValueDeclarations = names.valueDeclarations
+    let getValueTypeDeclarations names : ValueTypeDeclarations = names.valueTypeDeclarations
+
+
+    //let findTypeDeclaration
+    //    (AssuredTypeDeclaration typeName : AssuredTypeDeclaration<TypeOrModuleIdentifier>)
+    //    { typeDeclarations = typeDeclarations }
+    //    =
+    //    Map.find typeName typeDeclarations
+    //    |> SingleOrDuplicate.getFirst
+
+    let tryFindTypeDeclaration name { typeDeclarations = typeDeclarations } =
+        Map.tryFind name typeDeclarations
+        |> Option.map SingleOrDuplicate.getFirst
+
+    let tryFindTypeConstructor name { typeConstructors = typeConstructors } =
+        Map.tryFind name typeConstructors
+        |> Option.map SingleOrDuplicate.getFirst
+
+    let tryFindValue name ({ valueDeclarations = values } : ResolvedNames) =
+        Map.tryFind name values
+        |> Option.map SingleOrDuplicate.getFirst
+
+    let tryFindValueTypeDeclarations name { valueTypeDeclarations = valueTypeDeclarations } =
+        Map.tryFind name valueTypeDeclarations
+        |> Option.map SingleOrDuplicate.getFirst
+
+
+
+
+
+    let empty =
+        { typeDeclarations = Map.empty
+          typeConstructors = Map.empty
+          valueDeclarations = Map.empty
+          valueTypeDeclarations = Map.empty }
 
 
 
@@ -91,48 +139,6 @@ module ResolvedNames =
 
 
 
-    /// Contains either the body of a value, a type declaration for a value, or both
-    type ValueAndOrTypeDeclaration = EitherOrBoth<CstNode<MentionableType>, CstNode<Expression>>
-
-
-    type LowercaseReference =
-        /// Reference a real expression.
-        /// The referenced expression is the same for all the destructured names, but each of the destructured patterns has enough information to figure out a) what type the underlying value needs to have, and b) where in the structure its own assigned value needs to be.
-        /// There are for sure more efficient ways of doing this than copying the same expression several times, but let's just do it like this for now.
-        | Value of assignmentPattern : PathToDestructuredName * assignedExpression : ValueAndOrTypeDeclaration
-        /// If this assignment pattern is an alias for a greater deconstructed parameter expression, or just a function or match expression case parameter
-        | Parameter of subPattern : PathToDestructuredName
-
-    /// For simple named values and functions
-    type ResolvedLowercaseds = Map<UnqualValueIdentifier, SingleOrDuplicate<TokenWithSource list * LowercaseReference>>
-
-
-    type ResolvedNames =
-        { uppercaseds : ResolvedUppercaseds
-          lowercaseds : ResolvedLowercaseds }
-
-
-    let tryFindUppercased name { uppercaseds = uppercaseds } = Map.tryFind name uppercaseds
-
-
-    let tryFindLowercased name { lowercaseds = lowercaseds } = Map.tryFind name lowercaseds
-
-
-    let empty =
-        { uppercaseds = Map.empty
-          lowercaseds = Map.empty }
-
-    let getLowercaseds { lowercaseds = lowercaseds } = lowercaseds
-    let getUppercaseds { uppercaseds = uppercaseds } = uppercaseds
-
-
-    //let mapLowercaseds f names =
-    //    { names with
-    //        lowercaseds =
-    //            Map.map
-    //                (fun key -> SingleOrDuplicate.map (fun (tokens, reference) -> tokens, f key reference))
-    //                names.lowercaseds }
-
 
     /// This should be threaded back up to feed back on unresolved names errors
     /// Hmmm, I'm not entirely sure whether  this should be passed up, or whether we should resolve all the names at every scope level first, and then only feed things back up if a name can't be resolved.
@@ -140,187 +146,92 @@ module ResolvedNames =
 
 
 
-    ///// Adds a new param to a `ResolvedParams` map.
-    //let addNewParamReference
-    //    (ident : CstNode<UnqualValueIdentifier>)
-    //    (path : PathToDestructuredName)
-    //    (names : ResolvedNames)
-    //    : ResolvedNames =
-    //    let newLowerCaseds =
-    //        Map.change
-    //            (ident.node)
-    //            (fun oldValueOpt ->
-    //                let newValueAndPath = ident.source, Parameter path
 
-    //                match oldValueOpt with
-    //                | Some (Single oldRef) -> Some (Duplicate <| TOM.make newValueAndPath oldRef)
-    //                | Some (Duplicate refList) -> Some (Duplicate <| TOM.cons newValueAndPath refList)
-    //                | None -> Some (Single newValueAndPath))
-    //            names.lowercaseds
+    let addNewReference
+        (ident : CstNode<'name>)
+        (value : 'v)
+        (map : Map<'name, SingleOrDuplicate<TokenWithSource list * 'v>>)
+        =
+        map
+        |> Map.change (ident.node) (fun oldValueOpt ->
+            let newValueAndPath = ident.source, value
 
-    //    { names with lowercaseds = newLowerCaseds }
-
-
-    let addNewLowercasedReference
-        (ident : CstNode<UnqualValueIdentifier>)
-        (lowercaseRef : LowercaseReference)
-        (names : ResolvedNames)
-        : ResolvedNames =
-        let newLowerCaseds =
-            names.lowercaseds
-            |> Map.change ident.node (fun oldValueOpt ->
-                let newValueAndPath = ident.source, lowercaseRef
-
-                match oldValueOpt with
-                | Some (Single ((tokens, ref) as oldRef)) ->
-                    let duplicate = Some (Duplicate <| TOM.make newValueAndPath oldRef)
-
-                    // Logic for allowing the adding of type declarations to a value declaration of the same name - and vice versa - without overwriting anything
-                    match ref, lowercaseRef with
-                    | Value (pattern, expr), Value (_, newRef) ->
-                        match expr, newRef with
-                        | (OnlyLeft oldType, OnlyRight newVal) ->
-                            Some (Single (tokens, Value (pattern, Both (oldType, newVal))))
-
-                        | (OnlyRight oldVal, OnlyLeft newType) ->
-                            Some (Single (tokens, Value (pattern, Both (newType, oldVal))))
-
-                        | _ -> duplicate
-
-                    | _ -> duplicate
-
-
-                | Some (Duplicate refList) ->
-                    // We kind of just don't even try to merge the value and type declaration if there are already duplicates, but really we should do that here
-                    Some (Duplicate <| TOM.cons newValueAndPath refList)
-                | None -> Some (Single newValueAndPath))
-
-        { names with lowercaseds = newLowerCaseds }
-
-
-    //let addNewParamReference ident path names =
-    //    addNewLowercasedReference ident (Parameter path) names
+            match oldValueOpt with
+            | Some (Single oldRef) -> Some (Duplicate <| TOM.make newValueAndPath oldRef)
+            | Some (Duplicate refList) -> Some (Duplicate <| TOM.cons newValueAndPath refList)
+            | None -> Some (Single newValueAndPath))
 
 
 
-    let addNewUppercasedReference
-        (ident : CstNode<TypeOrModuleIdentifier>)
-        (uppercaseRef : UppercaseReference)
-        (names : ResolvedNames)
-        : ResolvedNames =
-        let newUpperCaseds =
+
+    let addNewTypeDeclaration name value names =
+        { names with typeDeclarations = addNewReference name value names.typeDeclarations }
+
+    let addTypeConstructor variantName variantParams typeName typeDeclaration names =
+        { names with
+            typeConstructors =
+                addNewReference
+                    variantName
+                    { typeName = typeName
+                      typeDeclaration = typeDeclaration
+                      variantParams = variantParams }
+                    names.typeConstructors }
+
+    let addValue name value names : ResolvedNames =
+        { names with valueDeclarations = addNewReference name value names.valueDeclarations }
+
+    let addValueTypeDeclaration name value names =
+        { names with valueTypeDeclarations = addNewReference name value names.valueTypeDeclarations }
+
+
+
+
+    let combineReferenceMaps (mapList : Map<'a, SingleOrDuplicate<'b>> seq) : Map<'a, SingleOrDuplicate<'b>> =
+        let mapFolder
+            (acc : Map<'a, SingleOrDuplicate<'b>>)
+            (key : 'a)
+            (value : SingleOrDuplicate<'b>)
+            : Map<'a, SingleOrDuplicate<'b>> =
             Map.change
-                (ident.node)
+                key
                 (fun oldValueOpt ->
-                    let newValueAndPath = ident.source, uppercaseRef
-
                     match oldValueOpt with
-                    | Some (Single oldRef) -> Some (Duplicate <| TOM.make newValueAndPath oldRef)
-                    | Some (Duplicate refList) -> Some (Duplicate <| TOM.cons newValueAndPath refList)
-                    | None -> Some (Single newValueAndPath))
-                names.uppercaseds
+                    | Some oldVal ->
+                        match oldVal, value with
+                        | Single oldRef, Single newRef -> Some (Duplicate <| TOM.make newRef oldRef)
 
-        { names with uppercaseds = newUpperCaseds }
+                        | Single singleRef, Duplicate duplRefs
+                        | Duplicate duplRefs, Single singleRef -> Some (Duplicate <| TOM.cons singleRef duplRefs)
 
+                        | Duplicate a, Duplicate b -> Some (Duplicate <| TOM.append a b)
 
+                    | None -> Some value)
+                acc
 
-///// Adds a new value to a `ResolvedValueNames` map.
-//let addNewValueReference
-//    (ident : CstNode<UnqualIdentifier>)
-//    (newValue : NameReference)
-//    (names : ResolvedNames)
-//    : ResolvedNames =
-//    Map.change
-//        ident.node
-//        (fun oldValueOpt ->
-//            let newValueAndSource = ident.source, newValue
-
-//            match oldValueOpt with
-//            | Some (Single oldRef) -> Some (Duplicate <| TOM.make newValueAndSource oldRef)
-//            | Some (Duplicate refList) -> Some (Duplicate <| TOM.cons newValueAndSource refList)
-//            | None -> Some (Single newValueAndSource))
-//        names
+        Seq.fold (fun acc thisMap -> Map.fold mapFolder thisMap acc) Map.empty mapList
 
 
-//let addNewNameReference
-//    (ident : CstNode<UnqualIdentifier>)
-//    (newValue : NameReference)
-//    (names : ResolvedNames)
-//    : ResolvedNames =
-//    Map.change
-//        ident.node
-//        (fun oldValueOpt ->
-//            let newValueAndSource = ident.source, newValue
 
-//            match oldValueOpt with
-//            | Some (Single oldRef) -> Some (Duplicate <| TOM.make newValueAndSource oldRef)
-//            | Some (Duplicate refList) -> Some (Duplicate <| TOM.cons newValueAndSource refList)
-//    | None -> Some (Single newValueAndSource))
-//names
+
+    let combineResolvedNamesMaps (mapList : ResolvedNames seq) =
+        let typeDeclarations = Seq.map getTypeDeclarations mapList
+        let typeConstructors = Seq.map getTypeConstructors mapList
+        let values = Seq.map getValueDeclarations mapList
+        let valueTypeDeclarations = Seq.map getValueTypeDeclarations mapList
+
+
+        { typeDeclarations = combineReferenceMaps typeDeclarations
+          typeConstructors = combineReferenceMaps typeConstructors
+          valueDeclarations = combineReferenceMaps values
+          valueTypeDeclarations = combineReferenceMaps valueTypeDeclarations }
+
+
+
 
 
 
 
 open ResolvedNames
-
-(*
-The head is always the closest scope, so pop it off when we leave a given scope
-*)
-
-type NamesInScope = ResolvedNames list
-
-
-///// Adds a new param to a `ResolvedParams` map.
-//let addNewParamsReference
-//    (ident : CstNode<UnqualValueIdentifier>)
-//    (path : PathToDestructuredName)
-//    (map : ResolvedParams)
-//    : ResolvedParams =
-//    Map.change
-//        ident.node
-//        (fun oldValueOpt ->
-//            let newValueAndPath = ident.source, path
-
-//            match oldValueOpt with
-//            | Some (Single oldRef) -> Some (Duplicate <| TOM.make newValueAndPath oldRef)
-//            | Some (Duplicate refList) -> Some (Duplicate <| TOM.cons newValueAndPath refList)
-//            | None -> Some (Single newValueAndPath))
-//        map
-
-
-
-
-///// @TODO: Hmm I'm not actually sure that we ever should be combining reference maps... actually maybe with the new approach where we're only getting the map one layer deep at a time then yeah maybe?
-//let combineReferenceMaps (mapList : Map<'a, SingleOrDuplicate<'b>> seq) : Map<'a, SingleOrDuplicate<'b>> =
-//    let mapFolder
-//        (acc : Map<'a, SingleOrDuplicate<'b>>)
-//        (key : 'a)
-//        (value : SingleOrDuplicate<'b>)
-//        : Map<'a, SingleOrDuplicate<'b>> =
-//        Map.change
-//            key
-//            (fun oldValueOpt ->
-//                match oldValueOpt with
-//                | Some oldVal ->
-//                    match oldVal, value with
-//                    | Single oldRef, Single newRef -> Some (Duplicate <| TOM.make newRef oldRef)
-
-//                    | Single singleRef, Duplicate duplRefs
-//                    | Duplicate duplRefs, Single singleRef -> Some (Duplicate <| TOM.cons singleRef duplRefs)
-
-//                    | Duplicate a, Duplicate b -> Some (Duplicate <| TOM.append a b)
-
-//                | None -> Some value)
-//            acc
-
-//    //let listFolder
-//    //    (acc : Map<'a, SingleOrDuplicate<'b>>)
-//    //    (thisMap : Map<'a, SingleOrDuplicate<'b>>)
-//    //    : Map<'a, SingleOrDuplicate<'b>> =
-//    //    Map.fold mapFolder thisMap acc
-
-//    //Seq.fold listFolder Map.empty mapList
-//    Seq.fold (fun acc thisMap -> Map.fold mapFolder thisMap acc) Map.empty mapList
 
 
 let combineReferenceMaps (mapList : Map<'a, SingleOrDuplicate<'b>> seq) : Map<'a, SingleOrDuplicate<'b>> =
@@ -348,53 +259,7 @@ let combineReferenceMaps (mapList : Map<'a, SingleOrDuplicate<'b>> seq) : Map<'a
     Seq.fold (fun acc thisMap -> Map.fold mapFolder thisMap acc) Map.empty mapList
 
 
-let combineResolvedNamesMaps (mapList : ResolvedNames seq) =
-    let mergeLowercasedMaps
-        (acc : ResolvedLowercaseds)
-        key
-        (value : SingleOrDuplicate<TokenWithSource list * LowercaseReference>)
-        : ResolvedLowercaseds =
-        Map.change
-            key
-            (fun oldValueOpt ->
-                match oldValueOpt with
-                | Some oldVal ->
-                    match oldVal, value with
-                    | Single ((tokens, oldLowercaseRef) as oldRef), Single ((_, newLowercaseRef) as newRef) ->
-                        let duplicate = Some (Duplicate <| TOM.make newRef oldRef)
 
-                        // Logic for allowing the adding of type declarations to a value declaration of the same name - and vice versa - without overwriting anything
-                        match oldLowercaseRef, newLowercaseRef with
-                        | Value (pattern, expr), Value (_, newRef') ->
-                            match expr, newRef' with
-                            | (OnlyLeft oldType, OnlyRight newVal) ->
-                                Some (Single (tokens, Value (pattern, Both (oldType, newVal))))
-
-                            | (OnlyRight oldVal, OnlyLeft newType) ->
-                                Some (Single (tokens, Value (pattern, Both (newType, oldVal))))
-
-                            | _ -> duplicate
-
-                        | _ -> duplicate
-
-                    // We kind of just don't even try to merge the value and type declaration if there are already duplicates, but really we should do that here
-
-                    | Single singleRef, Duplicate duplRefs
-                    | Duplicate duplRefs, Single singleRef -> Some (Duplicate <| TOM.cons singleRef duplRefs)
-
-                    | Duplicate a, Duplicate b -> Some (Duplicate <| TOM.append a b)
-
-                | None -> Some value)
-            acc
-
-    //Seq.fold (fun acc thisMap -> Map.fold mapFolder thisMap acc) Map.empty mapList
-    let uppercaseds = Seq.map getUppercaseds mapList
-    let lowercaseds = Seq.map getLowercaseds mapList
-
-    { uppercaseds = combineReferenceMaps uppercaseds
-      lowercaseds = Seq.fold (fun acc thisMap -> Map.fold mergeLowercasedMaps thisMap acc) Map.empty lowercaseds }
-
-//Seq.fold (fun acc thisMap -> Map.fold mapFolder thisMap acc) Map.empty mapList
 
 
 
@@ -402,7 +267,7 @@ let combineResolvedNamesMaps (mapList : ResolvedNames seq) =
 /// This is for straight converting a params map to a values map, but _not_ suitable for converting a
 let convertParamsToValuesMap (resolvedParams : ResolvedParams) : ResolvedNames =
     { ResolvedNames.empty with
-        lowercaseds =
+        valueDeclarations =
             Map.mapKeyVal
                 (fun key tokensAndValues ->
                     key,
@@ -487,11 +352,7 @@ and resolveDestructuredParam (pattern : CstNode<DestructuredPattern>) : Resolved
 
 
 let resolveFuncParams ({ params_ = params_ } : FunctionValue) : ResolvedNames =
-    //NEL.map resolveParamAssignment params_
-    //|> NEL.toList
-    //|> combineReferenceMaps
-
-    let lowercaseds : ResolvedLowercaseds =
+    let values =
         params_
         |> NEL.map (
             resolveParamAssignment
@@ -502,36 +363,25 @@ let resolveFuncParams ({ params_ = params_ } : FunctionValue) : ResolvedNames =
         |> NEL.toList
         |> combineReferenceMaps
 
-    { ResolvedNames.empty with lowercaseds = lowercaseds }
+    { ResolvedNames.empty with valueDeclarations = values }
 
 
 let resolveLetBinding
     ({ bindPattern = bindPattern
        value = value } : LetBinding)
     : ResolvedNames =
-    let lowercaseds : ResolvedLowercaseds =
+    let values =
         resolveParamAssignment bindPattern
         |> Map.map (fun _ tokensAndValues ->
             tokensAndValues
             |> SingleOrDuplicate.map (fun (tokens, path) ->
-                tokens, Value (assignmentPattern = path, assignedExpression = OnlyRight value)))
+                tokens, Value (assignmentPattern = path, assignedExpression = value.node)))
 
-    { ResolvedNames.empty with lowercaseds = lowercaseds }
-
-
-let private resolveVariantConstructor
-    (typeName : TypeOrModuleIdentifier)
-    (variantCase : VariantCase)
-    (names : ResolvedNames)
-    : ResolvedNames =
-    addNewUppercasedReference
-        (mapNode UnqualType variantCase.label)
-        (VariantConstructor (typeName, List.map getNode variantCase.contents))
-        names
+    { ResolvedNames.empty with valueDeclarations = values }
 
 
 let resolveTypeConstructors
-    (name : CstNode<UnqualTypeOrModuleIdentifier>)
+    (typeName : CstNode<UnqualTypeOrModuleIdentifier>)
     (typeDeclaration : TypeDeclaration)
     : ResolvedNames =
 
@@ -539,13 +389,19 @@ let resolveTypeConstructors
     | Alias aliasDecl ->
         // We're not accounting for record alias constructors just yet
         ResolvedNames.empty
-        |> addNewUppercasedReference (mapNode UnqualType name) (TypeRef (Alias aliasDecl))
+        |> addNewTypeDeclaration (mapNode UnqualType typeName) (Alias aliasDecl)
 
     | Sum newTypeDecl ->
         newTypeDecl.variants
         |> NEL.fold<_, _>
-            (fun map variant -> resolveVariantConstructor (UnqualType name.node) variant.node map)
-            (addNewUppercasedReference (mapNode UnqualType name) (TypeRef (Sum newTypeDecl)) ResolvedNames.empty)
+            (fun map variant ->
+                addTypeConstructor
+                    (mapNode UnqualType variant.node.label)
+                    (variant.node.contents |> List.map getNode)
+                    (UnqualType typeName.node)
+                    newTypeDecl
+                    map)
+            (addNewTypeDeclaration (mapNode UnqualType typeName) (Sum newTypeDecl) ResolvedNames.empty)
 
 
 
@@ -588,11 +444,11 @@ let resolveModuleBindings (ylModule : YlModule) =
         | ValueTypeAnnotation { valueName = valueName
                                 annotatedType = annotatedType } ->
             ResolvedNames.empty
-            |> addNewLowercasedReference valueName (Value (SimpleName, OnlyLeft annotatedType))
+            |> addValueTypeDeclaration valueName annotatedType.node
 
         | ValueDeclaration { valueName = valueName; value = value } ->
             ResolvedNames.empty
-            |> addNewLowercasedReference valueName (Value (SimpleName, OnlyRight value))
+            |> addValue valueName (Value (SimpleName, value.node))
 
     ylModule.declarations
     |> List.map resolveSingleDeclaration

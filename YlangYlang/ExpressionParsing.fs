@@ -731,7 +731,7 @@ and parseTupleOrParensedExpr =
         match more with
         | [] -> ParensedExpression <| getNode first
         | head :: rest ->
-            Tuple (first, NEL.new_ head rest)
+            Tuple (TOM.new_ first head rest)
             |> Compound
             |> ExplicitValue
             |> SingleValueExpression)
@@ -972,7 +972,7 @@ and parseTupleTypeOrParensed =
     succeed (fun first others ->
         match others with
         | [] -> MentionableType.Parensed first
-        | head :: rest -> MentionableType.Tuple { types = first, NEL.new_ head rest })
+        | head :: rest -> MentionableType.Tuple { types = TOM.new_ first head rest })
     |. symbol ParensOpen
     |. spaces
     |= parseMentionableType
