@@ -260,6 +260,11 @@ module Map =
             Map.empty
             map
 
+    /// Merge two maps. If there are duplicates they will be overridden
+    let merge map1 map2 =
+        map1
+        |> Map.fold (fun mapToAddTo key value -> Map.add key value mapToAddTo) map2
+
 type Either<'a, 'b> =
     | Left of 'a
     | Right of 'b

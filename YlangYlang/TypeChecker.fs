@@ -74,21 +74,19 @@ type TypeConstraintReason =
     | IsInHomogenousType
 
 
-type SingleTypeConstraint = InferredType
+type SingleTypeConstraint = InferredType<TypeConstraints>
 
 /// Describes a single type constraint due to how a value is used
 and TypeConstraints =
     /// No constraints whatsoever, this is a param that isn't used at all
     | Unconstrained
-    | SingleConstraint of constraint_ : SingleTypeConstraint
+    | SingleConstraint of SingleTypeConstraint
     /// @TODO: might be good to make this more specific that it can relate to:
     /// - multiple generics, which therefore means that generic params `a` and `b` have to match, and any occurrence of `b` is effectively an occurrence of `a`
     /// - that generic `a` is actually a concrete type `A`, so any `a` is actually concrete type `A`
     /// - that it has multiple constraints of being generics, "type classes", and/or a concrete type
     /// Anything else would mean multiple concrete constraints, which are impossible
-    | MultipleConstraints of SingleTypeConstraint nel
-
-
+    | MultipleConstraints of SingleTypeConstraint tom
 
 
 and BuiltInPrimitiveTypes =
@@ -99,30 +97,106 @@ and BuiltInPrimitiveTypes =
     | Bool
 
 
-/// Represents an inferred type, whether full or partial
-and InferredType =
+/// Represents an inferred type, whether full or partial.
+/// It's a generic cos it can be used for multiple different stages of the type checking/inference process
+and InferredType<'TypeInfo> =
+    | Unit
+    | Primitive of BuiltInPrimitiveTypes
     /// I wonder if it makes sense to have generics as their own inferred type variant, instead of just having generically constrained params just be referenced via a constraint on one or both of the linked things... I think this makes sense here so I'll keep it here for now and we'll see how we go
     | Generic of GenericParam
 
-    | Unit
-    | Primitive of BuiltInPrimitiveTypes
-    | Tuple of TypeConstraints tom
-    | List of TypeConstraints
+    | Tuple of 'TypeInfo tom
+    | List of 'TypeInfo
     /// This describes a record with potentially more unknown fields, e.g. when a record is destructured, or extended, or some of its records accessed, whether directly by dot suffix, or with a dot getter function
     /// @TODO: this might not catch a possible clash, which is having the same name declared multiple times with a different type for each
     | RecordWith of
         //extendedRecord : UnqualValueIdentifier option *
         /// The actual fields accessed or tried to destructure
-        referencedFields : Map<UnqualValueIdentifier, TypeConstraints>
+        referencedFields : Map<UnqualValueIdentifier, 'TypeInfo>
 
     /// This denotes an exact record, e.g. as an explicit type declaration
-    | RecordExact of Map<UnqualValueIdentifier, TypeConstraints>
-    | ReferencedType of typeName : TypeOrModuleIdentifier * typeParams : TypeConstraints list
-    | Arrow of fromType : TypeConstraints * toType : TypeConstraints nel
+    | RecordExact of Map<UnqualValueIdentifier, 'TypeInfo>
+    | ReferencedType of typeName : TypeOrModuleIdentifier * typeParams : 'TypeInfo list
+    | Arrow of fromType : 'TypeInfo * toType : 'TypeInfo nel
 
 
 
 
+
+/// Represents a correct type without clashes
+and DefinitiveType =
+    | DtUnitType
+    | DtPrimitiveType of BuiltInPrimitiveTypes
+    /// I.e. could denote a constraint or invariant between multiple parameters.
+    /// Could be bound or unbound.
+    | DtGeneric of GenericParam
+    | DtTuple of DefinitiveType tom
+    | DtList of DefinitiveType
+    | DtRecordWith of referencedFields : Map<UnqualValueIdentifier, DefinitiveType>
+    | DtRecordExact of Map<UnqualValueIdentifier, DefinitiveType>
+    | DtReferencedType of typeName : TypeOrModuleIdentifier * typeParams : DefinitiveType list
+    | DtArrow of fromType : DefinitiveType * toType : DefinitiveType
+
+
+
+
+type ConstrainedOrNot =
+    | NotYetConstrained
+    | Constrained of DefinitiveType
+
+
+/// This should be able to be determined based on the ResolvedNames maps and a type expression
+//type TypedValues = Map<ValueIdentifier, TypeConstraints>
+type TypedValues = Map<ValueIdentifier, DefinitiveType>
+
+/// Don't worry about capturing the location of the type clashes for now
+type TypeClashes = (DefinitiveType tom) list
+
+
+type ConstrainedVars = Map<ValueIdentifier, ConstrainedOrNot>
+
+
+
+type TypeJudgment =
+    | Unified of ConstrainedOrNot
+    | Clashing of DefinitiveType tom
+
+
+module TypeCheckingInfo =
+
+    type private TypeCheckingInfo'<'a> =
+        { expressionType : 'a //TypeJudgment
+          constrainedVarsOutsideScope : ConstrainedVars
+          unresolvedNames : Set<Identifier> }
+
+
+
+    let succeed x =
+        { expressionType = x
+          constrainedVarsOutsideScope = Map.empty
+          unresolvedNames = Set.empty }
+
+    let bind : ('a -> TypeCheckingInfo'<'b>) -> TypeCheckingInfo'<'a> -> TypeCheckingInfo'<'b> =
+        fun f info ->
+            let result = f info.expressionType
+
+            { expressionType = result.expressionType
+              constrainedVarsOutsideScope =
+                Map.merge info.constrainedVarsOutsideScope result.constrainedVarsOutsideScope
+              unresolvedNames = Set.union info.unresolvedNames result.unresolvedNames }
+
+    let join : TypeCheckingInfo'<TypeCheckingInfo'<'a>> -> TypeCheckingInfo'<'a> =
+        fun info -> bind id info
+
+    let map : ('a -> 'b) -> TypeCheckingInfo'<'a> -> TypeCheckingInfo'<'b> =
+        fun f info ->
+            { expressionType = f info.expressionType
+              constrainedVarsOutsideScope = info.constrainedVarsOutsideScope
+              unresolvedNames = info.unresolvedNames }
+
+
+
+    type TypeCheckingInfo = TypeCheckingInfo'<TypeJudgment>
 
 
 
@@ -158,7 +232,7 @@ let getConstrainedVars (gleaned : GleanedInfo) : VariablesConstraints = gleaned.
 
 
 
-let convertTypeOrModuleIdentifierToIdentifier : TypeOrModuleIdentifier -> Identifier =
+let private convertTypeOrModuleIdentifierToIdentifier : TypeOrModuleIdentifier -> Identifier =
     function
     | QualifiedType ident -> ModuleSegmentsOrQualifiedTypeOrVariant ident
     | UnqualType ident -> TypeNameOrVariantOrTopLevelModule ident
@@ -186,42 +260,51 @@ let convertTypeOrModuleIdentifierToIdentifier : TypeOrModuleIdentifier -> Identi
 
 
 
-//type UnificationResult =
-//    Unified of InferredType
-//    | UnificationDependsOnGenerics of genericA : RigidGeneric * genericB : RigidGeneric
-//    |
+type UnificationResult =
+    | Unified of DefinitiveType
+    /// I.e. unification requires all these generics to be assignable to each other - I suppose another way of saying that it's a way of denoting equality between generics?
+    | UnificationDependsOnGenerics of DefinitiveType * generics : RigidGeneric nel
+    | IncompatibleConstraints of DefinitiveType tom
 
-let rec unifier
-    (constraintA : InferredType)
-    (constraintB : InferredType)
-    : Result<InferredType, InferredType * InferredType> =
+
+
+
+
+let rec unifier (constraintA : SingleTypeConstraint) (constraintB : SingleTypeConstraint) : UnificationResult =
     match constraintA, constraintB with
     | Unit, Unit -> Ok Unit
     | Generic genA, Generic genB ->
         match genA, genB with
         | Rigid r, Flexible _
-        | Flexible _, Rigid r -> Rigid r |> Generic |> Ok
+        | Flexible _, Rigid r -> Rigid r |> DtGeneric |> Unified
         | Rigid rA, Rigid rB ->
             // @TODO: hmmm, need a way to capture here that it *could* be unified, but we just don't know yet until we know what the generic params are
-            Rigid rA |> Generic |> Ok
-        | Flexible a, Flexible _ -> Flexible a |> Generic |> Ok
+            //Rigid rA |> Generic |> Ok
+            UnificationDependsOnGenerics (NEL.new_ rA [ rB ])
+        | Flexible a, Flexible _ -> Flexible a |> DtGeneric |> Unified
     | Primitive pA, Primitive pB ->
         if pA = pB then
-            Primitive pA |> Ok
+            DtPrimitiveType pA |> Unified
         else
-            Error (constraintA, constraintB)
+            IncompatibleConstraints (TOM.make (DtPrimitiveType pA) (DtPrimitiveType pB))
     | Tuple listA, Tuple listB ->
-        let rec traverse a b =
-            match a, b with
-            | [], [] -> Ok ()
-            | headA :: restA, headB :: restB ->
-                match unifier headA headB with
-                | Ok _ -> traverse restA restB
-                | Error _ -> Error (constraintA, constraintB)
-            | [], _ :: _
-            | _ :: _, [] -> Error (constraintA, constraintB)
+        //let rec traverseTupleItems a b : UnificationResult =
+        //    match a, b with
+        //    | [], [] -> Flexible (Guid.NewGuid ()) |> DtGeneric |> Unified
+        //    | headA :: restA, headB :: restB ->
+        //        match unifier headA headB with
+        //        | Unified unified ->
+        //            match traverseTupleItems restA restB with
+        //            | Unified unifiedRest ->
 
-        match traverse (TOM.toList listA) (TOM.toList listB) with
+
+
+        //                Unified (DtTuple (TOM.make unified (traverseTupleItems restA restB)))
+        //        | UnificationDependsOnGenerics generics -> Error (constraintA, constraintB)
+        //    | [], _ :: _
+        //    | _ :: _, [] -> Error (constraintA, constraintB)
+
+        match traverseTupleItems (TOM.toList listA) (TOM.toList listB) with
         | Ok _ -> Tuple listA |> Ok
         | Error err -> Error err
 
@@ -243,24 +326,24 @@ let combineSingleConstraints
     if constraintA = constraintB then
         SingleConstraint constraintA
     else
-        MultipleConstraints (NEL.new_ constraintA [ constraintB ])
+        MultipleConstraints (TOM.make constraintA constraintB)
 
 
 
-let combineManySingleConstraints (constraints : SingleTypeConstraint nel) : TypeConstraints =
-    NEL.fold<_, _>
+let combineManySingleConstraints (constraints : SingleTypeConstraint tom) : TypeConstraints =
+    TOM.fold<_, _>
         (fun typeConstraints singleConstraint ->
             match typeConstraints with
             | Unconstrained -> SingleConstraint singleConstraint
             | SingleConstraint constr -> combineSingleConstraints singleConstraint constr
             | MultipleConstraints list ->
-                singleConstraint :: NEL.toList list
+                singleConstraint :: TOM.toList list
                 |> Set.ofList
                 |> Set.toList
                 |> function
                     | [] -> Unconstrained
                     | [ onlyOne ] -> SingleConstraint onlyOne
-                    | head :: rest -> MultipleConstraints (NEL.new_ head rest))
+                    | head :: neck :: rest -> MultipleConstraints (TOM.new_ head neck rest))
         Unconstrained
         constraints
 
@@ -274,9 +357,9 @@ let combineTypeConstraints (constraintA : TypeConstraints) (constraintB : TypeCo
     | SingleConstraint a, SingleConstraint b -> combineSingleConstraints a b
 
     | SingleConstraint a, MultipleConstraints b
-    | MultipleConstraints b, SingleConstraint a -> combineManySingleConstraints (NEL.cons a b)
+    | MultipleConstraints b, SingleConstraint a -> combineManySingleConstraints (TOM.cons a b)
 
-    | MultipleConstraints a, MultipleConstraints b -> combineManySingleConstraints (NEL.append a b)
+    | MultipleConstraints a, MultipleConstraints b -> combineManySingleConstraints (TOM.append a b)
 
 
 let combineConstrainedVars (mapA : VariablesConstraints) (mapB : VariablesConstraints) : VariablesConstraints =
@@ -313,7 +396,7 @@ let private makeSimpleConstraintFromMentionableType t =
     SingleConstraint t
 
 
-let rec private getInferredTypeFromMentionableType (mentionableType : Cst.MentionableType) : InferredType =
+let rec private getInferredTypeFromMentionableType (mentionableType : Cst.MentionableType) : SingleTypeConstraint =
     match mentionableType with
     | Cst.GenericTypeVar name -> Generic (Rigid (RigidGeneric name))
     | Cst.UnitType -> Unit
@@ -378,7 +461,7 @@ let rec private getInferredTypeFromMentionableType (mentionableType : Cst.Mentio
 
 
 
-let typeOfPrimitiveLiteralValue : Cst.PrimitiveLiteralValue -> InferredType =
+let typeOfPrimitiveLiteralValue : Cst.PrimitiveLiteralValue -> SingleTypeConstraint =
     function
     | Cst.NumberPrimitive num ->
         match num with
@@ -612,8 +695,9 @@ and typeOfDestructuredPattern (resolvedNames : ResolvedNames) (pattern : Cst.Des
 
 
 
+type AppliedGenericsMap = Map<RigidGeneric, DefinitiveType>
 
-
+//let applyGenerics (resolvedNames : ResolvedNames)
 
 
 
@@ -675,7 +759,7 @@ let tryUnifyTypes
         | Unconstrained -> Unified None
         | SingleConstraint constr -> Unified (Some constr)
         | MultipleConstraints constraints ->
-            match NEL.fold<SimpleJudgment<SingleTypeConstraint>, SingleTypeConstraint>
+            match TOM.fold<SimpleJudgment<SingleTypeConstraint>, SingleTypeConstraint>
                       unifier
                       SimpleUnconstrained
                       constraints
@@ -694,7 +778,7 @@ let tryUnifyTypes
             | SimpleConflicting _ -> ConflictDeclarationInferences (declaration, constr)
 
         | MultipleConstraints constraints ->
-            match NEL.fold<_, _> unifier SimpleUnconstrained constraints with
+            match TOM.fold<_, _> unifier SimpleUnconstrained constraints with
             | SimpleUnconstrained -> Unified (Some declaration)
             | SimpleUnified unifiedInferreds ->
                 match unifier (SimpleUnified unifiedInferreds) declaration with
@@ -703,41 +787,3 @@ let tryUnifyTypes
                 | SimpleConflicting _ -> ConflictDeclarationInferences (declaration, unifiedInferreds)
 
             | SimpleConflicting clashes -> ConflictingInferences (Some declaration, clashes)
-
-
-
-
-
-
-
-
-
-/// Represents a correct type without clashes
-type DefinitiveType =
-    | DtUnitType
-    | DtPrimitiveType of BuiltInPrimitiveTypes
-    /// I.e. could denote a constraint or invariant between multiple parameters.
-    /// Could be bound or unbound.
-    | DtGenericTypeVar of UnqualValueIdentifier
-    | DtTuple of TupleType
-    | DtList of DefinitiveType
-    | DtRecord of RecordType
-    | DtExtendedRecord of ExtendedRecordType
-    | DtReferencedType of typeName : TypeOrModuleIdentifier * typeParams : DefinitiveType list
-    | DtArrow of fromType : DefinitiveType * toType : DefinitiveType
-
-
-/// Because these are heterogeneous
-and TupleType =
-    { types : DefinitiveType * NEL<DefinitiveType> }
-
-
-and RecordType =
-    { fields : Map<UnqualValueIdentifier, DefinitiveType> }
-
-
-and ExtendedRecordType =
-    { extendedAlias : UnqualValueIdentifier
-      fields : Map<UnqualValueIdentifier, DefinitiveType> }
-
-and Dt = DefinitiveType

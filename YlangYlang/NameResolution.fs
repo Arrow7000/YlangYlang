@@ -35,30 +35,19 @@ type PathToDestructuredName =
 
 module ResolvedNames =
 
-    /// Special token returned from type variant constructor getter that lets you get the type declaration in one go, because if you can see the constructors you should for sure be able to see the type declaration, and so shouldn't have to worry about the possibility of not finding it. And this little helper type lets us circumvent the try getter approach if we have the thing itself
-    type AssuredTypeDeclaration<'a> =
-        private
-        | AssuredTypeDeclaration of 'a
-
-        static member getValue : AssuredTypeDeclaration<'a> -> 'a =
-            function
-            | AssuredTypeDeclaration type' -> type'
+    type TypeDeclarations = Map<TypeOrModuleIdentifier, SingleOrDuplicate<TokenWithSource list * TypeDeclaration>>
 
     type VariantConstructor =
         { typeName : TypeOrModuleIdentifier
           typeDeclaration : NewTypeDeclaration
           variantParams : MentionableType list }
 
+    type TypeConstructors = Map<TypeOrModuleIdentifier, SingleOrDuplicate<TokenWithSource list * VariantConstructor>>
+
     type ValueOrParameter =
         | Value of assignmentPattern : PathToDestructuredName * assignedExpression : Expression
         /// If this assignment pattern is an alias for a greater deconstructed parameter expression, or just a function or match expression case parameter
         | Parameter of subPattern : PathToDestructuredName
-
-
-
-    type TypeDeclarations = Map<TypeOrModuleIdentifier, SingleOrDuplicate<TokenWithSource list * TypeDeclaration>>
-
-    type TypeConstructors = Map<TypeOrModuleIdentifier, SingleOrDuplicate<TokenWithSource list * VariantConstructor>>
 
     type ValueDeclarations = Map<UnqualValueIdentifier, SingleOrDuplicate<TokenWithSource list * ValueOrParameter>>
 
@@ -79,28 +68,22 @@ module ResolvedNames =
     let getValueTypeDeclarations names : ValueTypeDeclarations = names.valueTypeDeclarations
 
 
-    //let findTypeDeclaration
-    //    (AssuredTypeDeclaration typeName : AssuredTypeDeclaration<TypeOrModuleIdentifier>)
-    //    { typeDeclarations = typeDeclarations }
-    //    =
-    //    Map.find typeName typeDeclarations
-    //    |> SingleOrDuplicate.getFirst
+    let private getFromMap name =
+        Map.tryFind name
+        >> Option.map SingleOrDuplicate.getFirst
 
-    let tryFindTypeDeclaration name { typeDeclarations = typeDeclarations } =
-        Map.tryFind name typeDeclarations
-        |> Option.map SingleOrDuplicate.getFirst
 
-    let tryFindTypeConstructor name { typeConstructors = typeConstructors } =
-        Map.tryFind name typeConstructors
-        |> Option.map SingleOrDuplicate.getFirst
+    let tryFindTypeDeclaration name { typeDeclarations = nameMap } : (TknSrc list * TypeDeclaration) option =
+        getFromMap name nameMap
 
-    let tryFindValue name ({ valueDeclarations = values } : ResolvedNames) =
-        Map.tryFind name values
-        |> Option.map SingleOrDuplicate.getFirst
+    let tryFindTypeConstructor name { typeConstructors = nameMap } : (TknSrc list * VariantConstructor) option =
+        getFromMap name nameMap
 
-    let tryFindValueTypeDeclarations name { valueTypeDeclarations = valueTypeDeclarations } =
-        Map.tryFind name valueTypeDeclarations
-        |> Option.map SingleOrDuplicate.getFirst
+    let tryFindValue name { valueDeclarations = nameMap } : (TknSrc list * ValueOrParameter) option =
+        getFromMap name nameMap
+
+    let tryFindValueTypeDeclarations name { valueTypeDeclarations = nameMap } : (TknSrc list * MentionableType) option =
+        getFromMap name nameMap
 
 
 
@@ -380,6 +363,14 @@ let resolveLetBinding
     { ResolvedNames.empty with valueDeclarations = values }
 
 
+let resolveLetExpression (bindings : CstNode<LetBinding> nel) =
+    bindings
+    |> NEL.toList
+    |> Seq.map (getNode >> resolveLetBinding)
+    |> combineResolvedNamesMaps
+
+
+
 let resolveTypeConstructors
     (typeName : CstNode<UnqualTypeOrModuleIdentifier>)
     (typeDeclaration : TypeDeclaration)
@@ -420,11 +411,7 @@ let rec resolveExpressionBindings (expression : Expression) : ResolvedNames =
             | Function funcVal -> resolveFuncParams funcVal
             | DotGetter _ -> ResolvedNames.empty
         | Identifier _ -> ResolvedNames.empty
-        | LetExpression (bindings, _) ->
-            bindings
-            |> NEL.toList
-            |> Seq.map (getNode >> resolveLetBinding)
-            |> combineResolvedNamesMaps
+        | LetExpression (bindings, _) -> resolveLetExpression bindings
 
         | ControlFlowExpression _ -> ResolvedNames.empty
     | CompoundExpression _ -> ResolvedNames.empty
