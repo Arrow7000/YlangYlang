@@ -134,56 +134,152 @@ and DefinitiveType =
     | DtList of DefinitiveType
     | DtRecordWith of referencedFields : Map<UnqualValueIdentifier, DefinitiveType>
     | DtRecordExact of Map<UnqualValueIdentifier, DefinitiveType>
+    /// The typeParams of the referenced type should start off as unconstraineds, but then fill out with more definitive types, as the constraints build up
     | DtReferencedType of typeName : TypeOrModuleIdentifier * typeParams : DefinitiveType list
     | DtArrow of fromType : DefinitiveType * toType : DefinitiveType
 
 
 
 
-type ConstrainedOrNot =
-    | NotYetConstrained
-    | Constrained of DefinitiveType
-
-
-/// This should be able to be determined based on the ResolvedNames maps and a type expression
-//type TypedValues = Map<ValueIdentifier, TypeConstraints>
-type TypedValues = Map<ValueIdentifier, DefinitiveType>
-
-/// Don't worry about capturing the location of the type clashes for now
-type TypeClashes = (DefinitiveType tom) list
-
-
-type ConstrainedVars = Map<ValueIdentifier, ConstrainedOrNot>
-
-
-
-type TypeJudgment =
-    | Unified of ConstrainedOrNot
-    | Clashing of DefinitiveType tom
 
 
 module TypeCheckingInfo =
 
+
+
+    /// This should be able to be determined based on the ResolvedNames maps and a type expression
+    //type TypedValues = Map<ValueIdentifier, TypeConstraints>
+    type TypedValues = Map<ValueIdentifier, DefinitiveType>
+
+    /// Don't worry about capturing the location of the type clashes for now
+    type TypeClashes = (DefinitiveType tom) list
+
+    type ConstrainedOrNot =
+        | NotYetConstrained
+        | Constrained of DefinitiveType
+
+    type TypeJudgment =
+        | Unified of ConstrainedOrNot
+        | Clashing of DefinitiveType tom
+        | UnresolvedName of Identifier
+
+
+
+    type ConstrainedVars = Map<ValueIdentifier, ConstrainedOrNot>
+    type ConstrainedGenerics = Map<RigidGeneric, TypeJudgment>
+
+
+
+    let combineDefinitiveType
+        (dType1 : DefinitiveType)
+        (dType2 : DefinitiveType)
+        : Result<DefinitiveType, DefinitiveType tom> =
+        match dType1, dType2 with
+        | DtRecordWith fields1, DtRecordWith fields2 ->
+            let combined =
+                Map.fold
+                    (fun combinedMapResult key value ->
+                        match combinedMapResult with
+                        | Ok combinedMap ->
+
+                            match Map.tryFind key combinedMap with
+                            | None -> Ok (Map.add key value combinedMap)
+                            | Some fieldValueType ->
+                                if fieldValueType = value then
+                                    Ok (Map.add key value combinedMap)
+                                else
+                                    Error (TOM.make dType1 dType2)
+                        | Error e -> Error e)
+                    (Ok fields2)
+                    fields1
+
+            Result.map DtRecordWith combined
+        | DtRecordWith extendedFields, DtRecordExact exactFields
+        | DtRecordExact exactFields, DtRecordWith extendedFields ->
+            let combined =
+                extendedFields
+                |> Map.fold
+                    (fun exactFieldsResult extendedKey extendedFieldValType ->
+                        match exactFieldsResult with
+                        | Ok exactResult' ->
+
+                            match Map.tryFind extendedKey exactResult' with
+                            | None -> Error (TOM.make dType1 dType2)
+                            | Some fieldValueType ->
+                                if fieldValueType = extendedFieldValType then
+                                    Ok (Map.add extendedKey extendedFieldValType exactResult')
+                                else
+                                    Error (TOM.make dType1 dType2)
+                        | Error e -> Error e)
+                    (Ok exactFields)
+
+            Result.map DtRecordExact combined
+
+        | DtGeneric generic1, DtGeneric generic2 ->
+
+
+
+    let combineJudgments (judgment1 : TypeJudgment) (judgment2 : TypeJudgment) =
+        match judgment1, judgment2 with
+        | UnresolvedName name, _
+        | _, UnresolvedName name -> UnresolvedName name
+
+        | Clashing list1, Clashing list2 -> Clashing (TOM.append list1 list2)
+
+        | Unified NotYetConstrained, x
+        | x, Unified NotYetConstrained -> x
+
+        | Unified (Constrained type1), Unified (Constrained type2) -> ()
+
+
+
+    let mergeTypeJudgmentMaps (map1 : ConstrainedGenerics) (map2 : ConstrainedGenerics) =
+        map2
+        |> Map.fold
+            (fun combinedMap key newJudgment ->
+                match Map.tryFind key combinedMap with
+                | None -> combinedMap
+                | Some oldJudgment ->
+                    match oldJudgment with
+                    | Unified constrainedOrNot ->
+                        match constrainedOrNot with
+                        | NotYetConstrained -> newJudgment
+                //    | Constrained type_ ->
+                //| Clashing list ->
+                //| UnresolvedName name ->
+
+                //Map.add key( Clashing (TOM.make   ) )
+
+                )
+            map1
+
     type private TypeCheckingInfo'<'a> =
         { expressionType : 'a //TypeJudgment
+          constrainedGenerics : ConstrainedGenerics
+          /// Because the names inside the scope don't need to be propagated out of the scope where they live
           constrainedVarsOutsideScope : ConstrainedVars
-          unresolvedNames : Set<Identifier> }
+          unresolvedNames : Set<Identifier>
+          typeClashes : TypeClashes }
 
 
 
     let succeed x =
         { expressionType = x
+          constrainedGenerics = Map.empty
           constrainedVarsOutsideScope = Map.empty
-          unresolvedNames = Set.empty }
+          unresolvedNames = Set.empty
+          typeClashes = List.empty }
 
     let bind : ('a -> TypeCheckingInfo'<'b>) -> TypeCheckingInfo'<'a> -> TypeCheckingInfo'<'b> =
         fun f info ->
             let result = f info.expressionType
 
             { expressionType = result.expressionType
+              constrainedGenerics = Map.merge
               constrainedVarsOutsideScope =
                 Map.merge info.constrainedVarsOutsideScope result.constrainedVarsOutsideScope
-              unresolvedNames = Set.union info.unresolvedNames result.unresolvedNames }
+              unresolvedNames = Set.union info.unresolvedNames result.unresolvedNames
+              typeClashes = info.typeClashes @ result.typeClashes }
 
     let join : TypeCheckingInfo'<TypeCheckingInfo'<'a>> -> TypeCheckingInfo'<'a> =
         fun info -> bind id info
@@ -192,11 +288,18 @@ module TypeCheckingInfo =
         fun f info ->
             { expressionType = f info.expressionType
               constrainedVarsOutsideScope = info.constrainedVarsOutsideScope
-              unresolvedNames = info.unresolvedNames }
+              unresolvedNames = info.unresolvedNames
+              typeClashes = info.typeClashes }
 
-
+    let addUnresolved name info =
+        { info with unresolvedNames = Set.add name info.unresolvedNames }
 
     type TypeCheckingInfo = TypeCheckingInfo'<TypeJudgment>
+
+
+open TypeCheckingInfo
+
+module Tci = TypeCheckingInfo
 
 
 
@@ -378,7 +481,6 @@ let combineGleanedInfos (cavA : GleanedInfo) (cavB : GleanedInfo) : GleanedInfo 
 
 
 
-//let gatherGleanedInfos gleanedA gleanedB :
 
 
 
@@ -391,57 +493,40 @@ let private getTypeParams typeDecl =
     | Cst.Sum { specifiedTypeParams = params' } -> List.map (Cst.getNode >> RigidGeneric) params'
 
 
-let private makeSimpleConstraintFromMentionableType t =
-    //SingleTypeConstraint (t, IsExplicitShape)
-    SingleConstraint t
 
 
-let rec private getInferredTypeFromMentionableType (mentionableType : Cst.MentionableType) : SingleTypeConstraint =
+//let rec private getInferredTypeFromMentionableType (mentionableType : Cst.MentionableType) : SingleTypeConstraint =
+let rec private getInferredTypeFromMentionableType (mentionableType : Cst.MentionableType) : DefinitiveType =
     match mentionableType with
-    | Cst.GenericTypeVar name -> Generic (Rigid (RigidGeneric name))
-    | Cst.UnitType -> Unit
+    | Cst.GenericTypeVar name -> DtGeneric (Rigid (RigidGeneric name))
+    | Cst.UnitType -> DtUnitType
     | Cst.Tuple { types = types } ->
-        TOM.map
-            (Cst.getNode
-             >> getInferredTypeFromMentionableType
-             >> makeSimpleConstraintFromMentionableType)
-            types
-        |> Tuple
+        TOM.map (Cst.getNode >> getInferredTypeFromMentionableType) types
+        |> DtTuple
     | Cst.Record { fields = fields } ->
         fields
-        |> Map.mapKeyVal (fun fieldName type' ->
-            fieldName.node,
-            getInferredTypeFromMentionableType type'.node
-            |> makeSimpleConstraintFromMentionableType)
-        |> RecordExact
+        |> Map.mapKeyVal (fun fieldName type' -> fieldName.node, getInferredTypeFromMentionableType type'.node)
+        |> DtRecordExact
     | Cst.ExtendedRecord { fields = fields } ->
         // @TODO: need to actually figure out the semantics of what it means to have `{ a | otherFields : otherType }`, is a the exact same record as the whole thing? Is it all the fields *except* for `otherFields`? Need to clarify
         fields
-        |> Map.mapKeyVal (fun fieldName type' ->
-            fieldName.node,
-            getInferredTypeFromMentionableType type'.node
-            |> makeSimpleConstraintFromMentionableType)
-        |> RecordWith
+        |> Map.mapKeyVal (fun fieldName type' -> fieldName.node, getInferredTypeFromMentionableType type'.node)
+        |> DtRecordWith
     | Cst.ReferencedType (typeName, typeParams) ->
-        ReferencedType (
-            typeName.node,
-            List.map
-                (Cst.getNode
-                 >> getInferredTypeFromMentionableType
-                 >> makeSimpleConstraintFromMentionableType)
-                typeParams
-        )
+        DtReferencedType (typeName.node, List.map (Cst.getNode >> getInferredTypeFromMentionableType) typeParams)
     | Cst.Arrow (fromType, toType) ->
-        Arrow (
+
+        let rec foldUpArrowDestType ((NEL (head, rest)) : DefinitiveType nel) : DefinitiveType =
+            match rest with
+            | [] -> head
+            | neck :: tail -> DtArrow (head, foldUpArrowDestType (NEL (neck, tail)))
+
+        DtArrow (
             fromType.node
-            |> getInferredTypeFromMentionableType
-            |> makeSimpleConstraintFromMentionableType,
+            |> getInferredTypeFromMentionableType,
             toType
-            |> NEL.map (
-                Cst.getNode
-                >> getInferredTypeFromMentionableType
-                >> makeSimpleConstraintFromMentionableType
-            )
+            |> NEL.map (Cst.getNode >> getInferredTypeFromMentionableType)
+            |> foldUpArrowDestType
         )
     | Cst.Parensed { node = node } -> getInferredTypeFromMentionableType node
 
@@ -474,22 +559,28 @@ let typeOfPrimitiveLiteralValue : Cst.PrimitiveLiteralValue -> SingleTypeConstra
 
 
 
-let rec typeOfExpression : ResolvedNames -> Cst.Expression -> GleanedInfo =
+let rec typeOfExpression : ResolvedNames -> Cst.Expression -> TypeCheckingInfo =
     fun _ _ -> failwithf "Not implemented yet!"
 
 
 /// @TODO: this should contain the logic to type check resolved named values
-and typeOfNamedValueIdentifier : ResolvedNames -> Identifier -> GleanedInfo =
+and typeOfNamedValueIdentifier : ResolvedNames -> Identifier -> TypeCheckingInfo =
     fun resolvedNames ident ->
         match ident with
         | SingleValueIdentifier name ->
             match ResolvedNames.tryFindValue name resolvedNames with
             | Some (_, Value (_, expr)) -> typeOfExpression resolvedNames expr
-            | Some (_, Parameter _) -> makeGleanedInfo Unconstrained Map.empty
+            | Some (_, Parameter _) -> Tci.succeed (Tci.Unified NotYetConstrained)
+            //makeGleanedInfo Unconstrained Map.empty
             | None ->
-                { emptyGleanedInfo with
-                    typeOfExpression = Unconstrained
-                    namesNotResolved = Set.singleton (SingleValueIdentifier name) }
+                SingleValueIdentifier name
+                |> Tci.UnresolvedName
+                |> Tci.succeed
+                |> Tci.addUnresolved (SingleValueIdentifier name)
+
+        //{ emptyGleanedInfo with
+        //    typeOfExpression = Unconstrained
+        //    namesNotResolved = Set.singleton (SingleValueIdentifier name) }
 
         | TypeNameOrVariantOrTopLevelModule name ->
             // I.e. it's a type constructor... I think
@@ -498,19 +589,24 @@ and typeOfNamedValueIdentifier : ResolvedNames -> Identifier -> GleanedInfo =
             | Some (_, variantConstructor) ->
                 let paramsForVariant =
                     variantConstructor.variantParams
-                    |> List.map (
-                        getInferredTypeFromMentionableType
-                        >> makeSimpleConstraintFromMentionableType
-                    )
+                    |> List.map getInferredTypeFromMentionableType
 
-                let inferredType = ReferencedType (variantConstructor.typeName, paramsForVariant)
+                DtReferencedType (variantConstructor.typeName, paramsForVariant)
+                |> Tci.Constrained
+                |> Tci.Unified
+                |> Tci.succeed
 
-                makeGleanedInfo (SingleConstraint inferredType) Map.empty
+            //makeGleanedInfo (SingleConstraint inferredType) Map.empty
 
             | None ->
-                { emptyGleanedInfo with
-                    typeOfExpression = Unconstrained
-                    namesNotResolved = Set.singleton (TypeNameOrVariantOrTopLevelModule name) }
+                TypeNameOrVariantOrTopLevelModule name
+                |> Tci.UnresolvedName
+                |> Tci.succeed
+                |> Tci.addUnresolved (TypeNameOrVariantOrTopLevelModule name)
+
+        //{ emptyGleanedInfo with
+        //    typeOfExpression = Unconstrained
+        //    namesNotResolved = Set.singleton (TypeNameOrVariantOrTopLevelModule name) }
 
 
         | ModuleSegmentsOrQualifiedTypeOrVariant _ -> failwithf "Not implemented yet!"
@@ -528,17 +624,18 @@ and typeOfNamedValueIdentifier : ResolvedNames -> Identifier -> GleanedInfo =
 
 
 
-and typeOfExplicitCompoundValue : ResolvedNames -> Cst.CompoundValues -> GleanedInfo =
+//and typeOfExplicitCompoundValue : ResolvedNames -> Cst.CompoundValues -> GleanedInfo =
+and typeOfExplicitCompoundValue : ResolvedNames -> Cst.CompoundValues -> TypeCheckingInfo =
     fun namesInScope compoundValue ->
 
-        let rec listFolder items =
-            match items with
-            | [] -> emptyGleanedInfo
-            | head :: tail ->
-                let headConstraint = typeOfExpression namesInScope head
+        //let rec listFolder items =
+        //    match items with
+        //    | [] -> emptyGleanedInfo
+        //    | head :: tail ->
+        //        let headConstraint = typeOfExpression namesInScope head
 
-                listFolder tail
-                |> combineGleanedInfos headConstraint
+        //        listFolder tail
+        //        |> combineGleanedInfos headConstraint
 
         match compoundValue with
         | Cst.List exprs -> exprs |> List.map Cst.getNode |> listFolder
