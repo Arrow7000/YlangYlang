@@ -57,50 +57,48 @@ and AssignmentPattern<'Upper> =
 (* Types *)
 
 /// For types that can be mentioned not at the top level of a file, e.g. records or types declared elsewhere. But e.g. you can't create an ad hoc sum type inside a record or another sum type. Sum types and aliases need to be declared at the top level of a module.
-type MentionableType<'Upper, 'Lower when 'Lower : comparison> =
+type MentionableType<'Upper> =
     | UnitType
     | GenericTypeVar of Lexer.UnqualValueIdentifier
-    | Tuple of TupleType<'Upper, 'Lower>
-    | Record of RecordType<'Upper, 'Lower>
-    | ExtendedRecord of ExtendedRecordType<'Upper, 'Lower>
-    | ReferencedType of typeName : CstNode<'Upper> * typeParams : CstNode<MentionableType<'Upper, 'Lower>> list
-    | Arrow of
-        fromType : CstNode<MentionableType<'Upper, 'Lower>> *
-        toType : NEL<CstNode<MentionableType<'Upper, 'Lower>>>
-    | Parensed of CstNode<MentionableType<'Upper, 'Lower>>
+    | Tuple of TupleType<'Upper>
+    | Record of RecordType<'Upper>
+    | ExtendedRecord of ExtendedRecordType<'Upper>
+    | ReferencedType of typeName : CstNode<'Upper> * typeParams : CstNode<MentionableType<'Upper>> list
+    | Arrow of fromType : CstNode<MentionableType<'Upper>> * toType : NEL<CstNode<MentionableType<'Upper>>>
+    | Parensed of CstNode<MentionableType<'Upper>>
 
 
 
 /// Because there need to be at least two members for it to be a tuple type. Otherwise it's just a parensed expression.
-and TupleType<'Upper, 'Lower when 'Lower : comparison> =
-    { types : CstNode<MentionableType<'Upper, 'Lower>> tom }
+and TupleType<'Upper> =
+    { types : CstNode<MentionableType<'Upper>> tom }
 
 
-and RecordType<'Upper, 'Lower when 'Lower : comparison> =
-    { fields : Map<CstNode<Lexer.UnqualValueIdentifier>, CstNode<MentionableType<'Upper, 'Lower>>> }
+and RecordType<'Upper> =
+    { fields : Map<CstNode<Lexer.UnqualValueIdentifier>, CstNode<MentionableType<'Upper>>> }
 
-and ExtendedRecordType<'Upper, 'Lower when 'Lower : comparison> =
+and ExtendedRecordType<'Upper> =
     { extendedAlias : CstNode<Lexer.UnqualValueIdentifier> // Because it has to be a single named value, no dots.
-      fields : Map<CstNode<Lexer.UnqualValueIdentifier>, CstNode<MentionableType<'Upper, 'Lower>>> }
+      fields : Map<CstNode<Lexer.UnqualValueIdentifier>, CstNode<MentionableType<'Upper>>> }
 
 
-type VariantCase<'Upper, 'Lower when 'Lower : comparison> =
+type VariantCase<'Upper> =
     { label : CstNode<Lexer.UnqualTypeOrModuleIdentifier>
-      contents : CstNode<MentionableType<'Upper, 'Lower>> list }
+      contents : CstNode<MentionableType<'Upper>> list }
 
-type NewTypeDeclaration<'Upper, 'Lower when 'Lower : comparison> =
-    { typeParams : CstNode<'Lower> list
-      variants : NEL<CstNode<VariantCase<'Upper, 'Lower>>> }
+type NewTypeDeclaration<'Upper> =
+    { typeParams : CstNode<Lexer.UnqualValueIdentifier> list
+      variants : NEL<CstNode<VariantCase<'Upper>>> }
 
 
-type AliasDeclaration<'Upper, 'Lower when 'Lower : comparison> =
+type AliasDeclaration<'Upper> =
     { typeParams : CstNode<Lexer.UnqualValueIdentifier> list // in case the underlying type needs it
-      referent : CstNode<MentionableType<'Upper, 'Lower>> }
+      referent : CstNode<MentionableType<'Upper>> }
 
 
-type TypeDeclaration<'Upper, 'Lower when 'Lower : comparison> =
-    | Alias of AliasDeclaration<'Upper, 'Lower>
-    | Sum of NewTypeDeclaration<'Upper, 'Lower>
+type TypeDeclaration<'Upper> =
+    | Alias of AliasDeclaration<'Upper>
+    | Sum of NewTypeDeclaration<'Upper>
 
 
 
@@ -214,14 +212,14 @@ and Expression<'Upper, 'Lower when 'Lower : comparison> =
 
 
 type ValueDeclaration<'Upper, 'Lower when 'Lower : comparison> =
-    { valueName : CstNode<'Lower>
+    { valueName : CstNode<Lexer.UnqualValueIdentifier>
       value : CstNode<Expression<'Upper, 'Lower>> }
 
 
 
-type ValueAnnotation<'Upper, 'Lower when 'Lower : comparison> =
-    { valueName : CstNode<'Lower>
-      annotatedType : CstNode<MentionableType<'Upper, 'Lower>> }
+type ValueAnnotation<'Upper> =
+    { valueName : CstNode<Lexer.UnqualValueIdentifier>
+      annotatedType : CstNode<MentionableType<'Upper>> }
 
 
 (* The module as a whole *)
@@ -268,8 +266,8 @@ type ImportDeclaration =
 
 type Declaration<'Upper, 'Lower when 'Lower : comparison> =
     | ImportDeclaration of ImportDeclaration
-    | TypeDeclaration of name : CstNode<'Upper> * declaration : TypeDeclaration<'Upper, 'Lower>
-    | ValueTypeAnnotation of ValueAnnotation<'Upper, 'Lower>
+    | TypeDeclaration of name : CstNode<Lexer.UnqualTypeOrModuleIdentifier> * declaration : TypeDeclaration<'Upper>
+    | ValueTypeAnnotation of ValueAnnotation<'Upper>
     | ValueDeclaration of ValueDeclaration<'Upper, 'Lower>
 
 
