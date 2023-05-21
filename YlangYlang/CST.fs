@@ -256,7 +256,7 @@ type ValueAnnotation = S.ValueAnnotation<TypeOrModuleIdentifier>
 
 
 
-//type Declaration =
+type Declaration = S.Declaration<TypeOrModuleIdentifier, ValueIdentifier>
 //    | ImportDeclaration of ImportDeclaration
 //    | TypeDeclaration of name : CstNode<UnqualTypeOrModuleIdentifier> * declaration : TypeDeclaration
 //    | ValueTypeAnnotation of ValueAnnotation
@@ -264,6 +264,11 @@ type ValueAnnotation = S.ValueAnnotation<TypeOrModuleIdentifier>
 
 
 //// Representing a whole file/module
-//type YlModule =
+type YlModule = S.YlModule<TypeOrModuleIdentifier, ValueIdentifier>
 //    { moduleDecl : ModuleDeclaration
 //      declarations : CstNode<Declaration> list }
+
+
+type YlProjectItem = S.YlProjectItem<TypeOrModuleIdentifier, ValueIdentifier>
+
+type YlProject = S.YlProject<TypeOrModuleIdentifier, ValueIdentifier>

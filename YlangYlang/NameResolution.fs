@@ -411,7 +411,8 @@ let rec resolveExpressionBindings (expression : Expression) : ResolvedNames =
             | CustomTypeVariant _ -> ResolvedNames.empty
             | Function funcVal -> resolveFuncParams funcVal
             | DotGetter _ -> ResolvedNames.empty
-        | Identifier _ -> ResolvedNames.empty
+        | UpperIdentifier _ -> ResolvedNames.empty
+        | LowerIdentifier _ -> ResolvedNames.empty
         | LetExpression (bindings, _) -> resolveLetExpression bindings
 
         | ControlFlowExpression _ -> ResolvedNames.empty

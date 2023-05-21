@@ -185,7 +185,8 @@ and ControlFlowExpression<'Upper, 'Lower when 'Lower : comparison> =
 
 and SingleValueExpression<'Upper, 'Lower when 'Lower : comparison> =
     | ExplicitValue of ExplicitValue<'Upper, 'Lower>
-    | Identifier of Lexer.Identifier
+    | UpperIdentifier of 'Upper
+    | LowerIdentifier of 'Lower
     | LetExpression of
         bindings : NEL<CstNode<LetBinding<'Upper, 'Lower>>> *
         inExpr : CstNode<Expression<'Upper, 'Lower>> // can't have lets outside of an expression
@@ -275,3 +276,12 @@ type Declaration<'Upper, 'Lower when 'Lower : comparison> =
 type YlModule<'Upper, 'Lower when 'Lower : comparison> =
     { moduleDecl : ModuleDeclaration
       declarations : CstNode<Declaration<'Upper, 'Lower>> list }
+
+
+
+/// A project item, so either a module file, or a dir containing more project items
+type YlProjectItem<'Upper, 'Lower when 'Lower : comparison> =
+    | NestedDir of dirName : string * dirContents : YlProjectItem<'Upper, 'Lower> list
+    | Module of YlModule<'Upper, 'Lower>
+
+type YlProject<'Upper, 'Lower when 'Lower : comparison> = YlProjectItem<'Upper, 'Lower> list

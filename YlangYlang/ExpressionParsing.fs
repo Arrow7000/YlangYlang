@@ -308,6 +308,25 @@ let parseOperator =
         | _ -> None)
     |> addCtxToStack ParsingCtx.Operator
 
+let parseUpperIdentifier : ExpressionParser<CstNode<SingleValueExpression>> =
+    parseExpectedToken (ExpectedString "identifier") (function
+        | Token.Identifier (ModuleSegmentsOrQualifiedTypeOrVariant ident) ->
+            Some (UpperIdentifier (QualifiedType ident))
+        | Token.Identifier (TypeNameOrVariantOrTopLevelModule ident) -> Some (UpperIdentifier (UnqualType ident))
+        | _ -> None)
+    |> addCstNode
+    |> addCtxToStack PCtx.Identifier
+
+
+let parseLowerIdentifier : ExpressionParser<CstNode<SingleValueExpression>> =
+    parseExpectedToken (ExpectedString "identifier") (function
+        | Token.Identifier (QualifiedPathValueIdentifier ident) -> Some (LowerIdentifier (QualifiedValue ident))
+        | Token.Identifier (SingleValueIdentifier ident) -> Some (LowerIdentifier (UnqualValue ident))
+        | _ -> None)
+    |> addCstNode
+    |> addCtxToStack PCtx.Identifier
+
+
 let parseIdentifier =
     parseExpectedToken (ExpectedString "identifier") (function
         | Token.Identifier ident -> Some ident
@@ -760,7 +779,8 @@ and parseDelimExpressions =
         | None -> getNode expr)
     |= (either
             (succeed SingleValueExpression
-             |= oneOf [ parseIdentifier |> map (getNode >> Identifier)
+             |= oneOf [ parseUpperIdentifier |> map getNode
+                        parseLowerIdentifier |> map getNode
 
                         parseRecord
                         |> map (Record >> Compound >> ExplicitValue)

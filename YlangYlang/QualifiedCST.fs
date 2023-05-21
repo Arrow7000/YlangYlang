@@ -4,23 +4,39 @@ open Lexer
 module S = SyntaxTree
 module C = ConcreteSyntaxTree
 
+
+/// Fully qualified module path
+type FullyQualifiedModule = FullyQualifiedModule of string nel
+
+/// Fully qualified type or type alias name
+type FullyQualifiedTypeIdent = FullyQualifiedTypeIdent of string nel
+
+/// Fully qualified named value
+type FullyQualifiedValueIdent = FullyQualifiedValueIdent of string nel
+
+
+
+
+
+
+
 type DestructuredPattern = S.DestructuredPattern<QualifiedModuleOrTypeIdentifier>
 and AssignmentPattern = S.AssignmentPattern<QualifiedModuleOrTypeIdentifier>
 
 
-type MentionableType = S.MentionableType<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
-and TupleType = S.TupleType<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
-and RecordType = S.RecordType<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
-and ExtendedRecordType = S.ExtendedRecordType<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+type MentionableType = S.MentionableType<QualifiedModuleOrTypeIdentifier>
+and TupleType = S.TupleType<QualifiedModuleOrTypeIdentifier>
+and RecordType = S.RecordType<QualifiedModuleOrTypeIdentifier>
+and ExtendedRecordType = S.ExtendedRecordType<QualifiedModuleOrTypeIdentifier>
 
 
-type VariantCase = S.VariantCase<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+type VariantCase = S.VariantCase<QualifiedModuleOrTypeIdentifier>
 
-type NewTypeDeclaration = S.NewTypeDeclaration<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+type NewTypeDeclaration = S.NewTypeDeclaration<QualifiedModuleOrTypeIdentifier>
 
-type AliasDeclaration = S.AliasDeclaration<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+type AliasDeclaration = S.AliasDeclaration<QualifiedModuleOrTypeIdentifier>
 
-type TypeDeclaration = S.TypeDeclaration<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+type TypeDeclaration = S.TypeDeclaration<QualifiedModuleOrTypeIdentifier>
 
 type InfixOpDeclaration = S.InfixOpDeclaration<QualifiedValueIdentifier>
 
@@ -34,11 +50,18 @@ and SingleValueExpression = S.SingleValueExpression<QualifiedModuleOrTypeIdentif
 and CompoundExpression = S.CompoundExpression<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
 and Expression = S.Expression<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
 
-
 type ValueDeclaration = S.ValueDeclaration<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
 
-type ValueAnnotation = S.ValueAnnotation<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+type ValueAnnotation = S.ValueAnnotation<QualifiedModuleOrTypeIdentifier>
 
+type Declaration = S.Declaration<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+
+
+type YlModule = S.YlModule<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+
+type YlProjectItem = S.YlProjectItem<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+
+type YlProject = S.YlProject<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
 
 
 

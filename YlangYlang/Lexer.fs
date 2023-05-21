@@ -79,8 +79,8 @@ type PrimitiveLiteral =
 type Identifier =
     | ModuleSegmentsOrQualifiedTypeOrVariant of QualifiedModuleOrTypeIdentifier // when it has dots in so it could be either a module name or refer to a (partially) qualified type or type variant
     | TypeNameOrVariantOrTopLevelModule of UnqualTypeOrModuleIdentifier // when there are no dots in the segments so it could be either a module name or just refer to a type or type variant. There's probably better ways of doing this less ambiguously. Atm I'm gonna leave that for the parsing stage, but it could be moved into the lexing stage at some point if we want to.
-    | SingleValueIdentifier of UnqualValueIdentifier
     | QualifiedPathValueIdentifier of QualifiedValueIdentifier
+    | SingleValueIdentifier of UnqualValueIdentifier
 
 
 
