@@ -1,6 +1,7 @@
 ﻿module NameResolution
 
 open Lexer
+open SyntaxTree
 open ConcreteSyntaxTree
 
 

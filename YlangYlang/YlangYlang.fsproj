@@ -8,12 +8,13 @@
     <Compile Include="Helpers.fs" />
     <Compile Include="FileHelpers.fs" />
     <Compile Include="Lexer.fs" />
-    <Compile Include="ConcreteSyntaxTree.fs" />
+    <Compile Include="SyntaxTree.fs" />
+    <Compile Include="CST.fs" />
+    <Compile Include="NameResolution.fs" />
+    <Compile Include="QualifiedCST.fs" />
     <Compile Include="Parser.fs" />
     <Compile Include="ExpressionParsing.fs" />
-    <Compile Include="NameResolution.fs" />
     <Compile Include="TypeChecker.fs" />
-    <Compile Include="AbstractSyntaxTree.fs" />
     <Compile Include="DebugHelpers.fs" />
   </ItemGroup>
 

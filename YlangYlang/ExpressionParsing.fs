@@ -3,6 +3,7 @@
 
 open System.Numerics
 open Lexer
+open SyntaxTree
 open ConcreteSyntaxTree
 open Parser
 
@@ -81,8 +82,7 @@ type private OpOrFunctionApplication =
 
 
 /// Injects CST node into the parser
-let addCstNode (parser : ExpressionParser<'a>) : ExpressionParser<CstNode<'a>> =
-    addParsedsAndMap ConcreteSyntaxTree.makeCstNode parser
+let addCstNode (parser : ExpressionParser<'a>) : ExpressionParser<CstNode<'a>> = addParsedsAndMap makeCstNode parser
 
 
 
@@ -1041,7 +1041,7 @@ let parseAliasDeclaration =
     succeed (fun ident generics expr ->
         (ident,
          Alias
-             { specifiedTypeParams = generics
+             { typeParams = generics
                referent = expr }))
     |. symbol AliasKeyword
     |. commit
@@ -1072,7 +1072,7 @@ let parseNewTypeDeclaration =
     succeed (fun ident generics firstVariant otherVariants ->
         (ident,
          Sum
-             { specifiedTypeParams = generics
+             { typeParams = generics
                variants = NEL.new_ firstVariant otherVariants }))
     |= (parseModuleAliasOrUnqualTypeName |> addCstNode)
     |= repeat (succeed id |. spaces |= parseSingleValueIdentifier)
