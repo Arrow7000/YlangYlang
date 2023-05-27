@@ -20,12 +20,15 @@ let liftResultFromCstNode (cstNode : S.CstNode<Result<'a, 'b>>) : Result<S.CstNo
     | Error err -> Error err
 
 
+let private convertTypeOrModuleIdentifierToIdentifier : TypeOrModuleIdentifier -> Identifier =
+    function
+    | QualifiedType ident -> ModuleSegmentsOrQualifiedTypeOrVariant ident
+    | UnqualType ident -> TypeNameOrVariantOrTopLevelModule ident
 
 
 
 
-
-let rec qualifyMentionableType
+let qualifyMentionableType
     (resolvedNames : NamesInScope)
     (unqual : C.MentionableType)
     : Result<MentionableType, Identifier list> =
@@ -76,11 +79,48 @@ let rec qualifyMentionableType
 
         | S.ReferencedType (typeName = typeName; typeParams = typeParams) ->
             let resolvedTypeName =
-                ResolvedNames.tryFindTypeDeclaration (S.getNode typeName) resolvedNames
+                NameResolution.tryFindTypeDeclaration (S.getNode typeName) resolvedNames
                 |> Option.map snd
 
-            match resolvedTypeName with
-            | Some name -> S.ReferencedType ()
+            let resolvedTypeParams =
+                typeParams
+                |> List.map (S.mapNode innerFunc >> liftResultFromCstNode)
+                |> Result.sequence
+                |> Result.mapError (NEL.toList >> List.concat)
+
+            match resolvedTypeName, resolvedTypeParams with
+            | Some { tokens = tokens; fullName = fullName }, Ok resolvedTypeParams' ->
+                S.ReferencedType (S.makeCstNode fullName tokens, resolvedTypeParams')
+                |> Ok
+            | None, Ok _ ->
+                convertTypeOrModuleIdentifierToIdentifier typeName.node
+                |> List.singleton
+                |> Error
+            | Some _, Error idents -> Error idents
+            | None, Error idents ->
+                (convertTypeOrModuleIdentifierToIdentifier typeName.node
+                 :: idents)
+                |> Error
+
+        | S.Arrow (fromType, toTypes) ->
+            let resolvedFrom =
+                S.mapNode innerFunc fromType
+                |> liftResultFromCstNode
+
+            let resolvedTos =
+                toTypes
+                |> NEL.map (S.mapNode innerFunc >> liftResultFromCstNode)
+                |> NEL.sequenceResult
+                |> Result.mapError (NEL.toList >> List.concat)
+
+            match resolvedFrom, resolvedTos with
+            | Ok first, Ok rest -> S.Arrow (first, rest) |> Ok
+
+            | Error err1, Error err2 -> Error (err1 @ err2)
+            | Ok _, Error err
+            | Error err, Ok _ -> Error err
+
+        | S.Parensed parensed -> innerFunc parensed.node
 
 
     innerFunc unqual

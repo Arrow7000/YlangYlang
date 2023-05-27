@@ -50,7 +50,8 @@ type VariantConstructor =
 
 type TypeDeclaration =
     { typeDecl : Cst.TypeDeclaration
-      fullName : FullyQualifiedUpperIdent }
+      fullName : FullyQualifiedUpperIdent
+      tokens : TokenWithSource list }
 
 
 
@@ -177,7 +178,8 @@ let addNewTypeDeclaration
             addNewRefWithTokens
                 (mapNode UnqualType name)
                 { typeDecl = value
-                  fullName = reifyUpper moduleName name.node }
+                  fullName = reifyUpper moduleName name.node
+                  tokens = name.source }
                 names.typeDeclarations }
 
 let addTypeConstructor
