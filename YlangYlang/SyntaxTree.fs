@@ -148,10 +148,6 @@ type CompoundValues<'Upper, 'Lower when 'Lower : comparison> =
         recordToExtend : CstNode<Lexer.UnqualValueIdentifier> *
         additions : NEL<CstNode<Lexer.UnqualValueIdentifier> * CstNode<Expression<'Upper, 'Lower>>>
 
-// Not sure yet if it makes sense to have this as a separate type
-and CustomTypeValues<'Upper, 'Lower when 'Lower : comparison> =
-    { label : CstNode<Lexer.UnqualTypeOrModuleIdentifier>
-      values : CstNode<Expression<'Upper, 'Lower>> list }
 
 and FunctionValue<'Upper, 'Lower when 'Lower : comparison> =
     { params_ : NEL<CstNode<AssignmentPattern<'Upper>>> // cos if it didn't have any then it would just be a regular value expression
@@ -161,7 +157,6 @@ and FunctionValue<'Upper, 'Lower when 'Lower : comparison> =
 and ExplicitValue<'Upper, 'Lower when 'Lower : comparison> =
     | Compound of CompoundValues<'Upper, 'Lower>
     | Primitive of PrimitiveLiteralValue
-    | CustomTypeVariant of CustomTypeValues<'Upper, 'Lower>
 
     // functions and other values might be unified by just giving all values a possibly-empty list of parameters
     | Function of FunctionValue<'Upper, 'Lower> // for the parameters

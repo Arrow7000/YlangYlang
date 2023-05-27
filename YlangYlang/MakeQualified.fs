@@ -26,11 +26,20 @@ let liftResultFromCstNode (cstNode : S.CstNode<Result<'a, 'b>>) : Result<S.CstNo
     | Ok ok -> Ok <| S.makeCstNode ok cstNode.source
     | Error err -> Error err
 
+let liftOptionFromCstNode (cstNode : S.CstNode<'a option>) : S.CstNode<'a> option =
+    match cstNode.node with
+    | Some ok -> Some <| S.makeCstNode ok cstNode.source
+    | None -> None
 
 let private convertTypeOrModuleIdentifierToIdentifier : TypeOrModuleIdentifier -> Identifier =
     function
     | QualifiedType ident -> ModuleSegmentsOrQualifiedTypeOrVariant ident
     | UnqualType ident -> TypeNameOrVariantOrTopLevelModule ident
+
+let private convertValueIdentifierToIdentifier : ValueIdentifier -> Identifier =
+    function
+    | QualifiedValue ident -> QualifiedPathValueIdentifier ident
+    | UnqualValue ident -> SingleValueIdentifier ident
 
 
 
@@ -203,6 +212,88 @@ let qualifyTypeDeclaration resolvedNames declaration : Result<TypeDeclaration, I
         | Error err -> Error err
 
 
+let rec qualifyDestructuredPattern
+    (resolvedNames : NamesInScope)
+    (destructuredPattern : C.DestructuredPattern)
+    : Result<DestructuredPattern, Identifier list> =
+    match destructuredPattern with
+    | S.DestructuredRecord record -> Ok <| S.DestructuredRecord record
+    | S.DestructuredTuple tuple ->
+        tuple
+        |> TOM.map (
+            S.mapNode (qualifyAssignmentPattern resolvedNames)
+            >> liftResultFromCstNode
+        )
+        |> TOM.sequenceResult
+        |> Result.mapError (NEL.toList >> List.concat)
+        |> Result.map S.DestructuredTuple
+
+
+
+    | S.DestructuredCons pattern ->
+        pattern
+        |> TOM.map (
+            S.mapNode (qualifyAssignmentPattern resolvedNames)
+            >> liftResultFromCstNode
+        )
+        |> TOM.sequenceResult
+        |> Result.mapError (NEL.toList >> List.concat)
+        |> Result.map S.DestructuredCons
+
+    | S.DestructuredTypeVariant (ctor, params') ->
+        let resolvedCtor =
+            ctor
+            |> S.mapNode (fun ctor' ->
+                NameResolution.tryFindTypeConstructor ctor' resolvedNames
+                |> Option.map (fun (_, variant) -> variant.fullName))
+            |> liftOptionFromCstNode
+
+        let resolvedParams =
+            params'
+            |> List.map (
+                S.mapNode (qualifyAssignmentPattern resolvedNames)
+                >> liftResultFromCstNode
+            )
+            |> Result.sequence
+            |> Result.mapError (NEL.toList >> List.concat)
+
+        match resolvedCtor, resolvedParams with
+        | Some resolvedCtor', Ok resolvedParams' ->
+            S.DestructuredTypeVariant (resolvedCtor', resolvedParams')
+            |> Ok
+        | None, Ok _ ->
+            convertTypeOrModuleIdentifierToIdentifier ctor.node
+            |> List.singleton
+            |> Error
+        | Some _, Error err -> Error err
+        | None, Error err ->
+            (convertTypeOrModuleIdentifierToIdentifier ctor.node
+             :: err)
+            |> Error
+
+and qualifyAssignmentPattern
+    (resolvedNames : NamesInScope)
+    (assignmentPattern : C.AssignmentPattern)
+    : Result<AssignmentPattern, Identifier list> =
+    match assignmentPattern with
+    | S.Named name -> Ok <| S.Named name
+    | S.Ignored -> Ok S.Ignored
+    | S.Unit -> Ok S.Unit
+    | S.DestructuredPattern pattern ->
+        qualifyDestructuredPattern resolvedNames pattern
+        |> Result.map S.DestructuredPattern
+    | S.Aliased (pattern, alias) ->
+        let qualifiedPattern =
+            S.mapNode (qualifyAssignmentPattern resolvedNames) pattern
+            |> liftResultFromCstNode
+
+        match qualifiedPattern with
+        | Ok pattern' -> S.Aliased (pattern', alias) |> Ok
+        | Error err -> Error err
+
+
+
+
 
 
 let rec qualifyCompoundExpression resolvedNames compExpr =
@@ -249,23 +340,13 @@ let rec qualifyCompoundExpression resolvedNames compExpr =
 
 
 
-and qualifyExpression resolvedNames (expression : C.Expression) : Result<Expression, Identifier list> =
+and qualifyExpression (resolvedNames : NamesInScope) (expression : C.Expression) : Result<Expression, Identifier list> =
     match expression with
     | S.ParensedExpression expr -> qualifyExpression resolvedNames expr
     | S.SingleValueExpression singleExpr ->
         match singleExpr with
         | S.ExplicitValue expl ->
             match expl with
-            | S.Primitive prim ->
-                S.Primitive prim
-                |> S.ExplicitValue
-                |> S.SingleValueExpression
-                |> Ok
-            | S.DotGetter field ->
-                S.DotGetter field
-                |> S.ExplicitValue
-                |> S.SingleValueExpression
-                |> Ok
             | S.Compound comp ->
                 qualifyCompoundExpression resolvedNames comp
                 |> Result.map (
@@ -274,7 +355,91 @@ and qualifyExpression resolvedNames (expression : C.Expression) : Result<Express
                     >> S.SingleValueExpression
                 )
 
+            | S.Primitive prim ->
+                S.Primitive prim
+                |> S.ExplicitValue
+                |> S.SingleValueExpression
+                |> Ok
 
+            | S.DotGetter field ->
+                S.DotGetter field
+                |> S.ExplicitValue
+                |> S.SingleValueExpression
+                |> Ok
+
+            | S.Function ({ params_ = params_; body = body } as funcParams) ->
+                let qualifiedParams =
+                    params_
+                    |> NEL.map (
+                        S.mapNode (qualifyAssignmentPattern resolvedNames)
+                        >> liftResultFromCstNode
+                    )
+                    |> NEL.sequenceResult
+                    |> Result.mapError (NEL.toList >> List.concat)
+
+
+                let resolvedWithFuncParams =
+                    NameResolution.combineResolvedNamesMaps [ resolvedNames
+                                                              resolveFuncParams funcParams ]
+
+                let qualified =
+                    S.mapNode (qualifyExpression resolvedWithFuncParams) body
+                    |> liftResultFromCstNode
+
+                match qualified, qualifiedParams with
+                | Ok expr, Ok params' ->
+                    S.Function { body = expr; params_ = params' }
+                    |> S.ExplicitValue
+                    |> S.SingleValueExpression
+                    |> Ok
+                | Ok _, Error err
+                | Error err, Ok _ -> Error err
+                | Error err1, Error err2 -> Error (err1 @ err2)
+
+        | S.UpperIdentifier upper ->
+            let resolved =
+                NameResolution.tryFindTypeConstructor upper resolvedNames
+                |> Option.map snd
+
+            match resolved with
+            | Some res ->
+                S.UpperIdentifier res.fullName
+                |> S.SingleValueExpression
+                |> Ok
+            | None ->
+                convertTypeOrModuleIdentifierToIdentifier upper
+                |> List.singleton
+                |> Error
+
+        | S.LowerIdentifier lower ->
+            let resolved = NameResolution.tryFindValue lower resolvedNames
+
+            match resolved with
+            | Some res ->
+                match res with
+                | LocalName _
+                | Param _ ->
+                    match lower with
+                    | QualifiedValue qual ->
+                        failwithf
+                            "This shouldn't be possible. To fix this we'd need to create another lowercase name resolution map exclusively for qualified value paths"
+                    | UnqualValue (UnqualValueIdentifier unqual) ->
+                        LowerIdent unqual
+                        |> LocalVariableOrParamIdent
+                        |> LocalOrParam
+                        |> S.LowerIdentifier
+                        |> S.SingleValueExpression
+                        |> Ok
+                | TopLevelName topLevel ->
+                    TopLevelValue topLevel.fullName
+                    |> S.LowerIdentifier
+                    |> S.SingleValueExpression
+                    |> Ok
+
+            | None ->
+                convertValueIdentifierToIdentifier lower
+                |> List.singleton
+                |> Error
 
 let qualifyModuleNames (ylModule : C.YlModule) : Result<YlModule, Identifier list> =
     let moduleResolvedNames = resolveModuleBindings ylModule

@@ -25,6 +25,10 @@ type PathToDestructuredName =
 
 
 
+type LowerCaseTopLevel =
+    { tokens : TokenWithSource list
+      assignedExpression : Cst.Expression
+      fullName : FullyQualifiedTopLevelLowerIdent }
 
 type LowerCaseName =
     | LocalName of
@@ -34,10 +38,8 @@ type LowerCaseName =
     | Param of
         {| tokens : TokenWithSource list
            assignmentPattern : PathToDestructuredName |}
-    | TopLevelName of
-        {| tokens : TokenWithSource list
-           assignedExpression : Cst.Expression
-           fullName : FullyQualifiedTopLevelLowerIdent |}
+    | TopLevelName of LowerCaseTopLevel
+
 
 
 
@@ -438,7 +440,6 @@ let rec resolveExpressionBindings (expression : Cst.Expression) : NamesInScope =
             | Compound _ -> empty
 
             | Primitive _ -> empty
-            | CustomTypeVariant _ -> empty
             | Function funcVal -> resolveFuncParams funcVal
             | DotGetter _ -> empty
         | UpperIdentifier _ -> empty
@@ -473,9 +474,9 @@ let resolveModuleBindings (ylModule : Cst.YlModule) : NamesInScope =
             |> addValue
                 (mapNode UnqualValue valueName)
                 (TopLevelName
-                    {| tokens = valueName.source
-                       assignedExpression = value.node
-                       fullName = reifyLower moduleName valueName.node |})
+                    { tokens = valueName.source
+                      assignedExpression = value.node
+                      fullName = reifyLower moduleName valueName.node })
 
     ylModule.declarations
     |> List.map resolveSingleDeclaration

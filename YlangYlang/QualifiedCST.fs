@@ -39,6 +39,12 @@ type AliasedTopLevelLowerIdent = | AliasedTopLevelLowerIdent of moduleAlias : Mo
 
 
 
+type LowerNameValue =
+    | TopLevelValue of FullyQualifiedTopLevelLowerIdent
+    | LocalOrParam of LocalVariableOrParamIdent
+
+
+
 
 /// Top level because only top level types/values can be exposed/imported
 type TopLevelUpperIdent =
@@ -81,27 +87,26 @@ type AliasDeclaration = S.AliasDeclaration<FullyQualifiedUpperIdent>
 
 type TypeDeclaration = S.TypeDeclaration<FullyQualifiedUpperIdent>
 
-type InfixOpDeclaration = S.InfixOpDeclaration<FullyQualifiedTopLevelLowerIdent>
+type InfixOpDeclaration = S.InfixOpDeclaration<LowerNameValue>
 
-type CompoundValues = S.CompoundValues<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
-and CustomTypeValues = S.CustomTypeValues<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
-and FunctionValue = S.FunctionValue<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
-and ExplicitValue = S.ExplicitValue<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
-and LetBinding = S.LetBinding<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
-and ControlFlowExpression = S.ControlFlowExpression<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
-and SingleValueExpression = S.SingleValueExpression<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
-and CompoundExpression = S.CompoundExpression<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
-and Expression = S.Expression<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+type CompoundValues = S.CompoundValues<FullyQualifiedUpperIdent, LowerNameValue>
+and FunctionValue = S.FunctionValue<FullyQualifiedUpperIdent, LowerNameValue>
+and ExplicitValue = S.ExplicitValue<FullyQualifiedUpperIdent, LowerNameValue>
+and LetBinding = S.LetBinding<FullyQualifiedUpperIdent, LowerNameValue>
+and ControlFlowExpression = S.ControlFlowExpression<FullyQualifiedUpperIdent, LowerNameValue>
+and SingleValueExpression = S.SingleValueExpression<FullyQualifiedUpperIdent, LowerNameValue>
+and CompoundExpression = S.CompoundExpression<FullyQualifiedUpperIdent, LowerNameValue>
+and Expression = S.Expression<FullyQualifiedUpperIdent, LowerNameValue>
 
-type ValueDeclaration = S.ValueDeclaration<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+type ValueDeclaration = S.ValueDeclaration<FullyQualifiedUpperIdent, LowerNameValue>
 
 type ValueAnnotation = S.ValueAnnotation<FullyQualifiedUpperIdent>
 
-type Declaration = S.Declaration<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+type Declaration = S.Declaration<FullyQualifiedUpperIdent, LowerNameValue>
 
 
-type YlModule = S.YlModule<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+type YlModule = S.YlModule<FullyQualifiedUpperIdent, LowerNameValue>
 
-type YlProjectItem = S.YlProjectItem<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+type YlProjectItem = S.YlProjectItem<FullyQualifiedUpperIdent, LowerNameValue>
 
-type YlProject = S.YlProject<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+type YlProject = S.YlProject<FullyQualifiedUpperIdent, LowerNameValue>
