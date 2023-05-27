@@ -2,6 +2,7 @@
 
 open Lexer
 module S = SyntaxTree
+module C = ConcreteSyntaxTree
 
 open NameResolution
 open QualifiedSyntaxTree
@@ -25,7 +26,7 @@ let liftResultFromCstNode (cstNode : S.CstNode<Result<'a, 'b>>) : Result<S.CstNo
 
 
 let rec qualifyMentionableType
-    (resolvedNames : ResolvedNames.NamesInScope)
+    (resolvedNames : NamesInScope)
     (unqual : C.MentionableType)
     : Result<MentionableType, Identifier list> =
     let rec innerFunc mentionableType : Result<MentionableType, Identifier list> =

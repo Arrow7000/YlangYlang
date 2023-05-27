@@ -30,9 +30,11 @@ type FullyQualifiedUpperIdent = | FullyQualifiedUpperIdent of module_ : ModulePa
 type FullyQualifiedTopLevelLowerIdent = | FullyQualifiedTopLevelLowerIdent of module_ : ModulePath * name : LowerIdent
 
 
+
+/// For imports under an aliased module name
 type AliasedUpperIdent = | AliasedUpperIdent of moduleAlias : ModuleAlias * name : UpperIdent
 
-
+/// For imports under an aliased module name
 type AliasedTopLevelLowerIdent = | AliasedTopLevelLowerIdent of moduleAlias : ModuleAlias * name : LowerIdent
 
 
