@@ -12,8 +12,9 @@
     <Compile Include="CST.fs" />
     <Compile Include="Parser.fs" />
     <Compile Include="ExpressionParsing.fs" />
-    <Compile Include="NameResolution.fs" />
     <Compile Include="QualifiedCST.fs" />
+    <Compile Include="NameResolution.fs" />
+    <Compile Include="MakeQualified.fs" />
     <Compile Include="TypeChecker.fs" />
     <Compile Include="DebugHelpers.fs" />
   </ItemGroup>

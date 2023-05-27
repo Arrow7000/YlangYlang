@@ -1,162 +1,105 @@
-﻿module QualifiedSyntaxTree
+﻿/// The CST with canonical, fully qualified names - where applicable
+module QualifiedSyntaxTree
 
 open Lexer
 module S = SyntaxTree
 module C = ConcreteSyntaxTree
+//open NameResolution
 
 
-/// Fully qualified module path
-type FullyQualifiedModule = FullyQualifiedModule of string nel
+/// E.g. `module Page.Investigate.Aggregations`
+type ModulePath = | ModulePath of string nel
+
+/// A local alias for a module. E.g. `import Thing.Thang as Th`. Can't consist of multiple segments.
+type ModuleAlias = | ModuleAlias of string
+
+
+/// For names of types, type aliases, and constructors; but NOT for module paths. Use `ModulePath` for those.
+type UpperIdent = | UpperIdent of string
+
+/// For names of values, parameters or destructured fields
+type LowerIdent = | LowerIdent of string
+
+
+type LocalVariableOrParamIdent = | LocalVariableOrParamIdent of LowerIdent
 
 /// Fully qualified type or type alias name
-type FullyQualifiedTypeIdent = FullyQualifiedTypeIdent of string nel
+type FullyQualifiedUpperIdent = | FullyQualifiedUpperIdent of module_ : ModulePath * name : UpperIdent
 
 /// Fully qualified named value
-type FullyQualifiedValueIdent = FullyQualifiedValueIdent of string nel
+type FullyQualifiedTopLevelLowerIdent = | FullyQualifiedTopLevelLowerIdent of module_ : ModulePath * name : LowerIdent
 
 
+type AliasedUpperIdent = | AliasedUpperIdent of moduleAlias : ModuleAlias * name : UpperIdent
 
 
+type AliasedTopLevelLowerIdent = | AliasedTopLevelLowerIdent of moduleAlias : ModuleAlias * name : LowerIdent
 
 
 
-type DestructuredPattern = S.DestructuredPattern<QualifiedModuleOrTypeIdentifier>
-and AssignmentPattern = S.AssignmentPattern<QualifiedModuleOrTypeIdentifier>
 
+/// Top level because only top level types/values can be exposed/imported
+type TopLevelUpperIdent =
+    /// Doesn't necessarily mean defined in this module, could also mean imported into this module; either explicitly or by exposing all
+    | InThisModule of UpperIdent
+    /// When it's a fully qualified reference to a type/value from a different module
+    | OtherModuleFull of FullyQualifiedUpperIdent
+    /// When it's a qualified reference, but qualified by an alias
+    | OtherModuleAliased of AliasedUpperIdent
 
-type MentionableType = S.MentionableType<QualifiedModuleOrTypeIdentifier>
-and TupleType = S.TupleType<QualifiedModuleOrTypeIdentifier>
-and RecordType = S.RecordType<QualifiedModuleOrTypeIdentifier>
-and ExtendedRecordType = S.ExtendedRecordType<QualifiedModuleOrTypeIdentifier>
+/// Top level because only top level types/values can be exposed/imported
+type TopLevelLowerIdent =
+    /// Doesn't necessarily mean defined in this module, could also mean imported into this module; either explicitly or by exposing all
+    | InThisModule of LowerIdent
+    /// When it's a fully qualified reference to a type/value from a different module
+    | OtherModuleFull of FullyQualifiedTopLevelLowerIdent
+    /// When it's a qualified reference, but qualified by an alias
+    | OtherModuleAliased of AliasedTopLevelLowerIdent
 
 
-type VariantCase = S.VariantCase<QualifiedModuleOrTypeIdentifier>
 
-type NewTypeDeclaration = S.NewTypeDeclaration<QualifiedModuleOrTypeIdentifier>
 
-type AliasDeclaration = S.AliasDeclaration<QualifiedModuleOrTypeIdentifier>
 
-type TypeDeclaration = S.TypeDeclaration<QualifiedModuleOrTypeIdentifier>
 
-type InfixOpDeclaration = S.InfixOpDeclaration<QualifiedValueIdentifier>
+type DestructuredPattern = S.DestructuredPattern<FullyQualifiedUpperIdent>
+and AssignmentPattern = S.AssignmentPattern<FullyQualifiedUpperIdent>
 
-type CompoundValues = S.CompoundValues<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
-and CustomTypeValues = S.CustomTypeValues<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
-and FunctionValue = S.FunctionValue<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
-and ExplicitValue = S.ExplicitValue<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
-and LetBinding = S.LetBinding<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
-and ControlFlowExpression = S.ControlFlowExpression<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
-and SingleValueExpression = S.SingleValueExpression<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
-and CompoundExpression = S.CompoundExpression<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
-and Expression = S.Expression<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
 
-type ValueDeclaration = S.ValueDeclaration<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+type MentionableType = S.MentionableType<FullyQualifiedUpperIdent>
+and TupleType = S.TupleType<FullyQualifiedUpperIdent>
+and RecordType = S.RecordType<FullyQualifiedUpperIdent>
+and ExtendedRecordType = S.ExtendedRecordType<FullyQualifiedUpperIdent>
 
-type ValueAnnotation = S.ValueAnnotation<QualifiedModuleOrTypeIdentifier>
 
-type Declaration = S.Declaration<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+type VariantCase = S.VariantCase<FullyQualifiedUpperIdent>
 
+type NewTypeDeclaration = S.NewTypeDeclaration<FullyQualifiedUpperIdent>
 
-type YlModule = S.YlModule<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+type AliasDeclaration = S.AliasDeclaration<FullyQualifiedUpperIdent>
 
-type YlProjectItem = S.YlProjectItem<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+type TypeDeclaration = S.TypeDeclaration<FullyQualifiedUpperIdent>
 
-type YlProject = S.YlProject<QualifiedModuleOrTypeIdentifier, QualifiedValueIdentifier>
+type InfixOpDeclaration = S.InfixOpDeclaration<FullyQualifiedTopLevelLowerIdent>
 
+type CompoundValues = S.CompoundValues<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+and CustomTypeValues = S.CustomTypeValues<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+and FunctionValue = S.FunctionValue<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+and ExplicitValue = S.ExplicitValue<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+and LetBinding = S.LetBinding<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+and ControlFlowExpression = S.ControlFlowExpression<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+and SingleValueExpression = S.SingleValueExpression<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+and CompoundExpression = S.CompoundExpression<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
+and Expression = S.Expression<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
 
+type ValueDeclaration = S.ValueDeclaration<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
 
+type ValueAnnotation = S.ValueAnnotation<FullyQualifiedUpperIdent>
 
+type Declaration = S.Declaration<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
 
-let qualifyValueNames
 
+type YlModule = S.YlModule<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
 
+type YlProjectItem = S.YlProjectItem<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>
 
-
-let qualifyDestructuredPattern (moduleCtx : ) (unqual : C.DestructuredPattern) : DestructuredPattern =
-    match unqual with
-    | S.DestructuredRecord content -> S.DestructuredRecord content
-    | S.DestructuredTuple content -> S.DestructuredTuple content
-    | S.DestructuredCons content -> S.DestructuredCons content
-    | S.DestructuredTypeVariant (a,b) -> S.DestructuredTypeVariant (a,b)
-    
-
-let qualifyAssignmentPattern (moduleCtx : ) (unqual : C.AssignmentPattern) : AssignmentPattern =
-    match unqual with
-
-
-let qualifyMentionableType (moduleCtx : ) (unqual : C.MentionableType) : MentionableType =
-    match unqual with
-
-
-let qualifyTupleType (moduleCtx : ) (unqual : C.TupleType) : TupleType =
-    match unqual with
-
-
-let qualifyRecordType (moduleCtx : ) (unqual : C.RecordType) : RecordType =
-    match unqual with
-
-
-let qualifyExtendedRecordType (moduleCtx : ) (unqual : C.ExtendedRecordType) : ExtendedRecordType =
-    match unqual with
-
-
-let qualifyVariantCase (moduleCtx : ) (unqual : C.VariantCase) : VariantCase =
-    match unqual with
-
-
-let qualifyNewTypeDeclaration (moduleCtx : ) (unqual : C.NewTypeDeclaration) : NewTypeDeclaration =
-    match unqual with
-
-
-let qualifyAliasDeclaration (moduleCtx : ) (unqual : C.AliasDeclaration) : AliasDeclaration =
-    match unqual with
-
-
-let qualifyTypeDeclaration (moduleCtx : ) (unqual : C.TypeDeclaration) : TypeDeclaration =
-    match unqual with
-
-
-let qualifyCompoundValues (moduleCtx : ) (unqual : C.CompoundValues) : CompoundValues =
-    match unqual with
-
-
-let qualifyCustomTypeValues (moduleCtx : ) (unqual : C.CustomTypeValues) : CustomTypeValues =
-    match unqual with
-
-
-let qualifyFunctionValue (moduleCtx : ) (unqual : C.FunctionValue) : FunctionValue =
-    match unqual with
-
-
-let qualifyExplicitValue (moduleCtx : ) (unqual : C.ExplicitValue) : ExplicitValue =
-    match unqual with
-
-
-let qualifyLetBinding (moduleCtx : ) (unqual : C.LetBinding) : LetBinding =
-    match unqual with
-
-
-let qualifyControlFlowExpression (moduleCtx : ) (unqual : C.ControlFlowExpression) : ControlFlowExpression =
-    match unqual with
-
-
-let qualifySingleValueExpression (moduleCtx : ) (unqual : C.SingleValueExpression) : SingleValueExpression =
-    match unqual with
-
-
-let qualifyCompoundExpression (moduleCtx : ) (unqual : C.CompoundExpression) : CompoundExpression =
-    match unqual with
-
-
-let qualifyExpression (moduleCtx : ) (unqual : C.Expression) : Expression =
-    match unqual with
-
-
-let qualifyValueDeclaration (moduleCtx : ) (unqual : C.ValueDeclaration) : ValueDeclaration =
-    match unqual with
-
-
-let qualifyValueAnnotation (moduleCtx : ) (unqual : C.ValueAnnotation) : ValueAnnotation =
-    match unqual with
-
-
+type YlProject = S.YlProject<FullyQualifiedUpperIdent, FullyQualifiedTopLevelLowerIdent>

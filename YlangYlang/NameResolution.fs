@@ -2,24 +2,19 @@
 
 open Lexer
 open SyntaxTree
-open ConcreteSyntaxTree
+
+module Cst = ConcreteSyntaxTree
+open QualifiedSyntaxTree
 
 
-/// Denotes either a single instance of a named value, or 2 or more instances, which means the named value is a duplicate, which is a compile error
-type SingleOrDuplicate<'a> =
-    | Single of 'a
-    | Duplicate of TwoOrMore<'a>
-
-    static member map (f : 'a -> 'b) sod =
-        match sod with
-        | Single a -> Single (f a)
-        | Duplicate tom -> Duplicate (TOM.map f tom)
 
 
-    static member getFirst (sod : SingleOrDuplicate<'a>) =
-        match sod with
-        | Single a -> a
-        | Duplicate tom -> TOM.head tom
+
+//type NameResolution<'a> =
+//    { tokens : TokenWithSource list
+//      /// The stuff the name is actually referencing
+//      nameContent : 'a
+//      fullyQualifiedName : string }
 
 /// Type that describes the path to where a given name is declared.
 /// @TODO: hmmm how do we capture the fact that a name is the nth parameter of a function...? Maybe we don't need to actually? Because the name itself references it?
@@ -34,29 +29,62 @@ type PathToDestructuredName =
 
 
 
+
+
+type LowerCaseName =
+    | LocalName of
+        {| tokens : TokenWithSource list
+           assignmentPattern : PathToDestructuredName
+           assignedExpression : Cst.Expression |}
+    | Param of
+        {| tokens : TokenWithSource list
+           assignmentPattern : PathToDestructuredName |}
+    | TopLevelName of
+        {| tokens : TokenWithSource list
+           assignedExpression : Cst.Expression
+           fullName : FullyQualifiedTopLevelLowerIdent |}
+
+///// Get the identifier without any module qualification paths, if there are any
+//static member singleName nameRes =
+//    match nameRes with
+//    | LocalName local ->
+//        let (LocalVariableOrParamIdent name) = local.localName
+//        name
+//    | Param param ->
+//        let (LocalVariableOrParamIdent name) = param.paramName
+//        name
+//    | TopLevelName top ->
+//        let (FullyQualifiedTopLevelLowerIdent qualifiedNamePath) = top.fullName
+//        NEL.last qualifiedNamePath
+
+
+
+type VariantConstructor =
+    { typeName : TypeOrModuleIdentifier
+      typeDeclaration : Cst.NewTypeDeclaration
+      variantParams : Cst.MentionableType list }
+
+
+
+//type ValueOrParameter =
+//    | Value of assignmentPattern : PathToDestructuredName * assignedExpression : Expression
+//    /// If this assignment pattern is an alias for a greater deconstructed parameter expression, or just a function or match expression case parameter
+//    | Parameter of subPattern : PathToDestructuredName
+
+
+
 module ResolvedNames =
-
-    type TypeDeclarations = Map<TypeOrModuleIdentifier, SingleOrDuplicate<TokenWithSource list * TypeDeclaration>>
-
-    type VariantConstructor =
-        { typeName : TypeOrModuleIdentifier
-          typeDeclaration : NewTypeDeclaration
-          variantParams : MentionableType list }
+    type TypeDeclarations = Map<TypeOrModuleIdentifier, SingleOrDuplicate<TokenWithSource list * Cst.TypeDeclaration>>
 
     type TypeConstructors = Map<TypeOrModuleIdentifier, SingleOrDuplicate<TokenWithSource list * VariantConstructor>>
 
-    type ValueOrParameter =
-        | Value of assignmentPattern : PathToDestructuredName * assignedExpression : Expression
-        /// If this assignment pattern is an alias for a greater deconstructed parameter expression, or just a function or match expression case parameter
-        | Parameter of subPattern : PathToDestructuredName
+    type ValueDeclarations = Map<ValueIdentifier, SingleOrDuplicate<LowerCaseName>>
 
-    type ValueDeclarations = Map<UnqualValueIdentifier, SingleOrDuplicate<TokenWithSource list * ValueOrParameter>>
-
-    type ValueTypeDeclarations = Map<UnqualValueIdentifier, SingleOrDuplicate<TokenWithSource list * MentionableType>>
+    type ValueTypeDeclarations = Map<ValueIdentifier, SingleOrDuplicate<TokenWithSource list * Cst.MentionableType>>
 
 
 
-    type ResolvedNames =
+    type NamesInScope =
         { typeDeclarations : TypeDeclarations
           typeConstructors : TypeConstructors
           valueDeclarations : ValueDeclarations
@@ -71,22 +99,39 @@ module ResolvedNames =
 
     let private getFromMap name =
         Map.tryFind name
+        // @TODO: might need to bubble up that there are duplicates here, to prevent shadowing - but only for things in the same module, top-level declarations are allowed to be duplicated, even if the namespaces are imported wholesale.
+        // @TODO: need to look into if explicit imports are allowed if that leads to a name clash.
         >> Option.map SingleOrDuplicate.getFirst
 
 
-    let tryFindTypeDeclaration name { typeDeclarations = nameMap } : (TknSrc list * TypeDeclaration) option =
+    let tryFindTypeDeclaration
+        (name : TypeOrModuleIdentifier)
+        { typeDeclarations = nameMap }
+        : (TknSrc list * Cst.TypeDeclaration) option =
         getFromMap name nameMap
 
-    let tryFindTypeConstructor name { typeConstructors = nameMap } : (TknSrc list * VariantConstructor) option =
+    let tryFindTypeConstructor
+        (name : TypeOrModuleIdentifier)
+        { typeConstructors = nameMap }
+        : (TknSrc list * VariantConstructor) option =
         getFromMap name nameMap
 
-    let tryFindValue name { valueDeclarations = nameMap } : (TknSrc list * ValueOrParameter) option =
+    let tryFindValue (name : ValueIdentifier) { valueDeclarations = nameMap } : LowerCaseName option =
         getFromMap name nameMap
 
-    let tryFindValueTypeDeclarations name { valueTypeDeclarations = nameMap } : (TknSrc list * MentionableType) option =
+    let tryFindValueTypeDeclarations
+        (name : ValueIdentifier)
+        { valueTypeDeclarations = nameMap }
+        : (TknSrc list * Cst.MentionableType) option =
         getFromMap name nameMap
 
 
+    let tryFindValueAndTypeDeclaration
+        (name : ValueIdentifier)
+        { valueDeclarations = vals
+          valueTypeDeclarations = types }
+        =
+        getFromMap name vals, getFromMap name types |> Option.map snd
 
 
 
@@ -102,70 +147,65 @@ module ResolvedNames =
 
 
     /// Useful lil' map to roll up all param declarations more easily
-    type ResolvedParams = Map<UnqualValueIdentifier, SingleOrDuplicate<TokenWithSource list * PathToDestructuredName>>
+    type ParamsInScope = Map<UnqualValueIdentifier, SingleOrDuplicate<TokenWithSource list * PathToDestructuredName>>
 
     /// Primarily useful to set sub-destructured params into their sub-path reference paths
-    let mapResolvedParams f (resolvedParams : ResolvedParams) : ResolvedParams =
+    let mapResolvedParams f (resolvedParams : ParamsInScope) : ParamsInScope =
         Map.map (fun _ -> SingleOrDuplicate.map (fun (tokens, reference) -> tokens, f reference)) resolvedParams
 
 
-    let addNewParamReference ident path (resolvedParams : ResolvedParams) : ResolvedParams =
+    let addNewParamReference ident path (resolvedParams : ParamsInScope) : ParamsInScope =
         Map.change
-            (ident.node)
+            ident.node
             (fun oldValueOpt ->
                 let newValueAndPath = ident.source, path
 
                 match oldValueOpt with
+                | None -> Some (Single newValueAndPath)
                 | Some (Single oldRef) -> Some (Duplicate <| TOM.make newValueAndPath oldRef)
-                | Some (Duplicate refList) -> Some (Duplicate <| TOM.cons newValueAndPath refList)
-                | None -> Some (Single newValueAndPath))
+                | Some (Duplicate refList) -> Some (Duplicate <| TOM.cons newValueAndPath refList))
             resolvedParams
 
 
 
 
-    /// This should be threaded back up to feed back on unresolved names errors
-    /// Hmmm, I'm not entirely sure whether  this should be passed up, or whether we should resolve all the names at every scope level first, and then only feed things back up if a name can't be resolved.
-    type UnresolvedNames = Set<UnqualIdentifier>
+    /// This stores a new declared type/value/param/etc in its map...
+    /// @TODO: but question is... currently it stores it solely in the unqualified form (I think), but it should also store it in its fully qualified, and locally findable form - i.e. if it's been explicitly imported,referenced under a module alias, namespace opened, etc.
+    /// So hmmm..... maybe we should instead store it under its full namespace *only*, and have separate mappings for the locally accessible versions
+    let addNewReference (declaredIdent : CstNode<'name>) (value : 'v) (map : Map<'name, SingleOrDuplicate<'v>>) =
+        map
+        |> Map.change declaredIdent.node (fun oldValueOpt ->
+            match oldValueOpt with
+            | Some (Single oldRef) -> Some (Duplicate <| TOM.make value oldRef)
+            | Some (Duplicate refList) -> Some (Duplicate <| TOM.cons value refList)
+            | None -> Some (Single value))
 
-
-
-
-    let addNewReference
+    let addNewRefWithTokens
         (ident : CstNode<'name>)
         (value : 'v)
         (map : Map<'name, SingleOrDuplicate<TokenWithSource list * 'v>>)
         =
-        map
-        |> Map.change (ident.node) (fun oldValueOpt ->
-            let newValueAndPath = ident.source, value
-
-            match oldValueOpt with
-            | Some (Single oldRef) -> Some (Duplicate <| TOM.make newValueAndPath oldRef)
-            | Some (Duplicate refList) -> Some (Duplicate <| TOM.cons newValueAndPath refList)
-            | None -> Some (Single newValueAndPath))
-
-
+        addNewReference ident (ident.source, value) map
 
 
     let addNewTypeDeclaration name value names =
-        { names with typeDeclarations = addNewReference name value names.typeDeclarations }
+        { names with typeDeclarations = addNewRefWithTokens name value names.typeDeclarations }
 
     let addTypeConstructor variantName variantParams typeName typeDeclaration names =
         { names with
             typeConstructors =
-                addNewReference
+                addNewRefWithTokens
                     variantName
                     { typeName = typeName
                       typeDeclaration = typeDeclaration
                       variantParams = variantParams }
                     names.typeConstructors }
 
-    let addValue name value names : ResolvedNames =
+    let addValue name value names : NamesInScope =
         { names with valueDeclarations = addNewReference name value names.valueDeclarations }
 
     let addValueTypeDeclaration name value names =
-        { names with valueTypeDeclarations = addNewReference name value names.valueTypeDeclarations }
+        { names with valueTypeDeclarations = addNewRefWithTokens name value names.valueTypeDeclarations }
 
 
 
@@ -197,7 +237,7 @@ module ResolvedNames =
 
 
 
-    let combineResolvedNamesMaps (mapList : ResolvedNames seq) =
+    let combineResolvedNamesMaps (mapList : NamesInScope seq) =
         let typeDeclarations = Seq.map getTypeDeclarations mapList
         let typeConstructors = Seq.map getTypeConstructors mapList
         let values = Seq.map getValueDeclarations mapList
@@ -248,28 +288,31 @@ let combineReferenceMaps (mapList : Map<'a, SingleOrDuplicate<'b>> seq) : Map<'a
 
 
 
-/// This is for straight converting a params map to a values map, but _not_ suitable for converting a
-let convertParamsToValuesMap (resolvedParams : ResolvedParams) : ResolvedNames =
-    { ResolvedNames.empty with
-        valueDeclarations =
-            Map.mapKeyVal
-                (fun key tokensAndValues ->
-                    key,
-                    tokensAndValues
-                    |> SingleOrDuplicate.map (fun (tokens, value) -> (tokens, Parameter value)))
-                resolvedParams }
+/// This is for straight converting a params map to a values map
+let convertParamsToValuesMap (resolvedParams : ParamsInScope) : ValueDeclarations =
+    //{ ResolvedNames.empty with
+    //    valueDeclarations =
+    resolvedParams
+    |> Map.mapKeyVal (fun key tokensAndValues ->
+        UnqualValue key,
+        tokensAndValues
+        |> SingleOrDuplicate.map (fun (tokens, value) ->
+            Param
+                {| tokens = tokens
+                   assignmentPattern = value |}))
+//}
 
 
 
 /// Get all the exposed names from a single assignment pattern
-let rec resolveParamAssignment (assignmentPattern : CstNode<AssignmentPattern>) : ResolvedParams =
+let rec resolveParamAssignment (assignmentPattern : CstNode<Cst.AssignmentPattern>) : ParamsInScope =
     match assignmentPattern.node with
     | Named ident ->
         Map.empty
         |> addNewParamReference (makeCstNode ident assignmentPattern.source) SimpleName
 
     | Ignored -> Map.empty
-    | AssignmentPattern.Unit -> Map.empty
+    | Cst.AssignmentPattern.Unit -> Map.empty
     | Aliased (alias = alias; pattern = pattern) ->
         resolveParamAssignment pattern
         |> addNewParamReference alias SimpleName
@@ -279,12 +322,12 @@ let rec resolveParamAssignment (assignmentPattern : CstNode<AssignmentPattern>) 
 
 
 /// We need to recursively go down all the sub-destructurings, because all of those still get exposed to the same scope. Unlike let bindings in sub-expressions which don't get propagated upward.
-and resolveDestructuredParam (pattern : CstNode<DestructuredPattern>) : ResolvedParams =
+and resolveDestructuredParam (pattern : CstNode<Cst.DestructuredPattern>) : ParamsInScope =
 
     let getParamsMapForEach
         (putInPath : PathToDestructuredName -> PathToDestructuredName)
         assignmentPattern
-        : ResolvedParams =
+        : ParamsInScope =
         resolveParamAssignment assignmentPattern
         |> mapResolvedParams putInPath
 
@@ -335,14 +378,18 @@ and resolveDestructuredParam (pattern : CstNode<DestructuredPattern>) : Resolved
 
 
 
-let resolveFuncParams ({ params_ = params_ } : FunctionValue) : ResolvedNames =
+let resolveFuncParams ({ params_ = params_ } : Cst.FunctionValue) : NamesInScope =
     let values =
         params_
         |> NEL.map (
             resolveParamAssignment
-            >> Map.map (fun _ tokensAndValues ->
+            >> Map.mapKeyVal (fun key tokensAndValues ->
+                UnqualValue key,
                 tokensAndValues
-                |> SingleOrDuplicate.map (fun (tokens, path) -> tokens, Parameter path))
+                |> SingleOrDuplicate.map (fun (tokens, path) ->
+                    Param
+                        {| tokens = tokens
+                           assignmentPattern = path |}))
         )
         |> NEL.toList
         |> combineReferenceMaps
@@ -352,19 +399,23 @@ let resolveFuncParams ({ params_ = params_ } : FunctionValue) : ResolvedNames =
 
 let resolveLetBinding
     ({ bindPattern = bindPattern
-       value = value } : LetBinding)
-    : ResolvedNames =
+       value = value } : Cst.LetBinding)
+    : NamesInScope =
     let values =
         resolveParamAssignment bindPattern
-        |> Map.map (fun _ tokensAndValues ->
+        |> Map.mapKeyVal (fun key tokensAndValues ->
+            UnqualValue key,
             tokensAndValues
             |> SingleOrDuplicate.map (fun (tokens, path) ->
-                tokens, Value (assignmentPattern = path, assignedExpression = value.node)))
+                LocalName
+                    {| tokens = tokens
+                       assignmentPattern = path
+                       assignedExpression = value.node |}))
 
     { ResolvedNames.empty with valueDeclarations = values }
 
 
-let resolveLetExpression (bindings : CstNode<LetBinding> nel) =
+let resolveLetExpression (bindings : CstNode<Cst.LetBinding> nel) =
     bindings
     |> NEL.toList
     |> Seq.map (getNode >> resolveLetBinding)
@@ -374,8 +425,8 @@ let resolveLetExpression (bindings : CstNode<LetBinding> nel) =
 
 let resolveTypeConstructors
     (typeName : CstNode<UnqualTypeOrModuleIdentifier>)
-    (typeDeclaration : TypeDeclaration)
-    : ResolvedNames =
+    (typeDeclaration : Cst.TypeDeclaration)
+    : NamesInScope =
 
     match typeDeclaration with
     | Alias aliasDecl ->
@@ -399,7 +450,7 @@ let resolveTypeConstructors
 
 
 
-let rec resolveExpressionBindings (expression : Expression) : ResolvedNames =
+let rec resolveExpressionBindings (expression : Cst.Expression) : NamesInScope =
     match expression with
     | SingleValueExpression expr ->
         match expr with
@@ -422,8 +473,8 @@ let rec resolveExpressionBindings (expression : Expression) : ResolvedNames =
 
 
 
-let resolveModuleBindings (ylModule : YlModule) =
-    let resolveSingleDeclaration (declaration : CstNode<Declaration>) =
+let resolveModuleBindings (ylModule : Cst.YlModule) : NamesInScope =
+    let resolveSingleDeclaration (declaration : CstNode<Cst.Declaration>) =
         match declaration.node with
         | ImportDeclaration _ ->
             // @TODO: I'll need to implement the cross-module name resolution here!
@@ -433,11 +484,29 @@ let resolveModuleBindings (ylModule : YlModule) =
         | ValueTypeAnnotation { valueName = valueName
                                 annotatedType = annotatedType } ->
             ResolvedNames.empty
-            |> addValueTypeDeclaration valueName annotatedType.node
+            |> addValueTypeDeclaration (mapNode UnqualValue valueName) annotatedType.node
 
         | ValueDeclaration { valueName = valueName; value = value } ->
+            let modulePath =
+                let (QualifiedModuleOrTypeIdentifier segments) = ylModule.moduleDecl.moduleName.node
+
+                let strSegments =
+                    segments
+                    |> NEL.map (fun (UnqualTypeOrModuleIdentifier segment) -> segment)
+
+                ModulePath strSegments
+
+            let qualifiedName =
+                let (UnqualValueIdentifier str) = valueName.node
+                FullyQualifiedTopLevelLowerIdent (modulePath, LowerIdent str)
+
             ResolvedNames.empty
-            |> addValue valueName (Value (SimpleName, value.node))
+            |> addValue
+                (mapNode UnqualValue valueName)
+                (TopLevelName
+                    {| tokens = valueName.source
+                       assignedExpression = value.node
+                       fullName = qualifiedName |}) // (SimpleName, value.node)
 
     ylModule.declarations
     |> List.map resolveSingleDeclaration
