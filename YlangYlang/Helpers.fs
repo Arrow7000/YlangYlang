@@ -12,7 +12,7 @@ let always x _ = x
 
 let apply (f : 'a -> 'b) a = f a
 
-let flip f b a = f a b
+let flip (f : 'b -> 'a -> 'c) : ('a -> 'b -> 'c) = fun a b -> f b a
 
 /// Make a tuple containing the original value and the mapped value
 let split f a = (a, f a)

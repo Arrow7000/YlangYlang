@@ -60,6 +60,8 @@ type TypeDeclarations = Map<TypeOrModuleIdentifier, SingleOrDuplicate<TokenWithS
 
 type TypeConstructors = Map<TypeOrModuleIdentifier, SingleOrDuplicate<TokenWithSource list * VariantConstructor>>
 
+type TypeParams = Map<UnqualValueIdentifier, SingleOrDuplicate<TokenWithSource list>>
+
 type ValueDeclarations = Map<ValueIdentifier, SingleOrDuplicate<LowerCaseName>>
 
 type ValueTypeDeclarations = Map<ValueIdentifier, SingleOrDuplicate<TokenWithSource list * Cst.MentionableType>>
@@ -69,12 +71,14 @@ type ValueTypeDeclarations = Map<ValueIdentifier, SingleOrDuplicate<TokenWithSou
 type NamesInScope =
     { typeDeclarations : TypeDeclarations
       typeConstructors : TypeConstructors
+      typeParams : TypeParams
       valueDeclarations : ValueDeclarations
       valueTypeDeclarations : ValueTypeDeclarations }
 
 
 let getTypeDeclarations names : TypeDeclarations = names.typeDeclarations
 let getTypeConstructors names : TypeConstructors = names.typeConstructors
+let getTypeParams names : TypeParams = names.typeParams
 let getValueDeclarations names : ValueDeclarations = names.valueDeclarations
 let getValueTypeDeclarations names : ValueTypeDeclarations = names.valueTypeDeclarations
 
@@ -89,6 +93,8 @@ let private getFromMap name =
 let tryFindTypeDeclaration (name : TypeOrModuleIdentifier) { typeDeclarations = nameMap } = getFromMap name nameMap
 
 let tryFindTypeConstructor (name : TypeOrModuleIdentifier) { typeConstructors = nameMap } = getFromMap name nameMap
+
+let tryFindTypeParam name ({ typeParams = nameMap } : NamesInScope) = getFromMap name nameMap
 
 let tryFindValue (name : ValueIdentifier) { valueDeclarations = nameMap } : LowerCaseName option =
     getFromMap name nameMap
@@ -108,6 +114,7 @@ let tryFindValueAndTypeDeclaration
 let empty =
     { typeDeclarations = Map.empty
       typeConstructors = Map.empty
+      typeParams = Map.empty
       valueDeclarations = Map.empty
       valueTypeDeclarations = Map.empty }
 
@@ -138,15 +145,16 @@ let addNewParamReference ident path (resolvedParams : ParamsInScope) : ParamsInS
 
 
 
-let private reifyModuleName (QualifiedModuleOrTypeIdentifier moduleName) =
+let reifyModuleName (QualifiedModuleOrTypeIdentifier moduleName) =
     moduleName
     |> NEL.map (fun (UnqualTypeOrModuleIdentifier segment) -> segment)
+    |> ModulePath
 
 let reifyUpper moduleName (UnqualTypeOrModuleIdentifier topLevelIdent) =
-    FullyQualifiedUpperIdent (ModulePath (reifyModuleName moduleName), UpperIdent topLevelIdent)
+    FullyQualifiedUpperIdent (reifyModuleName moduleName, UpperIdent topLevelIdent)
 
 let reifyLower moduleName (UnqualValueIdentifier topLevelIdent) =
-    FullyQualifiedTopLevelLowerIdent (ModulePath (reifyModuleName moduleName), LowerIdent topLevelIdent)
+    FullyQualifiedTopLevelLowerIdent (reifyModuleName moduleName, LowerIdent topLevelIdent)
 
 /// This stores a new declared type/value/param/etc in its map...
 /// @TODO: but question is... currently it stores it solely in the unqualified form (I think), but it should also store it in its fully qualified, and locally findable form - i.e. if it's been explicitly imported,referenced under a module alias, namespace opened, etc.
@@ -166,6 +174,9 @@ let addNewRefWithTokens
     =
     addNewReference ident (ident.source, value) map
 
+
+let addNewTypeParam (name : CstNode<UnqualValueIdentifier>) (names : NamesInScope) =
+    { names with typeParams = addNewReference name name.source names.typeParams }
 
 let addNewTypeDeclaration
     (moduleName : QualifiedModuleOrTypeIdentifier)
@@ -239,12 +250,14 @@ let combineReferenceMaps (mapList : Map<'a, SingleOrDuplicate<'b>> seq) : Map<'a
 let combineResolvedNamesMaps (mapList : NamesInScope seq) =
     let typeDeclarations = Seq.map getTypeDeclarations mapList
     let typeConstructors = Seq.map getTypeConstructors mapList
+    let typeParams = Seq.map getTypeParams mapList
     let values = Seq.map getValueDeclarations mapList
     let valueTypeDeclarations = Seq.map getValueTypeDeclarations mapList
 
 
     { typeDeclarations = combineReferenceMaps typeDeclarations
       typeConstructors = combineReferenceMaps typeConstructors
+      typeParams = combineReferenceMaps typeParams
       valueDeclarations = combineReferenceMaps values
       valueTypeDeclarations = combineReferenceMaps valueTypeDeclarations }
 
@@ -389,7 +402,7 @@ let resolveLetExpression (bindings : CstNode<Cst.LetBinding> nel) =
 
 
 let resolveTypeConstructors
-    moduleName
+    (moduleName : QualifiedModuleOrTypeIdentifier)
     (typeName : CstNode<UnqualTypeOrModuleIdentifier>)
     (typeDeclaration : Cst.TypeDeclaration)
     : NamesInScope =
@@ -438,7 +451,7 @@ let rec resolveExpressionBindings (expression : Cst.Expression) : NamesInScope =
 
 
 
-
+/// This creates a names map with all the declared types, type constructors, and top level values in scope without going into any of the expressions. That way we can make sure that types and values can references types and values declared further down the file.
 let resolveModuleBindings (ylModule : Cst.YlModule) : NamesInScope =
     let moduleName = ylModule.moduleDecl.moduleName.node
 
@@ -447,7 +460,7 @@ let resolveModuleBindings (ylModule : Cst.YlModule) : NamesInScope =
         | ImportDeclaration _ ->
             // @TODO: I'll need to implement the cross-module name resolution here!
             //empty
-            failwithf "@TODO: need to implement cross-module name resolution"
+            failwithf "@TODO: need to implement cross-module name resolution!"
 
         | TypeDeclaration (name, decl) -> resolveTypeConstructors moduleName name decl
         | ValueTypeAnnotation { valueName = valueName

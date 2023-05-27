@@ -8,6 +8,13 @@ open NameResolution
 open QualifiedSyntaxTree
 
 
+/// This determines whether type variables need to have been declared, or if they can be declared explicitly
+type MentionableTypeContext =
+    /// Type variables need to be declared!
+    | InTypeDeclaration
+    /// Type vars don't need to be declared
+    | InValueTypeAnnotation
+
 type CstWithUnresolveds<'a> =
     { cst : 'a
       unresolveds : Identifier list }
@@ -27,15 +34,24 @@ let private convertTypeOrModuleIdentifierToIdentifier : TypeOrModuleIdentifier -
 
 
 
-
+/// Note: No need to update `resolvedNames` at every recursion step here because no new names can be declared inside a mentioned type!
 let qualifyMentionableType
+    (typeCtx : MentionableTypeContext)
     (resolvedNames : NamesInScope)
     (unqual : C.MentionableType)
     : Result<MentionableType, Identifier list> =
     let rec innerFunc mentionableType : Result<MentionableType, Identifier list> =
         match mentionableType with
         | S.UnitType -> Ok S.UnitType
-        | S.GenericTypeVar v -> Ok <| S.GenericTypeVar v
+        | S.GenericTypeVar v ->
+
+            match typeCtx with
+            | InTypeDeclaration ->
+                match tryFindTypeParam v resolvedNames with
+                | Some _ -> S.GenericTypeVar v |> Ok
+                | None -> SingleValueIdentifier v |> List.singleton |> Error
+            | InValueTypeAnnotation -> S.GenericTypeVar v |> Ok
+
         | S.Tuple { types = types } ->
             let mappedTypes =
                 types
@@ -127,41 +143,193 @@ let qualifyMentionableType
 
 
 
-let qualifyModuleNames (ylModule : C.YlModule) : YlModule =
+let qualifyTypeDeclaration resolvedNames declaration : Result<TypeDeclaration, Identifier list> =
+    match declaration with
+    | S.Alias { typeParams = typeParams
+                referent = referent } ->
+
+        let resolvedWithTypeParams =
+            typeParams
+            |> List.fold (flip addNewTypeParam) resolvedNames
+
+        let mentionableType =
+            S.mapNode (qualifyMentionableType InTypeDeclaration resolvedWithTypeParams) referent
+            |> liftResultFromCstNode
+
+        match mentionableType with
+        | Ok type' ->
+            S.Alias
+                { referent = type'
+                  typeParams = typeParams }
+            |> Ok
+        | Error err -> Error err
+    | S.Sum { typeParams = typeParams
+              variants = variants } ->
+
+        let resolvedWithTypeParams =
+            typeParams
+            |> List.fold (flip addNewTypeParam) resolvedNames
+
+        let resolvedVariants =
+            variants
+            |> NEL.map (
+                S.mapNode (fun variantCase ->
+                    let contents =
+                        variantCase.contents
+                        |> List.map (
+                            S.mapNode (qualifyMentionableType InTypeDeclaration resolvedWithTypeParams)
+                            >> liftResultFromCstNode
+                        )
+                        |> Result.sequence
+                        |> Result.mapError (NEL.toList >> List.concat)
+
+                    match contents with
+                    | Ok contents' ->
+                        Ok
+                            { S.label = variantCase.label
+                              S.contents = contents' }
+                    | Error err -> Error err)
+                >> liftResultFromCstNode
+            )
+            |> NEL.sequenceResult
+            |> Result.mapError (NEL.toList >> List.concat)
+
+        match resolvedVariants with
+        | Ok variants' ->
+            S.Sum
+                { variants = variants'
+                  typeParams = typeParams }
+            |> Ok
+        | Error err -> Error err
+
+
+
+
+let rec qualifyCompoundExpression resolvedNames compExpr =
+    match compExpr with
+    | S.List list ->
+        list
+        |> List.map (
+            S.mapNode (qualifyExpression resolvedNames)
+            >> liftResultFromCstNode
+        )
+        |> Result.sequence
+        |> Result.mapError (NEL.toList >> List.concat)
+        |> Result.map S.List
+
+    | S.CompoundValues.Tuple items ->
+        items
+        |> TOM.map (
+            S.mapNode (qualifyExpression resolvedNames)
+            >> liftResultFromCstNode
+        )
+        |> TOM.sequenceResult
+        |> Result.mapError (NEL.toList >> List.concat)
+        |> Result.map S.CompoundValues.Tuple
+
+    | S.CompoundValues.Record fields ->
+        fields
+        |> List.map (fun (fieldName, fieldVal) ->
+            S.mapNode (qualifyExpression resolvedNames) fieldVal
+            |> liftResultFromCstNode
+            |> Result.map (fun qualVal -> fieldName, qualVal))
+        |> Result.sequence
+        |> Result.mapError (NEL.toList >> List.concat)
+        |> Result.map S.CompoundValues.Record
+
+    | S.CompoundValues.RecordExtension (extendedRec, fields) ->
+        fields
+        |> NEL.map (fun (fieldName, fieldVal) ->
+            S.mapNode (qualifyExpression resolvedNames) fieldVal
+            |> liftResultFromCstNode
+            |> Result.map (fun qualVal -> fieldName, qualVal))
+        |> NEL.sequenceResult
+        |> Result.mapError (NEL.toList >> List.concat)
+        |> Result.map (fun qualFields -> S.CompoundValues.RecordExtension (extendedRec, qualFields))
+
+
+
+and qualifyExpression resolvedNames (expression : C.Expression) : Result<Expression, Identifier list> =
+    match expression with
+    | S.ParensedExpression expr -> qualifyExpression resolvedNames expr
+    | S.SingleValueExpression singleExpr ->
+        match singleExpr with
+        | S.ExplicitValue expl ->
+            match expl with
+            | S.Primitive prim ->
+                S.Primitive prim
+                |> S.ExplicitValue
+                |> S.SingleValueExpression
+                |> Ok
+            | S.DotGetter field ->
+                S.DotGetter field
+                |> S.ExplicitValue
+                |> S.SingleValueExpression
+                |> Ok
+            | S.Compound comp ->
+                qualifyCompoundExpression resolvedNames comp
+                |> Result.map (
+                    S.Compound
+                    >> S.ExplicitValue
+                    >> S.SingleValueExpression
+                )
+
+
+
+let qualifyModuleNames (ylModule : C.YlModule) : Result<YlModule, Identifier list> =
     let moduleResolvedNames = resolveModuleBindings ylModule
 
-    let thisModuleName : FullyQualifiedUpperIdent =
-        let (QualifiedModuleOrTypeIdentifier modulePath) =
-            S.getNode ylModule.moduleDecl.moduleName
+    let modulePath = reifyModuleName ylModule.moduleDecl.moduleName.node
 
-        let moduleStrNel =
-            modulePath
-            |> NEL.map (fun (UnqualTypeOrModuleIdentifier moduleStr) -> moduleStr)
-
-        FullyQualifiedUpperIdent moduleStrNel
-
-    { moduleDecl = ylModule.moduleDecl
-      declarations =
+    let declarations : Result<S.CstNode<Declaration> list, Identifier list> =
         ylModule.declarations
-        |> List.map (fun declaration ->
-            match S.getNode declaration with
-            | S.TypeDeclaration (name = name; declaration = decl) ->
-                match decl with
-                | S.Alias { typeParams = typeParams
-                            referent = referent } ->
-                    match referent with
-                    | S.UnitType ->
-                        S.TypeDeclaration (
-                            name,
-                            S.Alias
-                                { typeParams = typeParams
-                                  referent = S.UnitType }
-                        )
+        |> List.map (
+            S.mapNode (function
+                | S.TypeDeclaration (name = name; declaration = decl) ->
+                    let typeDeclResult = qualifyTypeDeclaration moduleResolvedNames decl
 
+                    match typeDeclResult with
+                    | Ok typeDecl -> S.TypeDeclaration (name, typeDecl) |> Ok
+                    | Error err -> Error err
+                | S.ImportDeclaration import -> failwithf "@TODO: Importing other modules is not implemented yet!"
+                | S.ValueTypeAnnotation { valueName = valueName
+                                          annotatedType = annotatedType } ->
+                    let qualifiedAnnotatedType =
+                        S.mapNode (qualifyMentionableType InValueTypeAnnotation moduleResolvedNames) annotatedType
+                        |> liftResultFromCstNode
+
+                    match qualifiedAnnotatedType with
+                    | Ok qualified ->
+                        S.ValueTypeAnnotation
+                            { valueName = valueName
+                              annotatedType = qualified }
+                        |> Ok
+                    | Error err -> Error err
+
+                | S.ValueDeclaration { valueName = valueName; value = value } ->
+                    let result =
+                        S.mapNode (qualifyExpression moduleResolvedNames) value
+                        |> liftResultFromCstNode
+
+                    match result with
+                    | Ok res ->
+                        S.ValueDeclaration { valueName = valueName; value = res }
+                        |> Ok
+                    | Error err -> Error err
+
+            )
+            >> liftResultFromCstNode
         )
+        |> Result.sequence
+        |> Result.mapError (NEL.toList >> List.concat)
 
-    }
 
+    match declarations with
+    | Ok decls ->
+        { S.moduleDecl = ylModule.moduleDecl
+          S.declarations = decls }
+        |> Ok
+    | Error err -> Error err
 
 
 
