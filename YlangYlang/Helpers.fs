@@ -65,10 +65,39 @@ type NonEmptyList<'a> =
 
     static member foldBack f state (NEL (head, tail)) = List.foldBack f tail state |> f head
 
-    static member last (NEL (head, tail)) =
+    static member last<'a> (NEL (head, tail)) : 'a =
         match List.tryLast tail with
         | None -> head
         | Some last -> last
+
+    static member sequenceResult (results : Result<'a, 'b> nel) : Result<'a nel, 'b nel> =
+        let (NEL (head, tail)) = results
+
+        match head with
+        | Ok okHead ->
+            (List.fold
+                (fun state res ->
+                    match state with
+                    | Ok oks ->
+                        match res with
+                        | Ok ok -> Ok (NEL.appendList (List.singleton ok) oks)
+                        | Error err -> Error (NEL.make err)
+                    | Error errs ->
+                        match res with
+                        | Error err -> Error (NEL.appendList (List.singleton err) errs)
+                        | Ok _ -> Error errs)
+                (Ok (NEL.make okHead))
+                tail)
+        | Error err ->
+            NEL.make err
+            |> NEL.appendList (
+                List.choose
+                    (function
+                    | Error e -> Some e
+                    | Ok _ -> None)
+                    tail
+            )
+            |> Error
 
 
 /// A convenient alias for NonEmptyList
@@ -123,8 +152,60 @@ type TwoOrMore<'a> =
         |> fun result -> f result neck
         |> fun result -> List.fold f result tail
 
+    static member foldBack<'State, 'Item>
+        (f : 'Item -> 'State -> 'State)
+        (state : 'State)
+        (TOM (head, neck, tail) : 'Item tom)
+        : 'State =
+        f head state
+        |> fun result -> f neck result
+        |> fun result -> List.foldBack f tail result
+
     static member fromItemAndNel item (NEL (first, tail)) = TOM (item, first, tail)
 
+
+    static member sequenceResult (results : Result<'a, 'b> tom) : Result<'a tom, 'b nel> =
+        let (TOM (head, neck, tail)) = results
+
+        match head, neck with
+        | Ok okHead, Ok okNeck ->
+            (List.fold
+                (fun state res ->
+                    match state with
+                    | Ok oks ->
+                        match res with
+                        | Ok ok -> Ok (TOM.appendList (List.singleton ok) oks)
+                        | Error err -> Error (NEL.make err)
+                    | Error errs ->
+                        match res with
+                        | Error err -> Error (NEL.appendList (List.singleton err) errs)
+                        | Ok _ -> Error errs)
+                (Ok (TOM.make okHead okNeck))
+                tail)
+        | Error err, Ok _
+        | Ok _, Error err ->
+            NEL.make err
+            |> NEL.appendList (
+                List.choose
+                    (function
+                    | Error e -> Some e
+                    | Ok _ -> None)
+                    tail
+            )
+            |> Error
+        | Error err1, Error err2 ->
+            NEL.new_ err1 [ err2 ]
+            |> NEL.appendList (
+                List.choose
+                    (function
+                    | Error e -> Some e
+                    | Ok _ -> None)
+                    tail
+            )
+            |> Error
+
+
+    static member traverseResult (f : 'T -> Result<'a, 'b>) list = TOM.map f list |> TOM.sequenceResult
 
 
 and TOM<'a> = TwoOrMore<'a>
@@ -172,12 +253,20 @@ type Result<'a, 'e> with
             | Ok x -> Some x
             | Error _ -> None)
 
-    static member anyErrors list =
-        let errs = Result.gatherErrors list
-
-        match errs with
-        | [] -> Ok <| Result.gatherOks list
-        | head :: tail -> NEL.make head |> NEL.appendList tail |> Error
+    static member sequence (list : Result<'a, 'b> list) : Result<'a list, 'b nel> =
+        List.foldBack
+            (fun res state ->
+                match state with
+                | Ok oks ->
+                    match res with
+                    | Ok ok -> Ok (ok :: oks)
+                    | Error err -> Error (NEL.make err)
+                | Error errs ->
+                    match res with
+                    | Error err -> Error (NEL.cons err errs)
+                    | Ok _ -> Error errs)
+            list
+            (Ok List.empty)
 
     static member bindError (f : 'errA -> Result<'T, 'errB>) (result : Result<'T, 'errA>) =
         match result with
@@ -265,6 +354,23 @@ module Map =
         map1
         |> Map.fold (fun mapToAddTo key value -> Map.add key value mapToAddTo) map2
 
+
+    let sequenceResult map =
+        map
+        |> Map.fold
+            (fun state key value ->
+                match state with
+                | Ok oks ->
+                    match value with
+                    | Ok ok -> Ok (Map.add key ok oks)
+                    | Error err -> Error (Map.add key err Map.empty)
+                | Error errs ->
+                    match value with
+                    | Ok _ -> Error errs
+                    | Error err -> Error (Map.add key err errs))
+            (Ok Map.empty)
+
+
 type Either<'a, 'b> =
     | Left of 'a
     | Right of 'b
@@ -303,3 +409,23 @@ type EitherOrBoth<'a, 'b> =
 type ListWithOneDifferentType<'T, 'U> =
     | NotUniqueYet of item : 'T * rest : ListWithOneDifferentType<'T, 'U>
     | UniqueNow of item : 'U * rest : 'T list
+
+
+
+
+/// Denotes either a single instance of a named value, or 2 or more instances, which means the named value is a duplicate, which is a compile error.
+/// @TODO: Technically it's not a compile error if the name clash is between top level types/values in different modules, so we should account for that later
+type SingleOrDuplicate<'a> =
+    | Single of 'a
+    | Duplicate of TwoOrMore<'a>
+
+    static member map (f : 'a -> 'b) sod =
+        match sod with
+        | Single a -> Single (f a)
+        | Duplicate tom -> Duplicate (TOM.map f tom)
+
+
+    static member getFirst (sod : SingleOrDuplicate<'a>) =
+        match sod with
+        | Single a -> a
+        | Duplicate tom -> TOM.head tom
