@@ -451,7 +451,6 @@ and qualifyExpression (resolvedNames : NamesInScope) (expression : C.Expression)
             | S.IfExpression (cond, ifTrue, ifFalse) ->
                 let qualifyExpr = qualifyCstNode (qualifyExpression resolvedNames)
 
-
                 let qualCond, qualIfTrue, qualIfFalse =
                     qualifyExpr cond, qualifyExpr ifTrue, qualifyExpr ifFalse
 
@@ -465,14 +464,87 @@ and qualifyExpression (resolvedNames : NamesInScope) (expression : C.Expression)
                     qualIfTrue
                     qualIfFalse
 
+            | S.CaseMatch (exprToMatch, branches) ->
+                let qualExpr = qualifyCstNode (qualifyExpression resolvedNames) exprToMatch
+
+                let qualBranches : Result<NEL<S.CstNode<AssignmentPattern> * S.CstNode<Expression>>, Identifier list> =
+                    branches
+                    |> NEL.traverseResult (
+                        (fun (assignPattern, branchExpr) ->
+                            let qualAssignPattern =
+                                qualifyCstNode (qualifyAssignmentPattern resolvedNames) assignPattern
+
+                            let paramResolvedNames =
+                                NameResolution.resolveParamAssignment assignPattern
+                                |> NameResolution.convertParamsToNamesInScope
+
+                            let branchResolvedNames =
+                                resolvedNames
+                                |> NameResolution.combineTwoResolvedNamesMaps paramResolvedNames
+
+                            let qualBranchExpr =
+                                qualifyCstNode (qualifyExpression branchResolvedNames) branchExpr
+
+                            Result.map2
+                                (fun qualAssign qualBranch -> qualAssign, qualBranch)
+                                (@)
+                                qualAssignPattern
+                                qualBranchExpr)
+                    )
+                    |> Result.mapError (NEL.toList >> List.concat)
 
 
+                Result.map2
+                    (fun expr branches ->
+                        S.CaseMatch (expr, branches)
+                        |> S.ControlFlowExpression
+                        |> S.SingleValueExpression)
+                    (@)
+                    qualExpr
+                    qualBranches
 
+
+    | S.CompoundExpression compExpr ->
+        match compExpr with
+        | S.Operator (left, opSeq) ->
+            let qualExpr = qualifyCstNode (qualifyExpression resolvedNames) left
+
+            let qualOpSeq =
+                opSeq
+                |> NEL.traverseResult (fun (op, opExpr) ->
+                    qualifyCstNode (qualifyExpression resolvedNames) opExpr
+                    |> Result.map (Tuple.makePairWithFst op))
+                |> Result.mapError (NEL.toList >> List.concat)
+
+
+            Result.map2 (fun expr opSeq' -> S.Operator (expr, opSeq') |> S.CompoundExpression) (@) qualExpr qualOpSeq
+
+        | S.FunctionApplication (func, params') ->
+            let qualFunc = qualifyCstNode (qualifyExpression resolvedNames) func
+
+            let qualParams =
+                params'
+                |> qualifyNelCstNodes (qualifyExpression resolvedNames)
+
+            Result.map2
+                (fun funcExpr paramsExprs ->
+                    S.FunctionApplication (funcExpr, paramsExprs)
+                    |> S.CompoundExpression)
+                (@)
+                qualFunc
+                qualParams
+
+        | S.DotAccess (expr, getter) ->
+            let qualExpr = qualifyCstNode (qualifyExpression resolvedNames) expr
+
+            Result.map
+                (fun expr' ->
+                    S.DotAccess (expr', getter)
+                    |> S.CompoundExpression)
+                qualExpr
 
 let qualifyModuleNames (ylModule : C.YlModule) : Result<YlModule, Identifier list> =
     let moduleResolvedNames = resolveModuleBindings ylModule
-
-    let modulePath = reifyModuleName ylModule.moduleDecl.moduleName.node
 
     let declarations : Result<S.CstNode<Declaration> list, Identifier list> =
         ylModule.declarations
@@ -488,8 +560,8 @@ let qualifyModuleNames (ylModule : C.YlModule) : Result<YlModule, Identifier lis
                 | S.ValueTypeAnnotation { valueName = valueName
                                           annotatedType = annotatedType } ->
                     let qualifiedAnnotatedType =
-                        S.mapNode (qualifyMentionableType InValueTypeAnnotation moduleResolvedNames) annotatedType
-                        |> liftResultFromCstNode
+                        qualifyCstNode (qualifyMentionableType InValueTypeAnnotation moduleResolvedNames) annotatedType
+
 
                     match qualifiedAnnotatedType with
                     | Ok qualified ->
@@ -500,9 +572,7 @@ let qualifyModuleNames (ylModule : C.YlModule) : Result<YlModule, Identifier lis
                     | Error err -> Error err
 
                 | S.ValueDeclaration { valueName = valueName; value = value } ->
-                    let result =
-                        S.mapNode (qualifyExpression moduleResolvedNames) value
-                        |> liftResultFromCstNode
+                    let result = qualifyCstNode (qualifyExpression moduleResolvedNames) value
 
                     match result with
                     | Ok res ->

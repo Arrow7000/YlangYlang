@@ -294,6 +294,10 @@ let convertParamsToValuesMap (resolvedParams : ParamsInScope) : ValueDeclaration
                    assignmentPattern = value |}))
 
 
+/// This is for straight converting a params map to a NamesInScope
+let convertParamsToNamesInScope (resolvedParams : ParamsInScope) : NamesInScope =
+    { empty with valueDeclarations = convertParamsToValuesMap resolvedParams }
+
 
 /// Get all the exposed names from a single assignment pattern
 let rec resolveParamAssignment (assignmentPattern : CstNode<Cst.AssignmentPattern>) : ParamsInScope =
@@ -442,7 +446,7 @@ let resolveTypeConstructors
 
 
 
-let rec resolveExpressionBindings (expression : Cst.Expression) : NamesInScope =
+let resolveExpressionBindings (expression : Cst.Expression) : NamesInScope =
     match expression with
     | SingleValueExpression expr ->
         match expr with

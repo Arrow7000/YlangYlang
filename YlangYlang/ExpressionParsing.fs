@@ -1253,7 +1253,7 @@ let parseImport =
 
 
 
-
+/// @TODO: parse infix operator declarations also!
 let parseDeclarations =
     oneOf [ parseImport |> map ImportDeclaration
             parseValueDeclaration |> map ValueDeclaration
