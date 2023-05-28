@@ -100,6 +100,9 @@ type NonEmptyList<'a> =
             |> Error
 
 
+    static member traverseResult (f : 'a -> Result<'b, 'err>) = NEL.map f >> NEL.sequenceResult
+
+
 /// A convenient alias for NonEmptyList
 and NEL<'a> = NonEmptyList<'a>
 
@@ -267,6 +270,8 @@ type Result<'a, 'e> with
                     | Ok _ -> Error errs)
             list
             (Ok List.empty)
+
+    static member traverse f = List.map f >> Result.sequence
 
     static member bindError (f : 'errA -> Result<'T, 'errB>) (result : Result<'T, 'errA>) =
         match result with
