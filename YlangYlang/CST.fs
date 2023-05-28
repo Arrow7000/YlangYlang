@@ -152,7 +152,7 @@ type CompoundValues = S.CompoundValues<TypeOrModuleIdentifier, ValueIdentifier>
 //    additions : NEL<CstNode<UnqualValueIdentifier> * CstNode<Expression>>
 
 // Not sure yet if it makes sense to have this as a separate type
-and CustomTypeValues = S.CustomTypeValues<TypeOrModuleIdentifier, ValueIdentifier>
+//and CustomTypeValues = S.CustomTypeValues<TypeOrModuleIdentifier, ValueIdentifier>
 //{ label : CstNode<UnqualTypeOrModuleIdentifier>
 //  values : CstNode<Expression> list }
 

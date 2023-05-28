@@ -274,6 +274,27 @@ type Result<'a, 'e> with
         | Error e -> f e
 
 
+    static member map2 mapOks (mapErrs : 'err -> 'err -> 'err) result1 result2 =
+        match result1, result2 with
+        | Ok ok1, Ok ok2 -> Ok <| mapOks ok1 ok2
+        | Ok _, Error err
+        | Error err, Ok _ -> Error err
+        | Error err1, Error err2 -> Error <| mapErrs err1 err2
+
+    static member map3 mapOks (mapErrs : 'err -> 'err -> 'err) result1 result2 result3 =
+        match result1, result2, result3 with
+        | Ok ok1, Ok ok2, Ok ok3 -> Ok <| mapOks ok1 ok2 ok3
+        | Error err, Ok _, Ok _
+        | Ok _, Error err, Ok _
+        | Ok _, Ok _, Error err -> Error err
+        | Error err1, Error err2, Ok _
+        | Error err1, Ok _, Error err2
+        | Ok _, Error err1, Error err2 -> Error <| mapErrs err1 err2
+        | Error err1, Error err2, Error err3 -> mapErrs (mapErrs err1 err2) err3 |> Error
+
+
+
+
 module String =
     let ofSeq s = Seq.fold (fun s c -> s + string c) "" s
 

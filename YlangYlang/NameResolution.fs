@@ -222,7 +222,7 @@ let addValueTypeDeclaration name value names =
 
 
 
-let combineReferenceMaps (mapList : Map<'a, SingleOrDuplicate<'b>> seq) : Map<'a, SingleOrDuplicate<'b>> =
+let combineTwoReferenceMaps map1 map2 =
     let mapFolder
         (acc : Map<'a, SingleOrDuplicate<'b>>)
         (key : 'a)
@@ -244,9 +244,20 @@ let combineReferenceMaps (mapList : Map<'a, SingleOrDuplicate<'b>> seq) : Map<'a
                 | None -> Some value)
             acc
 
-    Seq.fold (fun acc thisMap -> Map.fold mapFolder thisMap acc) Map.empty mapList
+    Map.fold mapFolder map1 map2
 
 
+let combineReferenceMaps (mapList : Map<'a, SingleOrDuplicate<'b>> seq) : Map<'a, SingleOrDuplicate<'b>> =
+    Seq.fold combineTwoReferenceMaps Map.empty mapList
+
+
+
+let combineTwoResolvedNamesMaps (names1 : NamesInScope) (names2 : NamesInScope) =
+    { typeDeclarations = combineTwoReferenceMaps names1.typeDeclarations names2.typeDeclarations
+      typeConstructors = combineTwoReferenceMaps names1.typeConstructors names2.typeConstructors
+      typeParams = combineTwoReferenceMaps names1.typeParams names2.typeParams
+      valueDeclarations = combineTwoReferenceMaps names1.valueDeclarations names2.valueDeclarations
+      valueTypeDeclarations = combineTwoReferenceMaps names1.valueTypeDeclarations names2.valueTypeDeclarations }
 
 
 let combineResolvedNamesMaps (mapList : NamesInScope seq) =

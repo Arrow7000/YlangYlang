@@ -43,6 +43,23 @@ let private convertValueIdentifierToIdentifier : ValueIdentifier -> Identifier =
 
 
 
+
+/// Lil' helper for qualifying and merging an NEL of CstNodes, which we're doing pretty often in the code below
+let qualifyNelCstNodes
+    (namesMap : NamesInScope)
+    (qualifyThing : NamesInScope -> 'a -> Result<'b, Identifier list>)
+    (list : SyntaxTree.CstNode<'a> nel)
+    =
+    list
+    |> NEL.map (
+        S.mapNode (qualifyThing namesMap)
+        >> liftResultFromCstNode
+    )
+    |> NEL.sequenceResult
+    |> Result.mapError (NEL.toList >> List.concat)
+
+
+
 /// Note: No need to update `resolvedNames` at every recursion step here because no new names can be declared inside a mentioned type!
 let qualifyMentionableType
     (typeCtx : MentionableTypeContext)
@@ -379,8 +396,8 @@ and qualifyExpression (resolvedNames : NamesInScope) (expression : C.Expression)
 
 
                 let resolvedWithFuncParams =
-                    NameResolution.combineResolvedNamesMaps [ resolvedNames
-                                                              resolveFuncParams funcParams ]
+                    resolvedNames
+                    |> NameResolution.combineTwoResolvedNamesMaps (resolveFuncParams funcParams)
 
                 let qualified =
                     S.mapNode (qualifyExpression resolvedWithFuncParams) body
@@ -440,6 +457,75 @@ and qualifyExpression (resolvedNames : NamesInScope) (expression : C.Expression)
                 convertValueIdentifierToIdentifier lower
                 |> List.singleton
                 |> Error
+
+        | S.LetExpression (bindings, expr) ->
+            let namesMap =
+                resolvedNames
+                |> NameResolution.combineTwoResolvedNamesMaps (NameResolution.resolveLetExpression bindings)
+
+            let qualBindings =
+                bindings
+                |> NEL.map (
+                    S.mapNode (fun binding ->
+                        let qualBinding =
+                            S.mapNode (qualifyAssignmentPattern namesMap) binding.bindPattern
+                            |> liftResultFromCstNode
+
+                        let qualExpr =
+                            S.mapNode (qualifyExpression namesMap) binding.value
+                            |> liftResultFromCstNode
+
+                        Result.map2
+                            (fun binding' expr' ->
+                                { S.LetBinding.bindPattern = binding'
+                                  S.LetBinding.value = expr' })
+                            (fun err1 err2 -> err1 @ err2)
+                            qualBinding
+                            qualExpr)
+                    >> liftResultFromCstNode
+                )
+                |> NEL.sequenceResult
+                |> Result.mapError (NEL.toList >> List.concat)
+
+
+            let qualExpr =
+                S.mapNode (qualifyExpression namesMap) expr
+                |> liftResultFromCstNode
+
+
+            Result.map2
+                (fun expr' bindings' ->
+                    S.LetExpression (bindings', expr')
+                    |> S.SingleValueExpression)
+                (@)
+                qualExpr
+                qualBindings
+
+
+        | S.ControlFlowExpression controlFlowExpr ->
+            match controlFlowExpr with
+            | S.IfExpression (cond, ifTrue, ifFalse) ->
+                let qualifyExpr =
+                    S.mapNode (qualifyExpression resolvedNames)
+                    >> liftResultFromCstNode
+
+
+                let qualCond, qualIfTrue, qualIfFalse =
+                    qualifyExpr cond, qualifyExpr ifTrue, qualifyExpr ifFalse
+
+                Result.map3
+                    (fun cond' ifTrue' ifFalse' ->
+                        S.IfExpression (cond', ifTrue', ifFalse')
+                        |> S.ControlFlowExpression
+                        |> S.SingleValueExpression)
+                    (@)
+                    qualCond
+                    qualIfTrue
+                    qualIfFalse
+
+
+
+
 
 let qualifyModuleNames (ylModule : C.YlModule) : Result<YlModule, Identifier list> =
     let moduleResolvedNames = resolveModuleBindings ylModule
