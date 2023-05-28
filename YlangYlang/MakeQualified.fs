@@ -44,21 +44,28 @@ let private convertValueIdentifierToIdentifier : ValueIdentifier -> Identifier =
 
 
 
+let qualifyCstNode
+    (qualifyThing : 'a -> Result<'b, Identifier list>)
+    : S.CstNode<'a> -> Result<S.CstNode<'b>, Identifier list> =
+    S.mapNode qualifyThing >> liftResultFromCstNode
+
+
+
 let qualifyListCstNodes (qualifyThing : 'a -> Result<'b, Identifier list>) (list : SyntaxTree.CstNode<'a> list) =
     list
-    |> Result.traverse (S.mapNode qualifyThing >> liftResultFromCstNode)
+    |> Result.traverse (qualifyCstNode qualifyThing)
     |> Result.mapError (NEL.toList >> List.concat)
 
 /// Lil' helper for qualifying and merging an NEL of CstNodes, which we're doing pretty often in the code below
 let qualifyNelCstNodes (qualifyThing : 'a -> Result<'b, Identifier list>) (list : SyntaxTree.CstNode<'a> nel) =
     list
-    |> NEL.traverseResult (S.mapNode qualifyThing >> liftResultFromCstNode)
+    |> NEL.traverseResult (qualifyCstNode qualifyThing)
     |> Result.mapError (NEL.toList >> List.concat)
 
 
 let qualifyTomCstNodes (qualifyThing : 'a -> Result<'b, Identifier list>) (list : SyntaxTree.CstNode<'a> tom) =
     list
-    |> TOM.traverseResult (S.mapNode qualifyThing >> liftResultFromCstNode)
+    |> TOM.traverseResult (qualifyCstNode qualifyThing)
     |> Result.mapError (NEL.toList >> List.concat)
 
 
@@ -84,7 +91,7 @@ let qualifyMentionableType
         | S.Tuple { types = types } ->
             let mappedTypes =
                 types
-                |> TOM.traverseResult (S.mapNode innerFunc >> liftResultFromCstNode)
+                |> TOM.traverseResult (qualifyCstNode innerFunc)
 
             match mappedTypes with
             | Ok okTypes -> Ok <| S.Tuple { types = okTypes }
@@ -92,7 +99,7 @@ let qualifyMentionableType
         | S.Record { fields = fields } ->
             let mappedFields =
                 fields
-                |> Map.map (fun _ -> S.mapNode innerFunc >> liftResultFromCstNode)
+                |> Map.map (fun _ -> qualifyCstNode innerFunc)
                 |> Map.sequenceResult
 
             match mappedFields with
@@ -107,7 +114,7 @@ let qualifyMentionableType
                              extendedAlias = alias } ->
             let mappedFields =
                 fields
-                |> Map.map (fun _ -> S.mapNode innerFunc >> liftResultFromCstNode)
+                |> Map.map (fun _ -> qualifyCstNode innerFunc)
                 |> Map.sequenceResult
 
             match mappedFields with
@@ -174,8 +181,7 @@ let qualifyTypeDeclaration resolvedNames declaration : Result<TypeDeclaration, I
             |> List.fold (flip addNewTypeParam) resolvedNames
 
         let mentionableType =
-            S.mapNode (qualifyMentionableType InTypeDeclaration resolvedWithTypeParams) referent
-            |> liftResultFromCstNode
+            qualifyCstNode (qualifyMentionableType InTypeDeclaration resolvedWithTypeParams) referent
 
         match mentionableType with
         | Ok type' ->
@@ -271,8 +277,7 @@ and qualifyAssignmentPattern
         |> Result.map S.DestructuredPattern
     | S.Aliased (pattern, alias) ->
         let qualifiedPattern =
-            S.mapNode (qualifyAssignmentPattern resolvedNames) pattern
-            |> liftResultFromCstNode
+            qualifyCstNode (qualifyAssignmentPattern resolvedNames) pattern
 
         match qualifiedPattern with
         | Ok pattern' -> S.Aliased (pattern', alias) |> Ok
@@ -298,8 +303,7 @@ let rec qualifyCompoundExpression resolvedNames compExpr =
     | S.CompoundValues.Record fields ->
         fields
         |> List.map (fun (fieldName, fieldVal) ->
-            S.mapNode (qualifyExpression resolvedNames) fieldVal
-            |> liftResultFromCstNode
+            qualifyCstNode (qualifyExpression resolvedNames) fieldVal
             |> Result.map (fun qualVal -> fieldName, qualVal))
         |> Result.sequence
         |> Result.mapError (NEL.toList >> List.concat)
@@ -308,8 +312,7 @@ let rec qualifyCompoundExpression resolvedNames compExpr =
     | S.CompoundValues.RecordExtension (extendedRec, fields) ->
         fields
         |> NEL.map (fun (fieldName, fieldVal) ->
-            S.mapNode (qualifyExpression resolvedNames) fieldVal
-            |> liftResultFromCstNode
+            qualifyCstNode (qualifyExpression resolvedNames) fieldVal
             |> Result.map (fun qualVal -> fieldName, qualVal))
         |> NEL.sequenceResult
         |> Result.mapError (NEL.toList >> List.concat)
@@ -348,7 +351,6 @@ and qualifyExpression (resolvedNames : NamesInScope) (expression : C.Expression)
                 let qualifiedParams =
                     params_
                     |> qualifyNelCstNodes (qualifyAssignmentPattern resolvedNames)
-
 
                 let resolvedWithFuncParams =
                     resolvedNames
@@ -422,12 +424,9 @@ and qualifyExpression (resolvedNames : NamesInScope) (expression : C.Expression)
                 bindings
                 |> qualifyNelCstNodes (fun binding ->
                     let qualBinding =
-                        S.mapNode (qualifyAssignmentPattern namesMap) binding.bindPattern
-                        |> liftResultFromCstNode
+                        qualifyCstNode (qualifyAssignmentPattern namesMap) binding.bindPattern
 
-                    let qualExpr =
-                        S.mapNode (qualifyExpression namesMap) binding.value
-                        |> liftResultFromCstNode
+                    let qualExpr = qualifyCstNode (qualifyExpression namesMap) binding.value
 
                     Result.map2
                         (fun binding' expr' ->
@@ -437,10 +436,7 @@ and qualifyExpression (resolvedNames : NamesInScope) (expression : C.Expression)
                         qualBinding
                         qualExpr)
 
-            let qualExpr =
-                S.mapNode (qualifyExpression namesMap) expr
-                |> liftResultFromCstNode
-
+            let qualExpr = qualifyCstNode (qualifyExpression namesMap) expr
 
             Result.map2
                 (fun expr' bindings' ->
@@ -450,13 +446,10 @@ and qualifyExpression (resolvedNames : NamesInScope) (expression : C.Expression)
                 qualExpr
                 qualBindings
 
-
         | S.ControlFlowExpression controlFlowExpr ->
             match controlFlowExpr with
             | S.IfExpression (cond, ifTrue, ifFalse) ->
-                let qualifyExpr =
-                    S.mapNode (qualifyExpression resolvedNames)
-                    >> liftResultFromCstNode
+                let qualifyExpr = qualifyCstNode (qualifyExpression resolvedNames)
 
 
                 let qualCond, qualIfTrue, qualIfFalse =
