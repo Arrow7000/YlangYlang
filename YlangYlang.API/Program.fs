@@ -1,7 +1,7 @@
 ﻿open FileHelpers
-open ConcreteSyntaxTree
+open SyntaxTree
 open Thoth.Json.Net
-
+open Errors
 
 /// Sadly this doesn't work unless we write specialised versions for every possible concrete type https://github.com/thoth-org/Thoth.Json/issues/169
 let cstNodeEncoder : Encoder<CstNode<'a>> =
@@ -9,26 +9,6 @@ let cstNodeEncoder : Encoder<CstNode<'a>> =
         printfn "Calling CstNode encoder"
         Encode.Auto.generateEncoder () cstNode.node
 
-
-//type CstNode<'a> = { node : 'a; source : int list }
-
-
-//printfn ".FullName: %A"
-//<| typeof<CstNode<'a>>.FullName
-
-
-//printfn "IsGenericType: %A"
-//<| typeof<CstNode<'a>>.IsGenericType
-
-//printfn "IsGenericTypeDefinition: %A"
-//<| typeof<CstNode<'a>>.IsGenericTypeDefinition
-
-//printfn "GetGenericTypeDefinition: %A"
-//<| typeof<CstNode<int>>.GetGenericTypeDefinition ()
-
-//printfn "GetGenericTypeDefinition.FullName: %A"
-//<| (typeof<CstNode<int>>.GetGenericTypeDefinition ())
-//    .FullName
 
 let cstNodeDecoder : Decoder<CstNode<'a>> = fun _ -> failwithf "Not implemented"
 
@@ -47,13 +27,16 @@ let main argv =
     let fileText = readFileSync "Expression.yl"
 
     Lexer.tokeniseString fileText
-    |> Result.map (
-        tee (List.map (fun t -> t.token) >> printfn "%A")
-        >> ExpressionParsing.run ExpressionParsing.parseEntireModule
-        >> DebugHelpers.formatErrors
-        >> Result.map (fun r -> r.parseResult)
+    |> Result.mapError LexingError
+    |> Result.bind (
+        ExpressionParsing.run ExpressionParsing.parseEntireModule
+        >> Parser.toResult
+        >> Result.mapError ParsingError
     )
-    //|> toJson
+    |> Result.bind (
+        MakeQualified.qualifyModule
+        >> Result.mapError CanonicalisationError
+    )
     |> printfn "%A"
 
     0

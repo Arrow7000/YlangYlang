@@ -543,48 +543,43 @@ and qualifyExpression (resolvedNames : NamesInScope) (expression : C.Expression)
                     |> S.CompoundExpression)
                 qualExpr
 
-let qualifyModuleNames (ylModule : C.YlModule) : Result<YlModule, Identifier list> =
+let qualifyModule (ylModule : C.YlModule) : Result<YlModule, Identifier list> =
     let moduleResolvedNames = resolveModuleBindings ylModule
 
     let declarations : Result<S.CstNode<Declaration> list, Identifier list> =
         ylModule.declarations
-        |> List.map (
-            S.mapNode (function
-                | S.TypeDeclaration (name = name; declaration = decl) ->
-                    let typeDeclResult = qualifyTypeDeclaration moduleResolvedNames decl
+        |> qualifyListCstNodes (
+            (function
+            | S.TypeDeclaration (name = name; declaration = decl) ->
+                let typeDeclResult = qualifyTypeDeclaration moduleResolvedNames decl
 
-                    match typeDeclResult with
-                    | Ok typeDecl -> S.TypeDeclaration (name, typeDecl) |> Ok
-                    | Error err -> Error err
-                | S.ImportDeclaration import -> failwithf "@TODO: Importing other modules is not implemented yet!"
-                | S.ValueTypeAnnotation { valueName = valueName
-                                          annotatedType = annotatedType } ->
-                    let qualifiedAnnotatedType =
-                        qualifyCstNode (qualifyMentionableType InValueTypeAnnotation moduleResolvedNames) annotatedType
+                match typeDeclResult with
+                | Ok typeDecl -> S.TypeDeclaration (name, typeDecl) |> Ok
+                | Error err -> Error err
+            | S.ImportDeclaration import -> failwithf "@TODO: Importing other modules is not implemented yet!"
+            | S.ValueTypeAnnotation { valueName = valueName
+                                      annotatedType = annotatedType } ->
+                let qualifiedAnnotatedType =
+                    qualifyCstNode (qualifyMentionableType InValueTypeAnnotation moduleResolvedNames) annotatedType
 
 
-                    match qualifiedAnnotatedType with
-                    | Ok qualified ->
-                        S.ValueTypeAnnotation
-                            { valueName = valueName
-                              annotatedType = qualified }
-                        |> Ok
-                    | Error err -> Error err
+                match qualifiedAnnotatedType with
+                | Ok qualified ->
+                    S.ValueTypeAnnotation
+                        { valueName = valueName
+                          annotatedType = qualified }
+                    |> Ok
+                | Error err -> Error err
 
-                | S.ValueDeclaration { valueName = valueName; value = value } ->
-                    let result = qualifyCstNode (qualifyExpression moduleResolvedNames) value
+            | S.ValueDeclaration { valueName = valueName; value = value } ->
+                let result = qualifyCstNode (qualifyExpression moduleResolvedNames) value
 
-                    match result with
-                    | Ok res ->
-                        S.ValueDeclaration { valueName = valueName; value = res }
-                        |> Ok
-                    | Error err -> Error err
-
-            )
-            >> liftResultFromCstNode
+                match result with
+                | Ok res ->
+                    S.ValueDeclaration { valueName = valueName; value = res }
+                    |> Ok
+                | Error err -> Error err)
         )
-        |> Result.sequence
-        |> Result.mapError (NEL.toList >> List.concat)
 
 
     match declarations with
@@ -593,102 +588,3 @@ let qualifyModuleNames (ylModule : C.YlModule) : Result<YlModule, Identifier lis
           S.declarations = decls }
         |> Ok
     | Error err -> Error err
-
-
-
-//let qualifyValueNames (moduleResolvedNames : ResolvedNames.ResolvedNames) (valueName : UnqualValueIdentifier) : FullyQualifiedTopLevelLowerIdent  =
-//    match ResolvedNames.tryFindValue valueName moduleResolvedNames with
-//    | Some (_,valOrParam) ->
-//        match valOrParam with
-//        | Value (pattern, expr) ->
-//    | None -> None
-
-
-
-
-//let qualifyDestructuredPattern (moduleCtx : ) (unqual : C.DestructuredPattern) : DestructuredPattern =
-//    match unqual with
-//    | S.DestructuredRecord content -> S.DestructuredRecord content
-//    | S.DestructuredTuple content -> S.DestructuredTuple content
-//    | S.DestructuredCons content -> S.DestructuredCons content
-//    | S.DestructuredTypeVariant (a,b) -> S.DestructuredTypeVariant (a,b)
-
-
-//let qualifyAssignmentPattern (moduleCtx : ) (unqual : C.AssignmentPattern) : AssignmentPattern =
-//    match unqual with
-
-
-//let qualifyMentionableType (moduleCtx : ) (unqual : C.MentionableType) : MentionableType =
-//    match unqual with
-
-
-//let qualifyTupleType (moduleCtx : ) (unqual : C.TupleType) : TupleType =
-//    match unqual with
-
-
-//let qualifyRecordType (moduleCtx : ) (unqual : C.RecordType) : RecordType =
-//    match unqual with
-
-
-//let qualifyExtendedRecordType (moduleCtx : ) (unqual : C.ExtendedRecordType) : ExtendedRecordType =
-//    match unqual with
-
-
-//let qualifyVariantCase (moduleCtx : ) (unqual : C.VariantCase) : VariantCase =
-//    match unqual with
-
-
-//let qualifyNewTypeDeclaration (moduleCtx : ) (unqual : C.NewTypeDeclaration) : NewTypeDeclaration =
-//    match unqual with
-
-
-//let qualifyAliasDeclaration (moduleCtx : ) (unqual : C.AliasDeclaration) : AliasDeclaration =
-//    match unqual with
-
-
-//let qualifyTypeDeclaration (moduleCtx : ) (unqual : C.TypeDeclaration) : TypeDeclaration =
-//    match unqual with
-
-
-//let qualifyCompoundValues (moduleCtx : ) (unqual : C.CompoundValues) : CompoundValues =
-//    match unqual with
-
-
-//let qualifyCustomTypeValues (moduleCtx : ) (unqual : C.CustomTypeValues) : CustomTypeValues =
-//    match unqual with
-
-
-//let qualifyFunctionValue (moduleCtx : ) (unqual : C.FunctionValue) : FunctionValue =
-//    match unqual with
-
-
-//let qualifyExplicitValue (moduleCtx : ) (unqual : C.ExplicitValue) : ExplicitValue =
-//    match unqual with
-
-
-//let qualifyLetBinding (moduleCtx : ) (unqual : C.LetBinding) : LetBinding =
-//    match unqual with
-
-
-//let qualifyControlFlowExpression (moduleCtx : ) (unqual : C.ControlFlowExpression) : ControlFlowExpression =
-//    match unqual with
-
-
-//let qualifySingleValueExpression (moduleCtx : ) (unqual : C.SingleValueExpression) : SingleValueExpression =
-//    match unqual with
-
-
-//let qualifyCompoundExpression (moduleCtx : ) (unqual : C.CompoundExpression) : CompoundExpression =
-//    match unqual with
-
-
-//let qualifyExpression (moduleCtx : ) (unqual : C.Expression) : Expression =
-//    match unqual with
-
-
-//let qualifyValueDeclaration (moduleCtx : ) (unqual : C.ValueDeclaration) : ValueDeclaration =
-//    match unqual with
-
-
-//let qualifyValueAnnotation (moduleCtx : ) (unqual : C.ValueAnnotation) : ValueAnnotation =
-//    match unqual with

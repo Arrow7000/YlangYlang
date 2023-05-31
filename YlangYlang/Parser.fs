@@ -11,7 +11,10 @@ type OneOrMultipleErrs<'token, 'ctx, 'err> =
     | OneErr of ParseErrWithCtx<'token, 'ctx, 'err>
     | MultipleErrs of OneOrMultipleErrs<'token, 'ctx, 'err> list
 
-
+    static member toList (oneOrMultiple : OneOrMultipleErrs<'token, 'ctx, 'err>) =
+        match oneOrMultiple with
+        | OneErr err -> List.singleton err.err
+        | MultipleErrs errs -> List.collect OneOrMultipleErrs.toList errs
 
 type ParseResult<'a, 'token, 'ctx, 'err> =
     | ParsingSuccess of result : 'a
@@ -552,3 +555,11 @@ let run parser (tokens : 'token list) : ParseResultWithContext<'a, 'token, 'ctx,
           tokensLeft = tokens
           contextStack = List.empty
           committed = List.empty }
+
+
+
+
+let toResult (parsingResult : ParseResultWithContext<'a, 'token, 'ctx, 'err>) : Result<'a, 'err list> =
+    match parsingResult.parseResult with
+    | ParsingSuccess success -> Ok success
+    | NoParsingMatch err -> OneOrMultipleErrs.toList err |> Error

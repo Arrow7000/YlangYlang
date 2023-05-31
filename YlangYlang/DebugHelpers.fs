@@ -28,7 +28,7 @@ let rec private makeErrsStringly ctx errs =
 
 
 /// Return a result with either the success result, or a friendlier formatted error data
-let formatErrors res =
+let formatErrors (res : ParseResultWithContext<'a, TokenWithSource, 'b, 'c>) =
     match res with
     | { parseResult = NoParsingMatch errs } as result ->
         Error

@@ -32,7 +32,7 @@ let bounce (delay : TimeSpan) (id : Id) (msgToSend : 'a) (currentState : State) 
 
     updatedState, Cmd.OfAsync.either delayedCmd () Timeout OnError
 
-let update (selfMessage : SelfMessage<_>) (currentState : State) =
+let update (selfMessage : SelfMessage<'a>) (currentState : State) : State * Cmd<'a> =
     match selfMessage with
     | OnError error ->
         eprintfn "%s" error.Message
@@ -45,7 +45,7 @@ let update (selfMessage : SelfMessage<_>) (currentState : State) =
             - 1
 
         if remainingMessages = 0 then
-            { currentState with PendingMessages = Map.remove id currentState.PendingMessages }, Cmd.OfFunc.result appMsg
+            { currentState with PendingMessages = Map.remove id currentState.PendingMessages }, Cmd.ofMsg appMsg
         else if remainingMessages > 0 then
             { currentState with PendingMessages = Map.add id remainingMessages currentState.PendingMessages }, Cmd.none
         else

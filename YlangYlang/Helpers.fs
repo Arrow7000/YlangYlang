@@ -455,3 +455,7 @@ type SingleOrDuplicate<'a> =
         match sod with
         | Single a -> a
         | Duplicate tom -> TOM.head tom
+
+
+module Tuple =
+    let makePairWithFst a b = a, b

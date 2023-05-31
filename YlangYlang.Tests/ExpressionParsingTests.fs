@@ -2,6 +2,7 @@
 
 open Expecto
 open Lexer
+open SyntaxTree
 open ConcreteSyntaxTree
 open Parser
 open ExpressionParsing
