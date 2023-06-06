@@ -15,10 +15,6 @@ type MentionableTypeContext =
     /// Type vars don't need to be declared
     | InValueTypeAnnotation
 
-type CstWithUnresolveds<'a> =
-    { cst : 'a
-      unresolveds : Identifier list }
-
 
 
 let liftResultFromCstNode (cstNode : S.CstNode<Result<'a, 'b>>) : Result<S.CstNode<'a>, 'b> =
@@ -51,6 +47,7 @@ let qualifyCstNode
 
 
 
+/// Lil' helper for qualifying and merging a List of CstNodes, which we're doing pretty often in the code below
 let qualifyListCstNodes (qualifyThing : 'a -> Result<'b, Identifier list>) (list : SyntaxTree.CstNode<'a> list) =
     list
     |> Result.traverse (qualifyCstNode qualifyThing)
@@ -63,6 +60,7 @@ let qualifyNelCstNodes (qualifyThing : 'a -> Result<'b, Identifier list>) (list 
     |> Result.mapError (NEL.toList >> List.concat)
 
 
+/// Lil' helper for qualifying and merging a TOM of CstNodes, which we're doing pretty often in the code below
 let qualifyTomCstNodes (qualifyThing : 'a -> Result<'b, Identifier list>) (list : SyntaxTree.CstNode<'a> tom) =
     list
     |> TOM.traverseResult (qualifyCstNode qualifyThing)

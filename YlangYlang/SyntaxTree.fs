@@ -1,7 +1,5 @@
 ﻿module SyntaxTree
 
-//open Lexer
-
 
 /// Structure to contain both a CST node and reference to the parsed tokens and source text
 //[<StructuredFormatDisplay("Node({str})")>]
@@ -13,12 +11,12 @@ type CstNode<'a> =
 
 
 
-let makeCstNode node source = { node = node; source = source }
+let makeCstNode (node : 'a) (source : Lexer.TokenWithSource list) : CstNode<'a> = { node = node; source = source }
 
 
 let getNode { node = node } = node
 
-let mapNode f node =
+let mapNode (f : 'a -> 'b) (node : CstNode<'a>) : CstNode<'b> =
     { source = node.source
       node = f node.node }
 
@@ -78,7 +76,7 @@ and RecordType<'Upper> =
     { fields : Map<CstNode<Lexer.UnqualValueIdentifier>, CstNode<MentionableType<'Upper>>> }
 
 and ExtendedRecordType<'Upper> =
-    { extendedAlias : CstNode<Lexer.UnqualValueIdentifier> // Because it has to be a single named value, no dots.
+    { extendedAlias : CstNode<Lexer.UnqualValueIdentifier> // Because it has to be a type param
       fields : Map<CstNode<Lexer.UnqualValueIdentifier>, CstNode<MentionableType<'Upper>>> }
 
 

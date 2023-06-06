@@ -456,6 +456,10 @@ type SingleOrDuplicate<'a> =
         | Single a -> a
         | Duplicate tom -> TOM.head tom
 
+/// Alias for SingleOrDuplicate
+and sod<'a> = SingleOrDuplicate<'a>
+
+
 
 module Tuple =
     let makePairWithFst a b = a, b
