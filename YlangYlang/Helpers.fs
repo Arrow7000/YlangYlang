@@ -243,6 +243,10 @@ type Result<'a, 'e> with
         | Ok x -> Some x
         | Error _ -> None
 
+    static member fromOption errIfNone =
+        function
+        | Some x -> Ok x
+        | None -> Error errIfNone
 
     static member gatherErrors list =
         list
@@ -256,8 +260,8 @@ type Result<'a, 'e> with
             | Ok x -> Some x
             | Error _ -> None)
 
-    static member sequence (list : Result<'a, 'b> list) : Result<'a list, 'b nel> =
-        List.foldBack
+    static member sequence (list : Result<'a, 'b> seq) : Result<'a seq, 'b nel> =
+        Seq.foldBack
             (fun res state ->
                 match state with
                 | Ok oks ->
@@ -270,8 +274,15 @@ type Result<'a, 'e> with
                     | Ok _ -> Error errs)
             list
             (Ok List.empty)
+        |> Result.map Seq.ofList
 
-    static member traverse f = List.map f >> Result.sequence
+    static member sequenceList (list : Result<'a, 'b> list) : Result<'a list, 'b nel> =
+        Result.sequence list |> Result.map Seq.toList
+
+    static member traverse f =
+        List.map f
+        >> Result.sequence
+        >> Result.map List.ofSeq
 
     static member bindError (f : 'errA -> Result<'T, 'errB>) (result : Result<'T, 'errA>) =
         match result with
@@ -463,3 +474,5 @@ and sod<'a> = SingleOrDuplicate<'a>
 
 module Tuple =
     let makePairWithFst a b = a, b
+    let mapFst f (a, b) = f a, b
+    let mapSnd f (a, b) = a, f b

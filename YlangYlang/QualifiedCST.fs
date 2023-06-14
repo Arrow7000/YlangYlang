@@ -54,16 +54,6 @@ module Names =
 
 
 
-    /// Type that describes the path to where a given name is declared.
-    /// @TODO: hmmm how do we capture the fact that a name is the nth parameter of a function...? Maybe we don't need to actually? Because the name itself references it?
-    type PathToDestructuredName =
-        | SimpleName
-        | InverseRecord
-        | InverseTuple of index : uint * child : PathToDestructuredName
-        | InverseCons of index : uint * child : PathToDestructuredName
-        | InverseTypeVariant of constructor : TypeOrModuleIdentifier * index : uint * child : PathToDestructuredName
-
-
 
 
 
@@ -86,6 +76,20 @@ module Names =
 
 
 
+    /// Type that describes the path to where a given name is declared.
+    /// @TODO: hmmm how do we capture the fact that a name is the nth parameter of a function...? Maybe we don't need to actually? Because the name itself references it?
+    type PathToDestructuredName =
+        | SimpleName
+        | InverseRecord
+        | InverseTuple of index : uint * child : PathToDestructuredName
+        | InverseCons of index : uint * child : PathToDestructuredName
+        | InverseTypeVariant of constructor : ResolvedTypeConstructor * index : uint * child : PathToDestructuredName
+
+
+
+
+
+
 
 
 
@@ -95,7 +99,25 @@ open Names
 
 
 
+//type ResolvedTypeDeclarations = Map<ResolvedTypeName, TypeDecl>
 
+//type ResolvedTypeConstructors = Map<ResolvedTypeConstructor, VariantConstructor>
+
+//type ResolvedTypeParams = Map<ResolvedTypeParam, TokenWithSource list>
+
+//type ResolvedValueDeclarations = Map<ResolvedLower, LowerCaseName>
+
+////type ResolvedValueTypeDeclarations = Map<ResolvedLower, SingleOrDuplicate<TokenWithSource list * MentionableType>>
+
+
+
+//type NamesMaps =
+//    { typeDeclarations : ResolvedTypeDeclarations
+//      typeConstructors : ResolvedTypeConstructors
+//      typeParams : ResolvedTypeParams
+//      values : ResolvedValueDeclarations
+//    //valueTypeDeclarations : ResolvedValueTypeDeclarations
+//     }
 
 
 
@@ -238,23 +260,23 @@ type InfixOpDeclaration =
 
 /// Note that each let binding could still create multiple named values through assignment patterns, so this is only the result of a single name, not a full binding
 type ResolvedLetBinding =
-    { identifier : LowerIdent
+    {
+      //identifier : LowerIdent
       tokens : TokenWithSource list
       assignmentPattern : AssignmentPattern
       /// This expression is actually the whole expression after the assignment, not just the bit that was destructured to this named identifier; that will have to be implemented at the type checking phase
       assignedExpression : Expression }
 
-and ResolvedFuncParam =
-    { varIdent : LowerIdent
-      tokens : TokenWithSource list
-      assignmentPattern : AssignmentPattern }
+//and ResolvedFuncParam =
+//    { tokens : TokenWithSource list
+//      assignmentPattern : AssignmentPattern }
 
 
 and LetDeclarationNames = Map<ResolvedLower, ResolvedLetBinding>
 
-and FunctionParams = Map<ResolvedLower, ResolvedFuncParam>
+and FunctionOrCaseMatchParams = Map<ResolvedLower, PathToDestructuredName>
 
-and CaseMatchPattern = Map<ResolvedLower, ResolvedFuncParam>
+//and CaseMatchPattern = Map<ResolvedLower, PathToDestructuredName>
 
 
 
@@ -268,7 +290,7 @@ and CompoundValues =
 
 
 and FunctionValue =
-    { params_ : FunctionParams
+    { params_ : FunctionOrCaseMatchParams
       body : S.CstNode<Expression> }
 
 
@@ -308,7 +330,7 @@ and CompoundExpression =
 
 
 and CaseMatchBranch =
-    { matchPattern : S.CstNode<AssignmentPattern>
+    { matchPattern : FunctionOrCaseMatchParams
       body : S.CstNode<Expression> }
 
 
