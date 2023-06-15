@@ -547,8 +547,8 @@ module PreResolution =
         let rec innerFunc mentionableType : Result<Q.MentionableType, Identifier list> =
             match mentionableType with
             | S.UnitType -> Ok Q.UnitType
-            | S.GenericTypeVar v ->
 
+            | S.GenericTypeVar v ->
                 match typeCtx with
                 | InTypeDeclaration ->
                     match tryFindTypeParam v resolvedNames with
@@ -626,17 +626,16 @@ module PreResolution =
                     |> Error
 
             | S.ReferencedType (typeName = typeName; typeParams = typeParams) ->
-                let resolvedTypeName =
+                let resolvedTypeNameOpt =
                     typeName
-                    |> S.mapNode (flip tryFindTypeDeclaration resolvedNames)
-                    |> liftOptionFromCstNode
-                //|> Option.map snd
+                    |> S.getNode
+                    |> flip tryFindTypeDeclaration resolvedNames
 
                 let resolvedTypeParams = typeParams |> qualifyListCstNodes innerFunc
 
-                match resolvedTypeName, resolvedTypeParams with
-                | Some resolved, Ok resolvedTypeParams' ->
-                    Q.ReferencedType (S.mapNode snd resolved, resolvedTypeParams')
+                match resolvedTypeNameOpt, resolvedTypeParams with
+                | Some (_, resolvedTypeName), Ok resolvedTypeParams' ->
+                    Q.ReferencedType (resolvedTypeName, resolvedTypeParams')
                     |> Ok
                 | None, Ok _ ->
                     convertTypeOrModuleIdentifierToIdentifier typeName.node
@@ -655,12 +654,9 @@ module PreResolution =
 
                 let resolvedTos = toTypes |> qualifyNelCstNodes innerFunc
 
-                match resolvedFrom, resolvedTos with
-                | Ok first, Ok rest -> Q.Arrow (first, rest) |> Ok
+                (resolvedFrom, resolvedTos)
+                ||> Result.map2 (fun from tos -> Q.Arrow (from, tos)) (@)
 
-                | Error err1, Error err2 -> Error (err1 @ err2)
-                | Ok _, Error err
-                | Error err, Ok _ -> Error err
 
             | S.Parensed parensed -> innerFunc parensed.node
 
@@ -669,7 +665,10 @@ module PreResolution =
 
 
 
-    and qualifyTypeDeclaration resolvedNames declaration : Result<Q.TypeDeclaration, Identifier list> =
+    and qualifyTypeDeclaration
+        (resolvedNames : NamesInScope)
+        (declaration : S.TypeDeclaration<TypeOrModuleIdentifier>)
+        : Result<Q.TypeDeclaration, Identifier list> =
         match declaration with
         | S.Alias { typeParams = typeParams
                     referent = referent } ->
@@ -681,8 +680,8 @@ module PreResolution =
             let mentionableType =
                 qualifyCstNodeAndLiftResult (qualifyMentionableType InTypeDeclaration newNamesInScope) referent
 
-            match mentionableType with
-            | Ok type' ->
+            mentionableType
+            |> Result.map (fun type' ->
                 let typeParamsMap =
                     typeParams
                     // @TODO: beware that we have duplication here, because we're constructing a simple type params map with a new Guid, but we're also `addNewTypeParam`ing into a `NamesInScope`. Which is not only duplication, but it also means that we have two separate Guids in the different kinds of names maps referencing the same value.
@@ -691,9 +690,8 @@ module PreResolution =
 
                 Q.Alias
                     { referent = type'
-                      typeParams = typeParamsMap }
-                |> Ok
-            | Error err -> Error err
+                      typeParams = typeParamsMap })
+
         | S.Sum newType ->
             qualifyNewTypeDeclaration resolvedNames newType
             |> Result.map Q.Sum
@@ -712,18 +710,13 @@ module PreResolution =
         let resolvedVariants =
             variants
             |> qualifyNelCstNodes (fun (variantCase : C.VariantCase) ->
-                let contents =
-                    variantCase.contents
-                    |> qualifyListCstNodes (qualifyMentionableType InTypeDeclaration resolvedWithTypeParams)
-
-                match contents with
-                | Ok contents' ->
+                variantCase.contents
+                |> qualifyListCstNodes (qualifyMentionableType InTypeDeclaration resolvedWithTypeParams)
+                |> Result.map (fun contents' ->
                     let label = S.mapNode unqualTypeToUpperIdent variantCase.label
 
-                    Ok
-                        { Q.label = label
-                          Q.contents = contents' }
-                | Error err -> Error err)
+                    { Q.label = label
+                      Q.contents = contents' }))
 
         match resolvedVariants with
         | Ok variants' ->
@@ -763,28 +756,22 @@ module PreResolution =
         | S.DestructuredTypeVariant (ctor, params') ->
             let resolvedCtor =
                 ctor
-                |> S.mapNode (fun ctor' ->
-                    tryFindTypeConstructor ctor' resolvedNames
-                    |> Option.map snd)
-                |> liftOptionFromCstNode
+                |> S.getNode
+                |> (flip tryFindTypeConstructor resolvedNames)
+                |> Result.fromOption (
+                    convertTypeOrModuleIdentifierToIdentifier ctor.node
+                    |> List.singleton
+                )
+                |> Result.map snd
 
             let resolvedParams =
                 params'
                 |> qualifyListCstNodes (qualifyAssignmentPattern resolvedNames)
 
-            match resolvedCtor, resolvedParams with
-            | Some resolvedCtor', Ok resolvedParams' ->
-                Q.DestructuredTypeVariant (resolvedCtor', resolvedParams')
-                |> Ok
-            | None, Ok _ ->
-                convertTypeOrModuleIdentifierToIdentifier ctor.node
-                |> List.singleton
-                |> Error
-            | Some _, Error err -> Error err
-            | None, Error err ->
-                (convertTypeOrModuleIdentifierToIdentifier ctor.node
-                 :: err)
-                |> Error
+
+            (resolvedCtor, resolvedParams)
+            ||> Result.map2 (fun ctor' resolvedParams' -> Q.DestructuredTypeVariant (ctor', resolvedParams')) (@)
+
 
     and qualifyAssignmentPattern
         (resolvedNames : NamesInScope)
@@ -794,18 +781,14 @@ module PreResolution =
         | S.Named name -> unqualValToLowerIdent name |> Q.Named |> Ok
         | S.Ignored -> Ok Q.Ignored
         | S.Unit -> Ok Q.Unit
+
         | S.DestructuredPattern pattern ->
             qualifyDestructuredPattern resolvedNames pattern
             |> Result.map Q.DestructuredPattern
-        | S.Aliased (pattern, alias) ->
-            let qualifiedPattern =
-                qualifyCstNodeAndLiftResult (qualifyAssignmentPattern resolvedNames) pattern
 
-            match qualifiedPattern with
-            | Ok pattern' ->
-                Q.Aliased (pattern', S.mapNode unqualValToLowerIdent alias)
-                |> Ok
-            | Error err -> Error err
+        | S.Aliased (pattern, alias) ->
+            qualifyCstNodeAndLiftResult (qualifyAssignmentPattern resolvedNames) pattern
+            |> Result.map (fun pattern' -> Q.Aliased (pattern', S.mapNode unqualValToLowerIdent alias))
 
 
 
@@ -882,19 +865,20 @@ module PreResolution =
                     |> Ok
 
                 | S.Function ({ params_ = params_; body = body } as funcParams) ->
+                    let qualifiedBody =
+                        resolveFuncParams resolvedNames funcParams
+                        |> Result.bind (fun resolvedFuncNames ->
+                            body
+                            |> S.mapNode (fun expr ->
+                                let combinedResolvedNames =
+                                    combineTwoResolvedNamesMaps resolvedFuncNames resolvedNames
+
+                                qualifyExpression moduleCtx combinedResolvedNames expr)
+                            |> liftResultFromCstNode)
+
                     let qualifiedParams =
                         params_
                         |> qualifyNelCstNodes (qualifyAssignmentPattern resolvedNames)
-
-                    let resolvedWithFuncParams =
-                        resolveFuncParams resolvedNames funcParams
-                        |> Result.map (fun resolvedFunc -> combineTwoResolvedNamesMaps resolvedFunc resolvedNames)
-
-                    let qualifiedBody =
-                        resolvedWithFuncParams
-                        |> Result.bind (fun resolvedFunc ->
-                            S.mapNode (qualifyExpression moduleCtx resolvedFunc) body
-                            |> liftResultFromCstNode)
 
                     (qualifiedBody, qualifiedParams)
                     ||> Result.map2
@@ -905,7 +889,6 @@ module PreResolution =
                                     |> List.fold Map.merge Map.empty
                                 // @TODO: beware that we have duplication here, because we're constructing a simple params map with a new Guid, but we're also adding them into a `NamesInScope`. Which is not only duplication, but it also means that we have two separate Guids in the different kinds of names maps referencing the same value.
 
-
                                 Q.Function { body = expr; params_ = paramsMap }
                                 |> Q.ExplicitValue
                                 |> Q.SingleValueExpression)
@@ -914,10 +897,7 @@ module PreResolution =
 
 
             | S.UpperIdentifier upper ->
-                let resolved = tryFindTypeConstructor upper resolvedNames
-                //|> Option.map snd
-
-                match resolved with
+                match tryFindTypeConstructor upper resolvedNames with
                 | Some (variantCtor, resolvedCtor) ->
                     Q.UpperIdentifier (variantCtor.fullName, resolvedCtor)
                     |> Q.SingleValueExpression
@@ -929,11 +909,9 @@ module PreResolution =
                     |> Error
 
             | S.LowerIdentifier lower ->
-                let resolved = tryFindValue lower resolvedNames
-
-                match resolved with
-                | Some (res, resolvedLower) ->
-                    match res with
+                match tryFindValue lower resolvedNames with
+                | Some (lowerCaseName, resolvedLower) ->
+                    match lowerCaseName with
                     | Q.LocalName _
                     | Q.Param _ ->
                         match lower with

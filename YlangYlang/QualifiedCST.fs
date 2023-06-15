@@ -156,9 +156,7 @@ type DestructuredPattern =
     /// Destructured tuples need to have at least two members
     | DestructuredTuple of S.CstNode<AssignmentPattern> tom
     | DestructuredCons of S.CstNode<AssignmentPattern> tom
-    | DestructuredTypeVariant of
-        constructor : S.CstNode<ResolvedTypeConstructor> *
-        params' : S.CstNode<AssignmentPattern> list
+    | DestructuredTypeVariant of constructor : ResolvedTypeConstructor * params' : S.CstNode<AssignmentPattern> list
 
 /// Named - or ignored - variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
 and AssignmentPattern =
@@ -190,7 +188,7 @@ type MentionableType =
     | Tuple of TupleType
     | Record of RecordType
     | ExtendedRecord of ExtendedRecordType
-    | ReferencedType of typeName : S.CstNode<ResolvedTypeName> * typeParams : S.CstNode<MentionableType> list
+    | ReferencedType of typeName : ResolvedTypeName * typeParams : S.CstNode<MentionableType> list
     | Arrow of fromType : S.CstNode<MentionableType> * toType : NEL<S.CstNode<MentionableType>>
     | Parensed of S.CstNode<MentionableType>
 
