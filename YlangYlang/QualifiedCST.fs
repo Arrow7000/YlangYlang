@@ -217,13 +217,11 @@ type VariantCase =
 
 /// I.e. a sum type
 type NewTypeDeclaration =
-    //{ typeParams : S.CstNode<ResolvedTypeParam> list
     { typeParams : Map<ResolvedTypeParam, TokenWithSource list>
       variants : NEL<S.CstNode<VariantCase>> }
 
 
 type AliasDeclaration =
-    //{ typeParams : S.CstNode<ResolvedTypeParam> list // in case the underlying type needs it
     { typeParams : Map<ResolvedTypeParam, TokenWithSource list> // in case the underlying type needs it
       referent : S.CstNode<MentionableType> }
 
@@ -350,6 +348,8 @@ type ValueDeclaration =
 
 type ValueAnnotation =
     { valueName : S.CstNode<LowerIdent>
+      /// these aren't in the source code, but they're gathered from the type expression implicitly
+      gatheredImplicitParams : Map<ResolvedTypeParam, LowerIdent>
       annotatedType : S.CstNode<MentionableType> }
 
 

@@ -191,6 +191,10 @@ module PreResolution =
     //    { tokens : TokenWithSource list
     //      key : ResolvedLower }
 
+    type BootstrapTypeDeclarations = Map<TypeOrModuleIdentifier, SingleOrDuplicate<CstNode<Cst.TypeDeclaration>>>
+
+
+
 
 
     type TypeDeclarations = Map<TypeOrModuleIdentifier, SingleOrDuplicate<Q.TypeDecl * ResolvedTypeName>>
@@ -443,6 +447,8 @@ module PreResolution =
         | QualifiedValue ident -> QualifiedPathValueIdentifier ident
         | UnqualValue ident -> SingleValueIdentifier ident
 
+    let private convertValueIdentifierToLowerIdent (UnqualValueIdentifier ident) : LowerIdent = LowerIdent ident
+
 
     let private moduleNameToModulePath (QualifiedModuleOrTypeIdentifier moduleIdent) : ModulePath =
         moduleIdent
@@ -531,16 +537,57 @@ module PreResolution =
             |> List.map gatherParams
             |> List.mapi (fun index params_ ->
                 params_
-                |> Map.map (fun _ value -> InverseTypeVariant (ctor.node, uint index, value)))
+                |> Map.map (fun _ value -> InverseTypeVariant (ctor, uint index, value)))
             |> List.fold Map.merge Map.empty
 
 
 
 
 
+
+
+
+    /// This gathers all the type params present in a mentionable type recursively. Useful for constructing the implicit map of type parameters for value type annotations.
+    let rec gatherTypeParams (typeExpr : C.MentionableType) =
+        match typeExpr with
+        | S.GenericTypeVar unqual ->
+            convertValueIdentifierToLowerIdent unqual
+            |> Set.singleton
+
+        | S.UnitType -> Set.empty
+
+        | S.Tuple tuple ->
+            TOM.map (S.getNode >> gatherTypeParams) tuple.types
+            |> TOM.toList
+            |> Set.unionMany
+
+        | S.Record record ->
+            Map.values record.fields
+            |> Seq.map (S.getNode >> gatherTypeParams)
+            |> Set.unionMany
+
+        | S.ExtendedRecord extendedRec ->
+            Map.values extendedRec.fields
+            |> Seq.map (S.getNode >> gatherTypeParams)
+            |> Set.unionMany
+            |> Set.add (convertValueIdentifierToLowerIdent extendedRec.extendedAlias.node)
+
+        | S.ReferencedType (typeParams = typeParams) ->
+            List.map (S.getNode >> gatherTypeParams) typeParams
+            |> Set.unionMany
+
+        | S.Arrow (fromType, toTypes) ->
+            toTypes
+            |> NEL.map (S.getNode >> gatherTypeParams)
+            |> NEL.toList
+            |> Set.unionMany
+            |> Set.union (gatherTypeParams fromType.node)
+
+
+        | S.Parensed expr -> gatherTypeParams expr.node
+
     /// Note: No need to update `resolvedNames` at every recursion step here because no new names can be declared inside a mentioned type!
     let rec qualifyMentionableType
-        (typeCtx : MentionableTypeContext)
         (resolvedNames : NamesInScope)
         (unqual : C.MentionableType)
         : Result<Q.MentionableType, Identifier list> =
@@ -549,14 +596,14 @@ module PreResolution =
             | S.UnitType -> Ok Q.UnitType
 
             | S.GenericTypeVar v ->
-                match typeCtx with
-                | InTypeDeclaration ->
-                    match tryFindTypeParam v resolvedNames with
-                    | Some (_, typeParam) -> Q.GenericTypeVar typeParam |> Ok
-                    | None -> SingleValueIdentifier v |> List.singleton |> Error
-                | InValueTypeAnnotation ->
-                    // @TODO: need to do something sensible about generic type vars if we're currently in a value type annotation, where the type params are implicit
-                    Q.GenericTypeVar v |> Ok
+                //match typeCtx with
+                //| InTypeDeclaration ->
+                match tryFindTypeParam v resolvedNames with
+                | Some (_, typeParam) -> Q.GenericTypeVar typeParam |> Ok
+                | None -> SingleValueIdentifier v |> List.singleton |> Error
+            //| InValueTypeAnnotation ->
+            //    // @TODO: need to do something sensible about generic type vars if we're currently in a value type annotation, where the type params are implicit
+            //    Q.GenericTypeVar v |> Ok
 
             | S.Tuple { types = types } ->
                 let mappedTypes =
@@ -590,20 +637,20 @@ module PreResolution =
                     |> Map.sequenceResult
 
                 let extendedType : Result<S.CstNode<TokenWithSource list * ResolvedTypeParam>, Identifier list> =
-                    match typeCtx with
-                    | InTypeDeclaration ->
-                        alias
-                        |> S.mapNode (flip tryFindTypeParam resolvedNames)
-                        |> liftOptionFromCstNode
-                        |> Result.fromOption (
-                            alias.node
-                            |> SingleValueIdentifier
-                            |> List.singleton
-                        )
+                    //match typeCtx with
+                    //| InTypeDeclaration ->
+                    alias
+                    |> S.mapNode (flip tryFindTypeParam resolvedNames)
+                    |> liftOptionFromCstNode
+                    |> Result.fromOption (
+                        alias.node
+                        |> SingleValueIdentifier
+                        |> List.singleton
+                    )
 
-                    | InValueTypeAnnotation ->
-                        // @TODO: need to do something sensible about generic type vars if we're currently in a value type annotation, where the type params are implicit
-                        alias |> S.mapNode SingleValueIdentifier |> Ok
+                //| InValueTypeAnnotation ->
+                //    // @TODO: need to do something sensible about generic type vars if we're currently in a value type annotation, where the type params are implicit
+                //    alias |> S.mapNode SingleValueIdentifier |> Ok
 
                 match extendedType, mappedFields with
                 | Ok extended, Ok okFields ->
@@ -678,7 +725,7 @@ module PreResolution =
                 |> List.fold (flip addNewTypeParam) resolvedNames
 
             let mentionableType =
-                qualifyCstNodeAndLiftResult (qualifyMentionableType InTypeDeclaration newNamesInScope) referent
+                qualifyCstNodeAndLiftResult (qualifyMentionableType newNamesInScope) referent
 
             mentionableType
             |> Result.map (fun type' ->
@@ -711,7 +758,7 @@ module PreResolution =
             variants
             |> qualifyNelCstNodes (fun (variantCase : C.VariantCase) ->
                 variantCase.contents
-                |> qualifyListCstNodes (qualifyMentionableType InTypeDeclaration resolvedWithTypeParams)
+                |> qualifyListCstNodes (qualifyMentionableType resolvedWithTypeParams)
                 |> Result.map (fun contents' ->
                     let label = S.mapNode unqualTypeToUpperIdent variantCase.label
 
@@ -1106,16 +1153,19 @@ module PreResolution =
                     | S.ImportDeclaration import -> failwithf "@TODO: Importing other modules is not implemented yet!"
                     | S.ValueTypeAnnotation { valueName = valueName
                                               annotatedType = annotatedType } ->
-                        let qualifiedAnnotatedType =
-                            qualifyCstNodeAndLiftResult
-                                (qualifyMentionableType InValueTypeAnnotation resolvedNames)
-                                annotatedType
+                        let typeParams =
+                            gatherTypeParams annotatedType.node
+                            |> Seq.map (fun ident -> makeResolvedTypeParam (), ident)
+                            |> Map.ofSeq
 
+                        let qualifiedAnnotatedType =
+                            qualifyCstNodeAndLiftResult (qualifyMentionableType resolvedNames) annotatedType
 
                         match qualifiedAnnotatedType with
                         | Ok qualified ->
                             Q.ValueTypeAnnotation
                                 { valueName = S.mapNode unqualValToLowerIdent valueName
+                                  gatheredImplicitParams = typeParams
                                   annotatedType = qualified }
                             |> Ok
                         | Error err -> Error err
@@ -1180,7 +1230,7 @@ module PreResolution =
         (names : NamesInScope)
         =
         let qualifiedVariantParams =
-            List.map (qualifyMentionableType InTypeDeclaration names) variantParams
+            List.map (qualifyMentionableType names) variantParams
             |> Result.sequenceList
             |> combineUnresolvedIdents
 
@@ -1459,7 +1509,7 @@ module PreResolution =
             | ValueTypeAnnotation { valueName = valueName
                                     annotatedType = annotatedType } ->
 
-                let qualifiedType = qualifyMentionableType InValueTypeAnnotation annotatedType
+                let qualifiedType = qualifyMentionableType annotatedType
 
                 empty
                 |> addValueTypeDeclaration

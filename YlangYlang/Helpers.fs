@@ -18,6 +18,8 @@ let flip (f : 'b -> 'a -> 'c) : ('a -> 'b -> 'c) = fun a b -> f b a
 let split f a = (a, f a)
 
 
+type 'T set when 'T : comparison = Set<'T>
+
 type OneOrTree<'a> =
     | One of 'a
     | Multiple of OneOrTree<'a> list
