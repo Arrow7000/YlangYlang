@@ -72,6 +72,19 @@ type NonEmptyList<'a> =
         | None -> head
         | Some last -> last
 
+    static member allButLast<'a> (NEL (head, tail) : 'a nel) =
+        let rec getAllButLastOfList list =
+            match list with
+            | voorlaatste :: _ :: [] -> List.singleton voorlaatste
+            | head :: rest -> head :: getAllButLastOfList rest
+            | [] -> []
+
+        NEL (head, getAllButLastOfList tail)
+
+
+    static member lastAndRest<'a> (nel : 'a nel) = NEL.allButLast nel, NEL.last nel
+
+
     static member sequenceResult (results : Result<'a, 'b> nel) : Result<'a nel, 'b nel> =
         let (NEL (head, tail)) = results
 

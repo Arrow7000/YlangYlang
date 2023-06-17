@@ -397,32 +397,10 @@ type YlProject = { modules : YlProjectItem list }
 
 
 
-type LowerCaseTopLevel =
-    { tokens : TokenWithSource list
-      assignedExpression : Expression
-      fullName : FullyQualifiedTopLevelLowerIdent }
-
-type LowerCaseName =
-    | LocalName of
-        {| tokens : TokenWithSource list
-           assignmentPattern : PathToDestructuredName
-           assignedExpression : Expression |}
-    | Param of
-        {| tokens : TokenWithSource list
-           assignmentPattern : PathToDestructuredName |}
-    | TopLevelName of LowerCaseTopLevel
-
 
 
 
 type TypeDecl =
     { typeDecl : TypeDeclaration
-      fullName : FullyQualifiedUpperIdent
-      tokens : TokenWithSource list }
-
-
-type VariantConstructor =
-    { typeDeclaration : NewTypeDeclaration
-      variantParams : MentionableType list
       fullName : FullyQualifiedUpperIdent
       tokens : TokenWithSource list }
