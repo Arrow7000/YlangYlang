@@ -161,6 +161,8 @@ and ExplicitValue<'Upper, 'Lower when 'Lower : comparison> =
     /// A `.someField` expression which are first class getters for record fields. A `.someField` getter is a function that takes a record that has a `someField` field and returns the value at that field
     | DotGetter of recordField : Lexer.UnqualValueIdentifier
 
+
+/// @TODO: need to account for let binding type annotations!
 and LetBinding<'Upper, 'Lower when 'Lower : comparison> =
     { bindPattern : CstNode<AssignmentPattern<'Upper>>
       value : CstNode<Expression<'Upper, 'Lower>> }

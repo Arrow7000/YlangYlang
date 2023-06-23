@@ -99,31 +99,6 @@ open Names
 
 
 
-//type ResolvedTypeDeclarations = Map<ResolvedTypeName, TypeDecl>
-
-//type ResolvedTypeConstructors = Map<ResolvedTypeConstructor, VariantConstructor>
-
-//type ResolvedTypeParams = Map<ResolvedTypeParam, TokenWithSource list>
-
-//type ResolvedValueDeclarations = Map<ResolvedLower, LowerCaseName>
-
-////type ResolvedValueTypeDeclarations = Map<ResolvedLower, SingleOrDuplicate<TokenWithSource list * MentionableType>>
-
-
-
-//type NamesMaps =
-//    { typeDeclarations : ResolvedTypeDeclarations
-//      typeConstructors : ResolvedTypeConstructors
-//      typeParams : ResolvedTypeParams
-//      values : ResolvedValueDeclarations
-//    //valueTypeDeclarations : ResolvedValueTypeDeclarations
-//     }
-
-
-
-
-
-
 
 /// Top level because only top level types/values can be exposed/imported
 type TopLevelUpperIdent =
@@ -170,7 +145,8 @@ and AssignmentPattern =
 
 
 
-
+/// We can't really store the tokens constituting the type param definition, because this is also used for storing the type params for value type annotations, which is only implicit and doesn't actually exist in source code
+type ResolvedTypeParams = Map<ResolvedTypeParam, LowerIdent>
 
 
 
@@ -217,12 +193,12 @@ type VariantCase =
 
 /// I.e. a sum type
 type NewTypeDeclaration =
-    { typeParams : Map<ResolvedTypeParam, TokenWithSource list>
+    { typeParams : ResolvedTypeParams
       variants : NEL<S.CstNode<VariantCase>> }
 
 
 type AliasDeclaration =
-    { typeParams : Map<ResolvedTypeParam, TokenWithSource list> // in case the underlying type needs it
+    { typeParams : ResolvedTypeParams // in case the underlying type needs it
       referent : S.CstNode<MentionableType> }
 
 
@@ -256,23 +232,19 @@ type InfixOpDeclaration =
 
 /// Note that each let binding could still create multiple named values through assignment patterns, so this is only the result of a single name, not a full binding
 type ResolvedLetBinding =
-    {
-      //identifier : LowerIdent
+    { ident : LowerIdent
       tokens : TokenWithSource list
-      assignmentPattern : AssignmentPattern
+      destructurePath : PathToDestructuredName
       /// This expression is actually the whole expression after the assignment, not just the bit that was destructured to this named identifier; that will have to be implemented at the type checking phase
       assignedExpression : Expression }
 
-//and ResolvedFuncParam =
-//    { tokens : TokenWithSource list
-//      assignmentPattern : AssignmentPattern }
+
 
 
 and LetDeclarationNames = Map<ResolvedLower, ResolvedLetBinding>
 
-and FunctionOrCaseMatchParams = Map<ResolvedLower, PathToDestructuredName>
+and FunctionOrCaseMatchParams = Map<ResolvedLower, LowerIdent * PathToDestructuredName * TokenWithSource list>
 
-//and CaseMatchPattern = Map<ResolvedLower, PathToDestructuredName>
 
 
 
@@ -349,7 +321,7 @@ type ValueDeclaration =
 type ValueAnnotation =
     { valueName : S.CstNode<LowerIdent>
       /// these aren't in the source code, but they're gathered from the type expression implicitly
-      gatheredImplicitParams : Map<ResolvedTypeParam, LowerIdent>
+      gatheredImplicitParams : ResolvedTypeParams
       annotatedType : S.CstNode<MentionableType> }
 
 
@@ -360,7 +332,7 @@ type ValueAnnotation =
 
 type Declaration =
     | ImportDeclaration of S.ImportDeclaration
-    | TypeDeclaration of name : S.CstNode<Lexer.UnqualTypeOrModuleIdentifier> * declaration : TypeDeclaration
+    | TypeDeclaration of name : S.CstNode<UpperIdent> * declaration : TypeDeclaration
     | ValueTypeAnnotation of ValueAnnotation
     | ValueDeclaration of ValueDeclaration
 
@@ -368,7 +340,9 @@ type Declaration =
 // Representing a whole file/module
 type YlModule =
     { moduleDecl : S.ModuleDeclaration
-      declarations : S.CstNode<Declaration> list }
+      imports : S.ImportDeclaration list
+      types : Map<ResolvedTypeName, UpperIdent * TypeDeclaration>
+      values : Map<ResolvedLower, LowerIdent * EitherOrBoth<ValueAnnotation, ValueDeclaration>> }
 
 
 

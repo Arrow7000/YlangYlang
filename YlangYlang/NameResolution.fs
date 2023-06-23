@@ -14,26 +14,11 @@ open System
 
 
 
-type LowerCaseTopLevel =
-    { tokens : TokenWithSource list
-      assignedExpression : Cst.Expression
-      fullName : FullyQualifiedTopLevelLowerIdent }
 
-type LowerCaseName =
-    | LocalName of
-        {| tokens : TokenWithSource list
-           assignmentPattern : PathToDestructuredName
-           assignedExpression : Cst.Expression |}
-    | Param of
-        {| tokens : TokenWithSource list
-           assignmentPattern : PathToDestructuredName |}
-    | TopLevelName of LowerCaseTopLevel
 
-type VariantConstructor =
-    { typeDeclaration : Cst.NewTypeDeclaration
-      variantCase : Cst.VariantCase
-      //variantParams : Cst.MentionableType list
-      fullName : FullyQualifiedUpperIdent }
+
+
+
 
 
 
@@ -43,21 +28,18 @@ type VariantConstructor =
 /// This stores a new declared type/value/param/etc in its map...
 /// @TODO: but question is... currently it stores it solely in the unqualified form (I think), but it should also store it in its fully qualified, and locally findable form - i.e. if it's been explicitly imported,referenced under a module alias, namespace opened, etc.
 /// So hmmm..... maybe we should instead store it under its full namespace *only*, and have separate mappings for the locally accessible versions
-let addNewReference (declaredIdent : S.CstNode<'name>) (value : 'v) (map : Map<'name, SingleOrDuplicate<'v>>) =
+//let addNewReference (declaredIdent : S.CstNode<'name>) (value : 'v) (map : Map<'name, SingleOrDuplicate<'v>>) =
+let addNewReference (declaredIdent : 'name) (value : 'v) (map : Map<'name, SingleOrDuplicate<'v>>) =
     map
-    |> Map.change declaredIdent.node (fun oldValueOpt ->
+    |> Map.change declaredIdent (fun oldValueOpt ->
         match oldValueOpt with
         | Some (Single oldRef) -> Some (Duplicate <| TOM.make value oldRef)
         | Some (Duplicate refList) -> Some (Duplicate <| TOM.cons value refList)
         | None -> Some (sod.Single value))
 
 
-let addNewRefWithTokens
-    (ident : S.CstNode<'name>)
-    (value : 'v)
-    (map : Map<'name, SingleOrDuplicate<TokenWithSource list * 'v>>)
-    =
-    addNewReference ident (ident.source, value) map
+let addNewRefWithTokens (ident : S.CstNode<'name>) (value : 'v) =
+    addNewReference ident (ident.source, value)
 
 
 
@@ -95,6 +77,37 @@ let combineReferenceMaps (mapList : Map<'a, SingleOrDuplicate<'b>> seq) : Map<'a
 
 
 
+let private makeResolvedTypeName () = Guid.NewGuid () |> ResolvedTypeName
+
+let private makeResolvedTypeConstructor () =
+    Guid.NewGuid () |> ResolvedTypeConstructor
+
+let private makeResolvedLower () = Guid.NewGuid () |> ResolvedLower
+let private makeResolvedTypeParam () = Guid.NewGuid () |> ResolvedTypeParam
+
+
+
+
+
+let reifyModuleName (QualifiedModuleOrTypeIdentifier moduleName) : ModulePath =
+    moduleName
+    |> NEL.map (fun (UnqualTypeOrModuleIdentifier segment) -> segment)
+    |> ModulePath
+
+let reifyUpper
+    (moduleName : QualifiedModuleOrTypeIdentifier)
+    (UnqualTypeOrModuleIdentifier topLevelIdent)
+    : FullyQualifiedUpperIdent =
+    FullyQualifiedUpperIdent (reifyModuleName moduleName, UpperIdent topLevelIdent)
+
+let reifyLower
+    (moduleName : QualifiedModuleOrTypeIdentifier)
+    (UnqualValueIdentifier topLevelIdent)
+    : FullyQualifiedTopLevelLowerIdent =
+    FullyQualifiedTopLevelLowerIdent (reifyModuleName moduleName, LowerIdent topLevelIdent)
+
+
+
 
 
 
@@ -104,16 +117,29 @@ module PostResolution =
     open System
     open QualifiedSyntaxTree
 
+    type VariantConstructor =
+        { typeDeclaration : Q.NewTypeDeclaration
+          variantCase : Q.VariantCase
+          fullName : FullyQualifiedUpperIdent }
 
-    type ResolvedTypeDeclarations = Map<ResolvedTypeName, TypeDecl>
 
-    type ResolvedTypeConstructors = Map<ResolvedTypeConstructor, VariantConstructor>
+    type LowerCaseName =
+        | LocalName of
+            {| tokens : TokenWithSource list
+               destructurePath : PathToDestructuredName
+               assignedExpression : Q.Expression |}
+        | Param of
+            {| tokens : TokenWithSource list
+               destructurePath : PathToDestructuredName |}
+        | TopLevelName of ValueDeclaration
 
-    type ResolvedTypeParams = Map<ResolvedTypeParam, TokenWithSource list>
 
-    type ResolvedValueDeclarations = Map<ResolvedLower, LowerCaseName>
+    /// @TODO: we probably want to have a way of keeping track of what the name (both locally referenced and fully qualified) of the type is
+    type ResolvedTypeDeclarations = Map<ResolvedTypeName, UpperIdent * TypeDeclaration>
 
-    //type ResolvedValueTypeDeclarations = Map<ResolvedLower, SingleOrDuplicate<TokenWithSource list * MentionableType>>
+    type ResolvedTypeConstructors = Map<ResolvedTypeConstructor, UpperIdent * VariantConstructor>
+
+    type ResolvedValueDeclarations = Map<ResolvedLower, LowerIdent * EitherOrBoth<ValueAnnotation, LowerCaseName>>
 
 
 
@@ -121,25 +147,37 @@ module PostResolution =
         { typeDeclarations : ResolvedTypeDeclarations
           typeConstructors : ResolvedTypeConstructors
           typeParams : ResolvedTypeParams
-          values : ResolvedValueDeclarations
-        //valueTypeDeclarations : ResolvedValueTypeDeclarations
-         }
+          values : ResolvedValueDeclarations }
+
+
+
+    let addLetBindings (bindings : LetDeclarationNames) (names : NamesMaps) =
+        { names with
+            values =
+                bindings
+                |> Map.map (fun resolved value ->
+                    (value.ident,
+                     OnlyRight (
+                         LocalName
+                             {| tokens = value.tokens
+                                destructurePath = value.destructurePath
+                                assignedExpression = value.assignedExpression |}
+                     )))
+                |> Map.merge names.values }
+
 
 
     let getTypeDeclarations names : ResolvedTypeDeclarations = names.typeDeclarations
     let getTypeConstructors names : ResolvedTypeConstructors = names.typeConstructors
     let getTypeParams names : ResolvedTypeParams = names.typeParams
     let getValues names : ResolvedValueDeclarations = names.values
-    //let getValueTypeDeclarations names : ResolvedValueTypeDeclarations = names.valueTypeDeclarations
 
 
     let empty : NamesMaps =
         { typeDeclarations = Map.empty
           typeConstructors = Map.empty
           typeParams = Map.empty
-          values = Map.empty
-        //valueTypeDeclarations = Map.empty
-        }
+          values = Map.empty }
 
 
 
@@ -152,73 +190,133 @@ module PostResolution =
 
     (* @TODO: hmm it's actually a bit problematic to make both the value and value type annotation getters be non-nullable, because it's possible that only a value or only a type annotation has been declared, in which case one of these *will* fail... *)
 
-    let findValue (name : ResolvedLower) { values = nameMap } = Map.find name nameMap
-
-//let findValueTypeDeclarations (name : ResolvedLower) { valueTypeDeclarations = nameMap } = getFromMap name nameMap
+    let findValue (name : ResolvedLower) ({ values = nameMap } : NamesMaps) = Map.find name nameMap
 
 
 
+    let addModuleDeclarations
+        (moduleName : QualifiedModuleOrTypeIdentifier)
+        (declarations : Q.Declaration list)
+        (names : NamesMaps)
+        : NamesMaps =
+        let (combinedExceptValues, valuesMap) =
+            declarations
+            |> List.fold
+                (fun (namesMap, valuesMap) decl ->
+                    match decl with
+                    | Q.ImportDeclaration import -> failwith "@TODO: cross-module resolution is not supported yet"
+                    | Q.TypeDeclaration (typeName, typeDecl) ->
+                        match typeDecl with
+                        | Q.Alias alias ->
+                            { namesMap with
+                                typeDeclarations =
+                                    Map.add
+                                        (makeResolvedTypeName ())
+                                        (typeName.node, typeDecl)
+                                        namesMap.typeDeclarations },
+                            valuesMap
+
+                        | Q.Sum sum ->
+                            { namesMap with
+                                typeParams = Map.merge sum.typeParams namesMap.typeParams
+                                typeDeclarations =
+                                    Map.add
+                                        (makeResolvedTypeName ())
+                                        (typeName.node, typeDecl)
+                                        namesMap.typeDeclarations
+                                typeConstructors =
+                                    sum.variants
+                                    |> NEL.map (fun variant ->
+                                        makeResolvedTypeConstructor (),
+                                        (typeName.node,
+                                         { typeDeclaration = sum
+                                           variantCase = variant.node
+                                           fullName =
+                                             FullyQualifiedUpperIdent (reifyModuleName moduleName, typeName.node) }))
+                                    |> NEL.toList
+                                    |> Map.ofList },
+                            valuesMap
+
+                    | Q.ValueDeclaration value ->
+                        let ident = value.valueName.node
+
+                        namesMap,
+                        valuesMap
+                        |> Map.change ident (function
+                            | None -> (ident, TopLevelName value |> OnlyRight) |> Some
+                            | Some (_, storedValue) ->
+                                // @TODO: ideally we should check that we're not overwriting an existing value here, because that would indicate that something has gone wrong. It would mean there are duplicate declarations of the same name (multiple value assignments)
+                                (ident, EitherOrBoth.setRight<_, _, _> (TopLevelName value) storedValue)
+                                |> Some)
+
+                    | Q.ValueTypeAnnotation ann ->
+                        let ident = ann.valueName.node
+
+                        namesMap,
+                        valuesMap
+                        |> Map.change ident (function
+                            | None -> (ident, OnlyLeft ann) |> Some
+                            | Some (_, storedValue) ->
+                                // @TODO: ideally we should check that we're not overwriting an existing value here, because that would indicate that something has gone wrong. It would mean there are duplicate declarations of the same name (multiple value type annotations)
+                                (ident, EitherOrBoth.setLeft<_, _, _> ann storedValue)
+                                |> Some))
+
+                (names, Map.empty)
 
 
+        let values = Map.mapKeyVal (fun _ value -> makeResolvedLower (), value) valuesMap
+
+        { combinedExceptValues with values = Map.merge values combinedExceptValues.values }
+
+
+
+    let addResolvedTypeParams (typeParams : ResolvedTypeParams) (names : NamesMaps) =
+        { names with typeParams = Map.merge typeParams names.typeParams }
+
+
+    let addFunctionParams (params_ : FunctionOrCaseMatchParams) (names : NamesMaps) =
+        { names with
+            values =
+                Map.merge
+                    (params_
+                     |> Map.map (fun _ (ident, paramVal, tokens) ->
+                         ident,
+                         (Param
+                             {| destructurePath = paramVal
+                                tokens = tokens |}
+                          |> OnlyRight)))
+                    names.values }
 
 
 
 
 module PreResolution =
 
-    open SyntaxTree
     module Q = QualifiedSyntaxTree
-    open Q.Names
-
-    //type LowerCaseTopLevel =
-    //    { tokens : TokenWithSource list
-    //      assignedExpression : Cst.Expression
-    //      fullName : FullyQualifiedTopLevelLowerIdent
-    //    //key : ResolvedLower
-    //     }
-
-    //type LowerCaseName =
-    //    | LocalName of
-    //        {| tokens : TokenWithSource list
-    //           assignmentPattern : PathToDestructuredName
-    //           assignedExpression : Cst.Expression |}
-    //    //key : ResolvedLower
-    //    | Param of
-    //        {| tokens : TokenWithSource list
-    //           assignmentPattern : PathToDestructuredName |}
-    //    //key : ResolvedLower
-    //    | TopLevelName of LowerCaseTopLevel
 
 
+    type VariantConstructor =
+        { typeDeclaration : Cst.NewTypeDeclaration
+          variantCase : Cst.VariantCase
+          fullName : FullyQualifiedUpperIdent }
 
 
+    type LowerCaseTopLevel =
+        { tokens : TokenWithSource list
+          assignedExpression : Cst.Expression
+          fullName : FullyQualifiedTopLevelLowerIdent }
 
-    //type TypeDeclaration =
-    //    { typeDecl : Cst.TypeDeclaration
-    //      fullName : FullyQualifiedUpperIdent
-    //      tokens : TokenWithSource list
-    //    //key : ResolvedLower
-    //     }
+    type LocalName =
+        { tokens : TokenWithSource list
+          destructurePath : PathToDestructuredName
+          assignedExpression : Cst.Expression }
 
-
-    //type VariantConstructor =
-    //    { typeName : TypeOrModuleIdentifier
-    //      typeDeclaration : Cst.NewTypeDeclaration
-    //      variantParams : Cst.MentionableType list
-    //      fullName : FullyQualifiedUpperIdent
-    //      tokens : TokenWithSource list
-    //    //key : ResolvedLower
-    //     }
-
-
-    //type TypeParam =
-    //    { tokens : TokenWithSource list
-    //      key : ResolvedLower }
-
-    type BootstrapTypeDeclarations =
-        Map<TypeOrModuleIdentifier, SingleOrDuplicate<CstNode<Cst.TypeDeclaration> * ResolvedTypeName>>
-
-
+    type LowerCaseName =
+        | LocalName of LocalName
+        | Param of
+            {| tokens : TokenWithSource list
+               destructurePath : PathToDestructuredName |}
+        | TopLevelName of LowerCaseTopLevel
 
 
 
@@ -232,7 +330,7 @@ module PreResolution =
 
     type ValueDeclarations = Map<ValueIdentifier, SingleOrDuplicate<LowerCaseName * ResolvedLower>>
 
-    type ValueTypeDeclarations = Map<ValueIdentifier, SingleOrDuplicate<CstNode<Cst.MentionableType> * ResolvedLower>>
+    type ValueTypeDeclarations = Map<ValueIdentifier, SingleOrDuplicate<S.CstNode<Cst.MentionableType> * ResolvedLower>>
 
 
 
@@ -337,7 +435,11 @@ module PreResolution =
         Map.map (fun _ -> SingleOrDuplicate.map (fun (tokens, reference) -> tokens, f reference)) resolvedParams
 
 
-    let addNewParamReference ident path (resolvedParams : ParamsInScope) : ParamsInScope =
+    let addNewParamReference
+        (ident : S.CstNode<UnqualValueIdentifier>)
+        (path : PathToDestructuredName)
+        (resolvedParams : ParamsInScope)
+        : ParamsInScope =
         Map.change
             ident.node
             (fun oldValueOpt ->
@@ -359,27 +461,17 @@ module PreResolution =
 
 
 
-    let reifyModuleName (QualifiedModuleOrTypeIdentifier moduleName) : ModulePath =
-        moduleName
-        |> NEL.map (fun (UnqualTypeOrModuleIdentifier segment) -> segment)
-        |> ModulePath
-
-    let reifyUpper moduleName (UnqualTypeOrModuleIdentifier topLevelIdent) : FullyQualifiedUpperIdent =
-        FullyQualifiedUpperIdent (reifyModuleName moduleName, UpperIdent topLevelIdent)
-
-    let reifyLower moduleName (UnqualValueIdentifier topLevelIdent) : FullyQualifiedTopLevelLowerIdent =
-        FullyQualifiedTopLevelLowerIdent (reifyModuleName moduleName, LowerIdent topLevelIdent)
 
 
 
 
-    let private makeResolvedTypeName () = Guid.NewGuid () |> ResolvedTypeName
+    //let private makeResolvedTypeName () = Guid.NewGuid () |> ResolvedTypeName
 
-    let private makeResolvedTypeConstructor () =
-        Guid.NewGuid () |> ResolvedTypeConstructor
+    //let private makeResolvedTypeConstructor () =
+    //    Guid.NewGuid () |> ResolvedTypeConstructor
 
-    let private makeResolvedLower () = Guid.NewGuid () |> ResolvedLower
-    let private makeResolvedTypeParam () = Guid.NewGuid () |> ResolvedTypeParam
+    //let private makeResolvedLower () = Guid.NewGuid () |> ResolvedLower
+    //let private makeResolvedTypeParam () = Guid.NewGuid () |> ResolvedTypeParam
 
 
 
@@ -411,7 +503,7 @@ module PreResolution =
     let unqualValToRecField (UnqualValueIdentifier str) = RecordFieldName str
     let unqualValToLowerIdent (UnqualValueIdentifier str) = LowerIdent str
 
-    //let unqualTypeToUpperIdent (label : CstNode<UnqualTypeOrModuleIdentifier>) : CstNode<UpperIdent> =
+    //let unqualTypeToUpperIdent (label : S.CstNode<UnqualTypeOrModuleIdentifier>) : S.CstNode<UpperIdent> =
     let unqualTypeToUpperIdent (UnqualTypeOrModuleIdentifier label) = UpperIdent label
     //let getLabel (UnqualTypeOrModuleIdentifier str) = str
     //S.mapNode (getLabel >> UpperIdent) label
@@ -433,7 +525,7 @@ module PreResolution =
             |> SingleOrDuplicate.map (fun (tokens, value) ->
                 Param
                     {| tokens = tokens
-                       assignmentPattern = value |},
+                       destructurePath = value |},
                 makeResolvedLower ()))
 
 
@@ -490,7 +582,7 @@ module PreResolution =
         : TypeOrModuleIdentifier -> FullyQualifiedUpperIdent =
         function
         | QualifiedType (QualifiedModuleOrTypeIdentifier path) ->
-            let (moduleSegments, UnqualTypeOrModuleIdentifier ident) = NEL.lastAndRest path
+            let (moduleSegments, UnqualTypeOrModuleIdentifier ident) = NEL.peelOffLast path
 
             let modulePath =
                 moduleSegments
@@ -534,26 +626,32 @@ module PreResolution =
         |> TOM.traverseResult (qualifyCstNodeAndLiftResult qualifier)
         |> combineUnresolvedIdents
 
+    ///// Lil' helper for qualifying and merging a Map of CstNodes, which we're doing pretty often in the code below
+    //let qualifyMapCstNodes (qualifier : 'a -> Result<'b, Identifier list>) (map : Map<'k, SyntaxTree.CstNode<'a>>) =
+    //    map
+    //    |> Map.map (qualifyCstNodeAndLiftResult qualifier)
+    //    |> Map.sequenceResult
+    //    |> combineUnresolvedIdents
 
 
     let rec gatherParams (param : S.CstNode<Q.AssignmentPattern>) : Q.FunctionOrCaseMatchParams =
         match param.node with
-        | Q.Named _ -> [ makeResolvedLower (), SimpleName ] |> Map.ofList
+        | Q.Named ident -> Map.add (makeResolvedLower ()) (ident, SimpleName, param.source) Map.empty
         | Q.Ignored -> Map.empty
         | Q.Unit -> Map.empty
         | Q.DestructuredPattern pattern ->
             S.makeCstNode pattern param.source
             |> gatherDestructuredPattern
 
-        | Q.Aliased (pattern, _) ->
+        | Q.Aliased (pattern, ident) ->
             gatherParams pattern
-            |> Map.add (makeResolvedLower ()) SimpleName
+            |> Map.add (makeResolvedLower ()) (ident.node, SimpleName, ident.source)
 
     and gatherDestructuredPattern (pattern : S.CstNode<Q.DestructuredPattern>) : Q.FunctionOrCaseMatchParams =
         match pattern.node with
         | Q.DestructuredRecord fields ->
             fields
-            |> NEL.map (fun _ -> makeResolvedLower (), InverseRecord)
+            |> NEL.map (fun field -> makeResolvedLower (), (field.node, InverseRecord, field.source))
             |> NEL.toList
             |> Map.ofList
 
@@ -563,7 +661,7 @@ module PreResolution =
             |> TOM.toList
             |> List.mapi (fun index params_ ->
                 params_
-                |> Map.map (fun _ value -> InverseTuple (uint index, value)))
+                |> Map.map (fun _ (ident, value, source) -> ident, InverseTuple (uint index, value), source))
             |> List.fold Map.merge Map.empty
 
         | Q.DestructuredCons patterns ->
@@ -572,7 +670,7 @@ module PreResolution =
             |> TOM.toList
             |> List.mapi (fun index params_ ->
                 params_
-                |> Map.map (fun _ value -> InverseCons (uint index, value)))
+                |> Map.map (fun _ (ident, value, source) -> ident, InverseCons (uint index, value), source))
             |> List.fold Map.merge Map.empty
 
         | Q.DestructuredTypeVariant (ctor, params_) ->
@@ -580,7 +678,7 @@ module PreResolution =
             |> List.map gatherParams
             |> List.mapi (fun index params_ ->
                 params_
-                |> Map.map (fun _ value -> InverseTypeVariant (ctor, uint index, value)))
+                |> Map.map (fun _ (ident, value, source) -> ident, InverseTypeVariant (ctor, uint index, value), source))
             |> List.fold Map.merge Map.empty
 
 
@@ -775,7 +873,8 @@ module PreResolution =
                 let typeParamsMap =
                     typeParams
                     // @TODO: beware that we have duplication here, because we're constructing a simple type params map with a new Guid, but we're also `addNewTypeParam`ing into a `NamesInScope`. Which is not only duplication, but it also means that we have two separate Guids in the different kinds of names maps referencing the same value.
-                    |> List.map (fun cstNode -> makeResolvedTypeParam (), cstNode.source)
+                    |> List.map (fun cstNode ->
+                        makeResolvedTypeParam (), convertValueIdentifierToLowerIdent cstNode.node)
                     |> Map.ofList
 
                 Q.Alias
@@ -813,13 +912,32 @@ module PreResolution =
             let typeParamsMap =
                 typeParams
                 // @TODO: beware that we have duplication here, because we're constructing a simple type params map with a new Guid, but we're also `addNewTypeParam`ing into a `NamesInScope`. Which is not only duplication, but it also means that we have two separate Guids in the different kinds of names maps referencing the same value.
-                |> List.map (fun cstNode -> makeResolvedTypeParam (), cstNode.source)
+                |> List.map (fun cstNode -> makeResolvedTypeParam (), convertValueIdentifierToLowerIdent cstNode.node)
                 |> Map.ofList
 
             { Q.variants = variants'
               Q.typeParams = typeParamsMap }
             |> Ok
         | Error err -> Error err
+
+
+
+    and qualifyAssignmentPattern
+        (resolvedNames : NamesInScope)
+        (assignmentPattern : C.AssignmentPattern)
+        : Result<Q.AssignmentPattern, Identifier list> =
+        match assignmentPattern with
+        | S.Named name -> unqualValToLowerIdent name |> Q.Named |> Ok
+        | S.Ignored -> Ok Q.Ignored
+        | S.Unit -> Ok Q.Unit
+
+        | S.DestructuredPattern pattern ->
+            qualifyDestructuredPattern resolvedNames pattern
+            |> Result.map Q.DestructuredPattern
+
+        | S.Aliased (pattern, alias) ->
+            qualifyCstNodeAndLiftResult (qualifyAssignmentPattern resolvedNames) pattern
+            |> Result.map (fun pattern' -> Q.Aliased (pattern', S.mapNode unqualValToLowerIdent alias))
 
 
     and qualifyDestructuredPattern
@@ -863,22 +981,7 @@ module PreResolution =
             ||> Result.map2 (fun ctor' resolvedParams' -> Q.DestructuredTypeVariant (ctor', resolvedParams')) (@)
 
 
-    and qualifyAssignmentPattern
-        (resolvedNames : NamesInScope)
-        (assignmentPattern : C.AssignmentPattern)
-        : Result<Q.AssignmentPattern, Identifier list> =
-        match assignmentPattern with
-        | S.Named name -> unqualValToLowerIdent name |> Q.Named |> Ok
-        | S.Ignored -> Ok Q.Ignored
-        | S.Unit -> Ok Q.Unit
 
-        | S.DestructuredPattern pattern ->
-            qualifyDestructuredPattern resolvedNames pattern
-            |> Result.map Q.DestructuredPattern
-
-        | S.Aliased (pattern, alias) ->
-            qualifyCstNodeAndLiftResult (qualifyAssignmentPattern resolvedNames) pattern
-            |> Result.map (fun pattern' -> Q.Aliased (pattern', S.mapNode unqualValToLowerIdent alias))
 
 
 
@@ -1030,46 +1133,114 @@ module PreResolution =
                     |> Error
 
             | S.LetExpression (bindings, expr) ->
-                let namesMap =
-                    resolveLetExpression moduleCtx resolvedNames bindings
-                    |> Result.map (fun letExpr -> combineTwoResolvedNamesMaps letExpr resolvedNames)
+                //let namesMap =
+                //    resolveLetExpression resolvedNames bindings
+                //    |> Result.map (fun letExpr -> combineTwoResolvedNamesMaps letExpr resolvedNames)
 
-                match namesMap with
-                | Ok namesMap_ ->
-                    let qualBindings : Result<Q.LetDeclarationNames, Identifier list> =
-                        bindings
-                        |> qualifyNelCstNodes (fun binding ->
-                            let qualBinding : Result<S.CstNode<Q.AssignmentPattern>, Identifier list> =
+                //match namesMap with
+                //| Ok namesMap_ ->
 
-                                qualifyCstNodeAndLiftResult (qualifyAssignmentPattern namesMap_) binding.bindPattern
+                ////let letBindings : Result<Q.LetDeclarationNames, Identifier list> =
+                //let letBindings =
+                //    bindings
+                //    |> qualifyNelCstNodes (fun binding ->
+                //        let qualifiedExpression =
+                //            qualifyCstNodeAndLiftResult (qualifyExpression moduleCtx namesMap_) binding.value
 
-                            let qualExpr : Result<S.CstNode<Q.Expression>, Identifier list> =
-                                qualifyCstNodeAndLiftResult (qualifyExpression moduleCtx namesMap_) binding.value
+                //        (resolveParamAssignment namesMap_ binding.bindPattern, qualifiedExpression)
+                //        ||> Result.map2
+                //                (fun paramsMap expression ->
+                //                    paramsMap
+                //                    |> Map.mapKeyVal (fun unqual values ->
+                //                        let ident = convertValueIdentifierToLowerIdent unqual
 
-                            Result.map2
-                                (fun binding' expr' ->
-                                    makeResolvedLower (),
-                                    { Q.tokens = binding'.source
-                                      Q.assignmentPattern = binding'.node
-                                      Q.assignedExpression = expr'.node })
-                                (fun err1 err2 -> err1 @ err2)
-                                qualBinding
-                                qualExpr)
-                        |> Result.map (NEL.toList >> List.map S.getNode >> Map.ofList)
+                //                        ident,
+                //                        values
+                //                        |> SOD.map (fun (tokens, path) ->
+                //                            { Q.ResolvedLetBinding.ident = ident
+                //                              Q.ResolvedLetBinding.tokens = tokens
+                //                              Q.ResolvedLetBinding.destructurePath = path
+                //                              Q.ResolvedLetBinding.assignedExpression = expression.node })))
+                //                (@))
+                //    |> Result.map (
+                //        NEL.map S.getNode
+                //        >> NEL.toList
+                //        >> combineReferenceMaps
+                //        //>> Map.mapKeyVal (fun _ values -> makeResolvedLower (), SOD.getFirst values)
+                //    )
+                //let letBindings : Result<Q.LetDeclarationNames, Identifier list> =
 
-                    let qualExpr =
-                        qualifyCstNodeAndLiftResult (qualifyExpression moduleCtx namesMap_) expr
-                        |> Result.map S.getNode
 
-                    Result.map2
-                        (fun expr' bindings' ->
-                            Q.LetExpression (bindings', expr')
-                            |> Q.SingleValueExpression)
-                        (@)
-                        qualExpr
-                        qualBindings
+                let letBindings =
+                    bindings
+                    |> qualifyNelCstNodes (fun binding ->
+                        //let qualifiedExpression =
+                        //    qualifyCstNodeAndLiftResult (qualifyExpression moduleCtx namesMap_) binding.value
 
-                | Error err -> Error err
+                        resolveParamAssignment resolvedNames binding.bindPattern
+                        |> Result.map (fun paramsMap ->
+                            paramsMap
+                            |> Map.mapKeyVal (fun unqual values ->
+                                unqual,
+                                values
+                                |> SOD.map (fun (tokens, path) ->
+                                    { LocalName.tokens = tokens
+                                      LocalName.destructurePath = path
+                                      // @TODO: we're actually duplicating the same assigned expression for each name binding. Which means we'll have to duplicate the qualifying of that same expression for each name binding all over again. Would be good if we could ensure we only qualify each expression only once.
+                                      LocalName.assignedExpression = binding.value.node },
+                                    makeResolvedLower ()))))
+                    |> Result.map (
+                        NEL.toList
+                        >> List.map S.getNode
+                        >> combineReferenceMaps
+                    )
+
+
+                let qualifiedLetBindings : Result<Q.LetDeclarationNames, Identifier list> =
+                    letBindings
+                    |> Result.map (
+                        Map.map (fun unqual values ->
+                            let localName, resolved = SOD.getFirst values
+                            let ident = convertValueIdentifierToLowerIdent unqual
+
+                            qualifyExpression moduleCtx resolvedNames localName.assignedExpression
+                            |> Result.map (fun qualifiedExpression ->
+                                resolved,
+                                { Q.ResolvedLetBinding.ident = ident
+                                  Q.ResolvedLetBinding.tokens = localName.tokens
+                                  Q.ResolvedLetBinding.destructurePath = localName.destructurePath
+                                  Q.ResolvedLetBinding.assignedExpression = qualifiedExpression }))
+                    )
+                    |> Result.bind (
+                        Map.sequenceResult
+                        >> Result.mapError (Map.values >> List.concat)
+                    )
+                    |> Result.map (Map.mapKeyVal (fun _ (resolved, binding) -> resolved, binding))
+
+
+                let qualExpr =
+                    letBindings
+                    |> Result.map (
+                        Map.mapKeyVal (fun unqual values ->
+                            UnqualValue unqual,
+                            values
+                            |> SOD.map (fun (localNameBinding, resolvedLower) ->
+                                (LocalName localNameBinding, resolvedLower)))
+                    )
+                    |> Result.map (fun bindingsNames ->
+                        combineTwoResolvedNamesMaps resolvedNames { empty with valueDeclarations = bindingsNames })
+                    |> Result.bind (fun names -> qualifyCstNodeAndLiftResult (qualifyExpression moduleCtx names) expr)
+                    |> Result.map S.getNode
+
+                Result.map2
+                    (fun expr' bindings' ->
+                        Q.LetExpression (bindings', expr')
+                        |> Q.SingleValueExpression)
+                    (@)
+                    qualExpr
+                    qualifiedLetBindings
+
+            //| Error err -> Error err
 
             | S.ControlFlowExpression controlFlowExpr ->
                 match controlFlowExpr with
@@ -1183,17 +1354,17 @@ module PreResolution =
     and qualifyModule (ylModule : C.YlModule) : Result<Q.YlModule, Identifier list> =
         let resolvedNames = resolveModuleBindings ylModule
 
-        let declarations : Result<S.CstNode<Q.Declaration> list, Identifier list> =
+        let declarations =
             ylModule.declarations
             |> qualifyListCstNodes (
                 (function
+                | S.ImportDeclaration import -> failwithf "@TODO: Importing other modules is not implemented yet!"
                 | S.TypeDeclaration (name = name; declaration = decl) ->
                     let typeDeclResult = qualifyTypeDeclaration resolvedNames decl
 
-                    match typeDeclResult with
-                    | Ok typeDecl -> Q.TypeDeclaration (name, typeDecl) |> Ok
-                    | Error err -> Error err
-                | S.ImportDeclaration import -> failwithf "@TODO: Importing other modules is not implemented yet!"
+                    typeDeclResult
+                    |> Result.map (fun typeDecl -> Q.TypeDeclaration (S.mapNode unqualTypeToUpperIdent name, typeDecl))
+
                 | S.ValueTypeAnnotation { valueName = valueName
                                           annotatedType = annotatedType } ->
                     let typeParams =
@@ -1204,32 +1375,50 @@ module PreResolution =
                     let qualifiedAnnotatedType =
                         qualifyCstNodeAndLiftResult (qualifyMentionableType resolvedNames) annotatedType
 
-                    match qualifiedAnnotatedType with
-                    | Ok qualified ->
+                    qualifiedAnnotatedType
+                    |> Result.map (fun qualified ->
                         Q.ValueTypeAnnotation
-                            { valueName = S.mapNode unqualValToLowerIdent valueName
-                              gatheredImplicitParams = typeParams
-                              annotatedType = qualified }
-                        |> Ok
-                    | Error err -> Error err
+                            { Q.ValueAnnotation.valueName = S.mapNode unqualValToLowerIdent valueName
+                              Q.ValueAnnotation.gatheredImplicitParams = typeParams
+                              Q.ValueAnnotation.annotatedType = qualified })
 
                 | S.ValueDeclaration { valueName = valueName; value = value } ->
                     let result =
                         qualifyCstNodeAndLiftResult (qualifyExpression ylModule resolvedNames) value
 
-                    match result with
-                    | Ok res ->
+                    result
+                    |> Result.map (fun res ->
                         Q.ValueDeclaration
-                            { valueName = S.mapNode unqualValToLowerIdent valueName
-                              value = res }
-                        |> Ok
-                    | Error err -> Error err)
+                            { Q.ValueDeclaration.valueName = S.mapNode unqualValToLowerIdent valueName
+                              Q.ValueDeclaration.value = res }))
             )
 
         match declarations with
         | Ok decls ->
-            { Q.moduleDecl = ylModule.moduleDecl
-              Q.declarations = decls }
+            let namesMaps =
+                PostResolution.addModuleDeclarations
+                    ylModule.moduleDecl.moduleName.node
+                    (List.map S.getNode decls)
+                    PostResolution.empty
+
+            let values =
+                namesMaps.values
+                |> Map.choose (fun _ (ident, v) ->
+                    match v with
+                    | OnlyLeft l -> Some (ident, OnlyLeft l)
+                    | OnlyRight r ->
+                        match r with
+                        | PostResolution.TopLevelName tl -> Some (ident, OnlyRight tl)
+                        | _ -> None
+                    | Both (l, r) ->
+                        match r with
+                        | PostResolution.TopLevelName tl -> Some (ident, Both (l, tl))
+                        | _ -> None)
+
+            { Q.YlModule.moduleDecl = ylModule.moduleDecl
+              Q.YlModule.imports = List.empty // @TODO: actually include the imports here
+              Q.YlModule.types = namesMaps.typeDeclarations
+              Q.YlModule.values = values }
             |> Ok
         | Error err -> Error err
 
@@ -1242,37 +1431,24 @@ module PreResolution =
     (* Traverse the CST and gather named types/vals *)
 
 
-    and addNewTypeParam (name : CstNode<UnqualValueIdentifier>) (names : NamesInScope) : NamesInScope =
-        { names with typeParams = addNewReference name (name.source, makeResolvedTypeParam ()) names.typeParams }
+    and addNewTypeParam (name : S.CstNode<UnqualValueIdentifier>) (names : NamesInScope) : NamesInScope =
+        { names with typeParams = addNewReference name.node (name.source, makeResolvedTypeParam ()) names.typeParams }
 
     and addNewTypeDeclaration
         (moduleName : QualifiedModuleOrTypeIdentifier)
-        (name : CstNode<UnqualTypeOrModuleIdentifier>)
+        (name : S.CstNode<UnqualTypeOrModuleIdentifier>)
         (value : Cst.TypeDeclaration)
         (names : NamesInScope)
         : NamesInScope =
-        //qualifyTypeDeclaration names value
-        //|> Result.map (fun value_ ->
-        //    { names with
-        //        typeDeclarations =
-        //            addNewReference
-        //                (mapNode UnqualType name)
-        //                ({ Q.TypeDecl.typeDecl = value_
-        //                   Q.TypeDecl.fullName = reifyUpper moduleName name.node
-        //                   Q.TypeDecl.tokens = name.source },
-        //                 makeResolvedTypeName ())
-        //                names.typeDeclarations })
         { names with
             typeDeclarations =
-                addNewReference (mapNode UnqualType name) (value, makeResolvedTypeName ()) names.typeDeclarations }
+                addNewReference (UnqualType name.node) (value, makeResolvedTypeName ()) names.typeDeclarations }
 
 
     and addTypeConstructor
         (moduleName : QualifiedModuleOrTypeIdentifier)
-        (variantName : CstNode<UnqualTypeOrModuleIdentifier>)
-        //(variantParams : Cst.MentionableType list)
+        (variantName : S.CstNode<UnqualTypeOrModuleIdentifier>)
         (variantCase : Cst.VariantCase)
-        //(typeName : TypeOrModuleIdentifier)
         (typeDeclaration : Cst.NewTypeDeclaration)
         (names : NamesInScope)
         =
@@ -1284,7 +1460,7 @@ module PreResolution =
         { names with
             typeConstructors =
                 addNewReference
-                    (mapNode UnqualType variantName)
+                    (UnqualType variantName.node)
                     (variantCtor, makeResolvedTypeConstructor ())
                     names.typeConstructors }
 
@@ -1292,11 +1468,11 @@ module PreResolution =
         { names with valueDeclarations = addNewReference name value names.valueDeclarations }
 
     and addValueTypeDeclaration
-        (name : CstNode<ValueIdentifier>)
-        (value : (CstNode<ConcreteSyntaxTree.MentionableType> * ResolvedLower))
+        (name : S.CstNode<ValueIdentifier>)
+        (value : (S.CstNode<ConcreteSyntaxTree.MentionableType> * ResolvedLower))
         (names : NamesInScope)
         =
-        { names with valueTypeDeclarations = addNewReference name value names.valueTypeDeclarations }
+        { names with valueTypeDeclarations = addNewReference name.node value names.valueTypeDeclarations }
 
 
 
@@ -1347,28 +1523,29 @@ module PreResolution =
     /// Get all the exposed names from a single assignment pattern
     and resolveParamAssignment
         (names : NamesInScope)
-        (assignmentPattern : CstNode<Cst.AssignmentPattern>)
+        (assignmentPattern : S.CstNode<Cst.AssignmentPattern>)
         : Result<ParamsInScope, Identifier list> =
         match assignmentPattern.node with
-        | Named ident ->
+        | S.Named ident ->
             Map.empty
-            |> addNewParamReference (makeCstNode ident assignmentPattern.source) SimpleName
+            |> addNewParamReference (S.makeCstNode ident assignmentPattern.source) SimpleName
             |> Ok
 
-        | Ignored -> Ok Map.empty
-        | Cst.AssignmentPattern.Unit -> Ok Map.empty
-        | Aliased (alias = alias; pattern = pattern) ->
+        | S.Ignored -> Ok Map.empty
+        | S.Unit -> Ok Map.empty
+        | S.Aliased (alias = alias; pattern = pattern) ->
             resolveParamAssignment names pattern
             |> Result.map (addNewParamReference alias SimpleName)
 
-        | DestructuredPattern pattern -> resolveDestructuredParam names (makeCstNode pattern assignmentPattern.source)
+        | S.DestructuredPattern pattern ->
+            resolveDestructuredParam names (S.makeCstNode pattern assignmentPattern.source)
 
 
 
     /// We need to recursively go down all the sub-destructurings, because all of those still get exposed to the same scope. Unlike let bindings in sub-expressions which don't get propagated upward.
     and resolveDestructuredParam
         (names : NamesInScope)
-        (pattern : CstNode<Cst.DestructuredPattern>)
+        (pattern : S.CstNode<Cst.DestructuredPattern>)
         : Result<ParamsInScope, Identifier list> =
         let getParamsMapForEach
             (putInPath : PathToDestructuredName -> PathToDestructuredName)
@@ -1379,12 +1556,12 @@ module PreResolution =
 
 
         match pattern.node with
-        | DestructuredRecord fieldNames ->
+        | S.DestructuredRecord fieldNames ->
             fieldNames
             |> NEL.fold<_, _> (fun map fieldName -> addNewParamReference fieldName InverseRecord map) Map.empty
             |> Ok
 
-        | DestructuredTuple items ->
+        | S.DestructuredTuple items ->
             let maps =
                 items
                 |> TOM.fold<_, _>
@@ -1399,7 +1576,7 @@ module PreResolution =
             |> Result.map combineReferenceMaps
             |> combineUnresolvedIdents
 
-        | DestructuredCons items ->
+        | S.DestructuredCons items ->
             let maps =
                 items
                 |> TOM.fold<_, _>
@@ -1414,7 +1591,7 @@ module PreResolution =
             |> Result.map combineReferenceMaps
             |> combineUnresolvedIdents
 
-        | DestructuredTypeVariant (constructor, params_) ->
+        | S.DestructuredTypeVariant (constructor, params_) ->
             let resolvedCtorOpt = tryFindTypeConstructor constructor.node names
 
             match resolvedCtorOpt with
@@ -1455,7 +1632,7 @@ module PreResolution =
                         |> SingleOrDuplicate.map (fun (tokens, path) ->
                             Param
                                 {| tokens = tokens
-                                   assignmentPattern = path |},
+                                   destructurePath = path |},
                             makeResolvedLower ()))
                 )
             )
@@ -1468,15 +1645,12 @@ module PreResolution =
 
 
     and resolveLetBinding
-        (ylModule : Cst.YlModule)
         (names : NamesInScope)
         ({ bindPattern = bindPattern
            value = value } : Cst.LetBinding)
         : Result<NamesInScope, Identifier list> =
 
-        //let qualifiedExpr = qualifyExpression ylModule names value.node
-
-        let values =
+        let values : Result<ValueDeclarations, Identifier list> =
             resolveParamAssignment names bindPattern
             |> Result.map (fun resolvedParam ->
                 resolvedParam
@@ -1485,19 +1659,19 @@ module PreResolution =
                     tokensAndValues
                     |> SingleOrDuplicate.map (fun (tokens, path) ->
                         LocalName
-                            {| tokens = tokens
-                               assignmentPattern = path
-                               assignedExpression = value.node |},
+                            { destructurePath = path
+                              tokens = tokens
+                              assignedExpression = value.node },
                         makeResolvedLower ())))
 
         values
         |> Result.map (fun vals -> { empty with valueDeclarations = vals })
 
 
-    and resolveLetExpression (ylModule : Cst.YlModule) (names : NamesInScope) (bindings : CstNode<Cst.LetBinding> nel) =
+    and resolveLetExpression (names : NamesInScope) (bindings : S.CstNode<Cst.LetBinding> nel) =
         bindings
         |> NEL.toList
-        |> Seq.map (getNode >> resolveLetBinding ylModule names)
+        |> Seq.map (S.getNode >> resolveLetBinding names)
         |> Result.sequence
         |> Result.map combineResolvedNamesMaps
         |> combineUnresolvedIdents
@@ -1507,20 +1681,20 @@ module PreResolution =
 
     and resolveTypeConstructors
         (moduleName : QualifiedModuleOrTypeIdentifier)
-        (typeName : CstNode<UnqualTypeOrModuleIdentifier>)
+        (typeName : S.CstNode<UnqualTypeOrModuleIdentifier>)
         (typeDeclaration : Cst.TypeDeclaration)
         : NamesInScope =
         match typeDeclaration with
-        | Alias aliasDecl ->
+        | S.Alias aliasDecl ->
             // We're not accounting for record alias constructors just yet
             empty
-            |> addNewTypeDeclaration moduleName typeName (Alias aliasDecl)
+            |> addNewTypeDeclaration moduleName typeName (S.Alias aliasDecl)
 
-        | Sum newTypeDecl ->
+        | S.Sum newTypeDecl ->
             newTypeDecl.variants
             |> NEL.fold<_, _>
                 (fun map variant -> addTypeConstructor moduleName variant.node.label variant.node newTypeDecl map)
-                (addNewTypeDeclaration moduleName typeName (Sum newTypeDecl) empty)
+                (addNewTypeDeclaration moduleName typeName (S.Sum newTypeDecl) empty)
 
 
 
@@ -1530,52 +1704,22 @@ module PreResolution =
         let moduleName = ylModule.moduleDecl.moduleName.node
 
         /// A quick scan of the module to gather all top level names
-        let firstLevelResolution declaration =
+        let resolveSingleDeclaration (declaration : S.CstNode<Cst.Declaration>) =
             match declaration.node with
-            | ImportDeclaration _ ->
+            | S.ImportDeclaration _ ->
                 // @TODO: I'll need to implement the cross-module name resolution here!
-                //empty
-                failwithf "@TODO: need to implement cross-module name resolution!"
-            | TypeDeclaration (name, decl) -> resolveTypeConstructors moduleName name decl
-            | ValueTypeAnnotation { valueName = valueName
-                                    annotatedType = annotatedType } ->
-
-                //let qualifiedType = qualifyMentionableType annotatedType
-
-                empty
-                |> addValueTypeDeclaration (mapNode UnqualValue valueName) (annotatedType, makeResolvedLower ())
-
-            | ValueDeclaration { valueName = valueName; value = value } ->
-                empty
-                |> addValue
-                    (mapNode UnqualValue valueName)
-                    (TopLevelName
-                        { tokens = valueName.source
-                          assignedExpression = value.node
-                          fullName = reifyLower moduleName valueName.node },
-                     makeResolvedLower ())
-
-
-        let resolveSingleDeclaration (declaration : CstNode<Cst.Declaration>) =
-            match declaration.node with
-            | ImportDeclaration _ ->
-                // @TODO: I'll need to implement the cross-module name resolution here!
-                //empty
                 failwithf "@TODO: need to implement cross-module name resolution!"
 
-            | TypeDeclaration (name, decl) -> resolveTypeConstructors moduleName name decl
-            | ValueTypeAnnotation { valueName = valueName
-                                    annotatedType = annotatedType } ->
-
-                //let qualifiedType = qualifyMentionableType annotatedType
-
+            | S.TypeDeclaration (name, decl) -> resolveTypeConstructors moduleName name decl
+            | S.ValueTypeAnnotation { valueName = valueName
+                                      annotatedType = annotatedType } ->
                 empty
-                |> addValueTypeDeclaration (mapNode UnqualValue valueName) (annotatedType, makeResolvedLower ())
+                |> addValueTypeDeclaration (S.mapNode UnqualValue valueName) (annotatedType, makeResolvedLower ())
 
-            | ValueDeclaration { valueName = valueName; value = value } ->
+            | S.ValueDeclaration { valueName = valueName; value = value } ->
                 empty
                 |> addValue
-                    (mapNode UnqualValue valueName)
+                    (UnqualValue valueName.node)
                     (TopLevelName
                         { tokens = valueName.source
                           assignedExpression = value.node
@@ -1584,11 +1728,12 @@ module PreResolution =
 
         ylModule.declarations
         |> List.map resolveSingleDeclaration
-        //|> Result.sequenceList
         |> combineResolvedNamesMaps
-//|> combineUnresolvedIdents
 
 
+
+
+// Actually what we need to do is instantiate the post-resolved map from the QST, specifically from the different kinds of AST elements that add names to the scope. Then we just need some functions to roll those maps into the post-resolution names map, and bob's your uncle.
 
 
 //let convertToPostResolution (names : NamesInScope) : PostResolution.NamesMaps =

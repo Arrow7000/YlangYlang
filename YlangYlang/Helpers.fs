@@ -43,6 +43,9 @@ type NonEmptyList<'a> =
 
     static member map<'a, 'b> (f : 'a -> 'b) (NEL (first, rest) : 'a nel) = NEL (f first, List.map f rest)
 
+    static member mapi<'a, 'b> (f : int -> 'a -> 'b) (NEL (first, rest) : 'a nel) =
+        NEL (f 0 first, List.mapi ((+) 1 >> f) rest)
+
     static member fromList (l : 'a list) : NEL<'a> option =
         match l with
         | [] -> None
@@ -72,17 +75,18 @@ type NonEmptyList<'a> =
         | None -> head
         | Some last -> last
 
-    static member allButLast<'a> (NEL (head, tail) : 'a nel) =
-        let rec getAllButLastOfList list =
+    static member allButLast<'a> (NEL (head, tail) : 'a nel) : 'a nel =
+        let rec getAllButLast list =
             match list with
-            | voorlaatste :: _ :: [] -> List.singleton voorlaatste
-            | head :: rest -> head :: getAllButLastOfList rest
             | [] -> []
+            | _ :: [] -> []
+            | head :: rest -> head :: getAllButLast rest
 
-        NEL (head, getAllButLastOfList tail)
+        NEL (head, getAllButLast tail)
 
 
-    static member lastAndRest<'a> (nel : 'a nel) = NEL.allButLast nel, NEL.last nel
+    /// Separate out the last item from the NEL
+    static member peelOffLast<'a> (nel : 'a nel) : 'a nel * 'a = NEL.allButLast nel, NEL.last nel
 
 
     static member sequenceResult (results : Result<'a, 'b> nel) : Result<'a nel, 'b nel> =
@@ -143,6 +147,9 @@ type TwoOrMore<'a> =
     static member tail<'a> (TOM (_, _, tail') : 'a tom) = tail'
 
     static member map<'a, 'b> (f : 'a -> 'b) (TOM (head, neck, rest) : 'a tom) = TOM (f head, f neck, List.map f rest)
+
+    static member mapi<'a, 'b> (f : int -> 'a -> 'b) (TOM (head, neck, rest) : 'a tom) =
+        TOM (f 0 head, f 1 neck, List.mapi ((+) 2 >> f) rest)
 
     static member fromList (l : 'a list) : TOM<'a> option =
         match l with
@@ -407,6 +414,9 @@ module Map =
         |> Map.fold (fun mapToAddTo key value -> Map.add key value mapToAddTo) map2
 
 
+    let mergeMany maps = Seq.fold merge Map.empty maps
+
+
     let sequenceResult map =
         map
         |> Map.fold
@@ -422,6 +432,15 @@ module Map =
                     | Error err -> Error (Map.add key err errs))
             (Ok Map.empty)
 
+
+    let choose f map =
+        map
+        |> Map.fold
+            (fun newMap key value ->
+                match f key value with
+                | Some x -> Map.add key x newMap
+                | None -> newMap)
+            Map.empty
 
 type Either<'a, 'b> =
     | Left of 'a
@@ -456,6 +475,30 @@ type EitherOrBoth<'a, 'b> =
         | OnlyRight r -> Some r
         | Both (_, r) -> Some r
 
+    static member mapLeft f v =
+        match v with
+        | OnlyLeft l -> OnlyLeft (f l)
+        | OnlyRight r -> OnlyRight r
+        | Both (l, r) -> Both (f l, r)
+
+    static member mapRight f v =
+        match v with
+        | OnlyLeft l -> OnlyLeft l
+        | OnlyRight r -> OnlyRight (f r)
+        | Both (l, r) -> Both (l, f r)
+
+    static member setLeft<'l0, 'l, 'r> (left : 'l) (v : EitherOrBoth<'l0, 'r>) =
+        match v with
+        | OnlyLeft _ -> OnlyLeft left
+        | OnlyRight r -> Both (left, r)
+        | Both (_, r) -> Both (left, r)
+
+    static member setRight<'l, 'r0, 'r> (right : 'r) (v : EitherOrBoth<'l, 'r0>) =
+        match v with
+        | OnlyLeft l -> Both (l, right)
+        | OnlyRight _ -> OnlyRight right
+        | Both (l, _) -> Both (l, right)
+
 
 /// A list of type 'T but containing exactly one item of type 'U
 type ListWithOneDifferentType<'T, 'U> =
@@ -481,6 +524,15 @@ type SingleOrDuplicate<'a> =
         match sod with
         | Single a -> a
         | Duplicate tom -> TOM.head tom
+
+    static member cons newHead sod =
+        match sod with
+        | Single a -> Duplicate (TOM.new_ newHead a List.empty)
+        | Duplicate tom -> TOM.cons newHead tom |> Duplicate
+
+
+/// Alias for SingleOrDuplicate
+and SOD<'a> = SingleOrDuplicate<'a>
 
 /// Alias for SingleOrDuplicate
 and sod<'a> = SingleOrDuplicate<'a>
