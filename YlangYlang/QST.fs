@@ -29,8 +29,6 @@ module Names =
     type RecordFieldName = | RecordFieldName of string
 
 
-    type LocalVariableOrParamIdent = | LocalVariableOrParamIdent of LowerIdent
-
     /// Fully qualified type or type alias name
     type FullyQualifiedUpperIdent = | FullyQualifiedUpperIdent of module_ : ModulePath * name : UpperIdent
 
@@ -50,8 +48,28 @@ module Names =
 
     type LowerNameValue =
         | TopLevelValue of FullyQualifiedTopLevelLowerIdent
-        | LocalOrParam of LocalVariableOrParamIdent
+        | LocalOrParam of LowerIdent
 
+
+
+
+    /// Top level because only top level types/values can be exposed/imported
+    type TopLevelUpperIdent =
+        /// Doesn't necessarily mean defined in this module, could also mean imported into this module; either explicitly or by exposing all
+        | InThisModule of UpperIdent
+        /// When it's a fully qualified reference to a type/value from a different module
+        | OtherModuleFull of FullyQualifiedUpperIdent
+        /// When it's a qualified reference, but qualified by an alias
+        | OtherModuleAliased of AliasedUpperIdent
+
+    /// Top level because only top level types/values can be exposed/imported
+    type TopLevelLowerIdent =
+        /// Doesn't necessarily mean defined in this module, could also mean imported into this module; either explicitly or by exposing all
+        | InThisModule of LowerIdent
+        /// When it's a fully qualified reference to a type/value from a different module
+        | OtherModuleFull of FullyQualifiedTopLevelLowerIdent
+        /// When it's a qualified reference, but qualified by an alias
+        | OtherModuleAliased of AliasedTopLevelLowerIdent
 
 
 
@@ -100,23 +118,7 @@ open Names
 
 
 
-/// Top level because only top level types/values can be exposed/imported
-type TopLevelUpperIdent =
-    /// Doesn't necessarily mean defined in this module, could also mean imported into this module; either explicitly or by exposing all
-    | InThisModule of UpperIdent
-    /// When it's a fully qualified reference to a type/value from a different module
-    | OtherModuleFull of FullyQualifiedUpperIdent
-    /// When it's a qualified reference, but qualified by an alias
-    | OtherModuleAliased of AliasedUpperIdent
 
-/// Top level because only top level types/values can be exposed/imported
-type TopLevelLowerIdent =
-    /// Doesn't necessarily mean defined in this module, could also mean imported into this module; either explicitly or by exposing all
-    | InThisModule of LowerIdent
-    /// When it's a fully qualified reference to a type/value from a different module
-    | OtherModuleFull of FullyQualifiedTopLevelLowerIdent
-    /// When it's a qualified reference, but qualified by an alias
-    | OtherModuleAliased of AliasedTopLevelLowerIdent
 
 
 
@@ -228,7 +230,6 @@ type InfixOpDeclaration =
 
 
 
-(* @TODO: actually it doesn't make much sense for a named variable to be able to have all the possible patterns, because since it is a named value it can only be of that subset of assignment patterns that is named *)
 
 /// Note that each let binding could still create multiple named values through assignment patterns, so this is only the result of a single name, not a full binding
 type ResolvedLetBinding =
@@ -352,29 +353,3 @@ type YlProjectItem =
     | Module of YlModule
 
 type YlProject = { modules : YlProjectItem list }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-type TypeDecl =
-    { typeDecl : TypeDeclaration
-      fullName : FullyQualifiedUpperIdent
-      tokens : TokenWithSource list }

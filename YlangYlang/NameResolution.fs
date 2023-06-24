@@ -114,8 +114,6 @@ let reifyLower
 /// For name resolution when the names have been resolved, so this will use the canonical, fully qualified, name if applicable
 module PostResolution =
 
-    open System
-    open QualifiedSyntaxTree
 
     type VariantConstructor =
         { typeDeclaration : Q.NewTypeDeclaration
@@ -123,35 +121,37 @@ module PostResolution =
           fullName : FullyQualifiedUpperIdent }
 
 
+    type Param =
+        { tokens : TokenWithSource list
+          destructurePath : PathToDestructuredName }
+
     type LowerCaseName =
         | LocalName of
             {| tokens : TokenWithSource list
                destructurePath : PathToDestructuredName
                assignedExpression : Q.Expression |}
-        | Param of
-            {| tokens : TokenWithSource list
-               destructurePath : PathToDestructuredName |}
-        | TopLevelName of ValueDeclaration
+        | Param of Param
+        | TopLevelName of Q.ValueDeclaration
 
 
     /// @TODO: we probably want to have a way of keeping track of what the name (both locally referenced and fully qualified) of the type is
-    type ResolvedTypeDeclarations = Map<ResolvedTypeName, UpperIdent * TypeDeclaration>
+    type ResolvedTypeDeclarations = Map<ResolvedTypeName, UpperIdent * Q.TypeDeclaration>
 
     type ResolvedTypeConstructors = Map<ResolvedTypeConstructor, UpperIdent * VariantConstructor>
 
-    type ResolvedValueDeclarations = Map<ResolvedLower, LowerIdent * EitherOrBoth<ValueAnnotation, LowerCaseName>>
+    type ResolvedValueDeclarations = Map<ResolvedLower, LowerIdent * EitherOrBoth<Q.ValueAnnotation, LowerCaseName>>
 
 
 
     type NamesMaps =
         { typeDeclarations : ResolvedTypeDeclarations
           typeConstructors : ResolvedTypeConstructors
-          typeParams : ResolvedTypeParams
+          typeParams : Q.ResolvedTypeParams
           values : ResolvedValueDeclarations }
 
 
 
-    let addLetBindings (bindings : LetDeclarationNames) (names : NamesMaps) =
+    let addLetBindings (bindings : Q.LetDeclarationNames) (names : NamesMaps) =
         { names with
             values =
                 bindings
@@ -169,7 +169,7 @@ module PostResolution =
 
     let getTypeDeclarations names : ResolvedTypeDeclarations = names.typeDeclarations
     let getTypeConstructors names : ResolvedTypeConstructors = names.typeConstructors
-    let getTypeParams names : ResolvedTypeParams = names.typeParams
+    let getTypeParams names : Q.ResolvedTypeParams = names.typeParams
     let getValues names : ResolvedValueDeclarations = names.values
 
 
@@ -270,11 +270,11 @@ module PostResolution =
 
 
 
-    let addResolvedTypeParams (typeParams : ResolvedTypeParams) (names : NamesMaps) =
+    let addResolvedTypeParams (typeParams : Q.ResolvedTypeParams) (names : NamesMaps) =
         { names with typeParams = Map.merge typeParams names.typeParams }
 
 
-    let addFunctionParams (params_ : FunctionOrCaseMatchParams) (names : NamesMaps) =
+    let addFunctionParams (params_ : Q.FunctionOrCaseMatchParams) (names : NamesMaps) =
         { names with
             values =
                 Map.merge
@@ -282,8 +282,8 @@ module PostResolution =
                      |> Map.map (fun _ (ident, paramVal, tokens) ->
                          ident,
                          (Param
-                             {| destructurePath = paramVal
-                                tokens = tokens |}
+                             { destructurePath = paramVal
+                               tokens = tokens }
                           |> OnlyRight)))
                     names.values }
 
@@ -1113,10 +1113,7 @@ module PreResolution =
                                 "This shouldn't be possible. To fix this we'd need to create another lowercase name resolution map exclusively for qualified value paths"
 
                         | UnqualValue (UnqualValueIdentifier unqual) ->
-                            let lowerName =
-                                LowerIdent unqual
-                                |> LocalVariableOrParamIdent
-                                |> LocalOrParam
+                            let lowerName = LowerIdent unqual |> LocalOrParam
 
                             Q.LowerIdentifier (lowerName, resolvedLower)
                             |> Q.SingleValueExpression
@@ -1133,44 +1130,6 @@ module PreResolution =
                     |> Error
 
             | S.LetExpression (bindings, expr) ->
-                //let namesMap =
-                //    resolveLetExpression resolvedNames bindings
-                //    |> Result.map (fun letExpr -> combineTwoResolvedNamesMaps letExpr resolvedNames)
-
-                //match namesMap with
-                //| Ok namesMap_ ->
-
-                ////let letBindings : Result<Q.LetDeclarationNames, Identifier list> =
-                //let letBindings =
-                //    bindings
-                //    |> qualifyNelCstNodes (fun binding ->
-                //        let qualifiedExpression =
-                //            qualifyCstNodeAndLiftResult (qualifyExpression moduleCtx namesMap_) binding.value
-
-                //        (resolveParamAssignment namesMap_ binding.bindPattern, qualifiedExpression)
-                //        ||> Result.map2
-                //                (fun paramsMap expression ->
-                //                    paramsMap
-                //                    |> Map.mapKeyVal (fun unqual values ->
-                //                        let ident = convertValueIdentifierToLowerIdent unqual
-
-                //                        ident,
-                //                        values
-                //                        |> SOD.map (fun (tokens, path) ->
-                //                            { Q.ResolvedLetBinding.ident = ident
-                //                              Q.ResolvedLetBinding.tokens = tokens
-                //                              Q.ResolvedLetBinding.destructurePath = path
-                //                              Q.ResolvedLetBinding.assignedExpression = expression.node })))
-                //                (@))
-                //    |> Result.map (
-                //        NEL.map S.getNode
-                //        >> NEL.toList
-                //        >> combineReferenceMaps
-                //        //>> Map.mapKeyVal (fun _ values -> makeResolvedLower (), SOD.getFirst values)
-                //    )
-                //let letBindings : Result<Q.LetDeclarationNames, Identifier list> =
-
-
                 let letBindings =
                     bindings
                     |> qualifyNelCstNodes (fun binding ->
