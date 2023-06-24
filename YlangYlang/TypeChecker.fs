@@ -5,7 +5,6 @@ open Lexer
 module Cst = ConcreteSyntaxTree
 
 open NameResolution
-open NameResolution.ResolvedNames
 open System
 
 
@@ -215,7 +214,7 @@ module TypeCheckingInfo =
 
             Result.map DtRecordExact combined
 
-        | DtGeneric generic1, DtGeneric generic2 ->
+    //| DtGeneric generic1, DtGeneric generic2 ->
 
 
 
@@ -335,10 +334,7 @@ let getConstrainedVars (gleaned : GleanedInfo) : VariablesConstraints = gleaned.
 
 
 
-let private convertTypeOrModuleIdentifierToIdentifier : TypeOrModuleIdentifier -> Identifier =
-    function
-    | QualifiedType ident -> ModuleSegmentsOrQualifiedTypeOrVariant ident
-    | UnqualType ident -> TypeNameOrVariantOrTopLevelModule ident
+
 
 // Not sure if this is useful yet
 //type BuiltInCompoundTypes =
@@ -559,12 +555,12 @@ let typeOfPrimitiveLiteralValue : Cst.PrimitiveLiteralValue -> SingleTypeConstra
 
 
 
-let rec typeOfExpression : ResolvedNames -> Cst.Expression -> TypeCheckingInfo =
+let rec typeOfExpression : NamesInScope -> Cst.Expression -> TypeCheckingInfo =
     fun _ _ -> failwithf "Not implemented yet!"
 
 
 /// @TODO: this should contain the logic to type check resolved named values
-and typeOfNamedValueIdentifier : ResolvedNames -> Identifier -> TypeCheckingInfo =
+and typeOfNamedValueIdentifier : NamesInScope -> Identifier -> TypeCheckingInfo =
     fun resolvedNames ident ->
         match ident with
         | SingleValueIdentifier name ->
@@ -625,7 +621,7 @@ and typeOfNamedValueIdentifier : ResolvedNames -> Identifier -> TypeCheckingInfo
 
 
 //and typeOfExplicitCompoundValue : ResolvedNames -> Cst.CompoundValues -> GleanedInfo =
-and typeOfExplicitCompoundValue : ResolvedNames -> Cst.CompoundValues -> TypeCheckingInfo =
+and typeOfExplicitCompoundValue : NamesInScope -> Cst.CompoundValues -> TypeCheckingInfo =
     fun namesInScope compoundValue ->
 
         //let rec listFolder items =
@@ -702,7 +698,7 @@ let rec typeOfAssignmentPattern resolvedNames (assignmentPattern : Cst.Assignmen
     | Cst.DestructuredPattern pattern -> typeOfDestructuredPattern resolvedNames pattern
 
 
-and typeOfDestructuredPattern (resolvedNames : ResolvedNames) (pattern : Cst.DestructuredPattern) : GleanedInfo =
+and typeOfDestructuredPattern (resolvedNames : NamesInScope) (pattern : Cst.DestructuredPattern) : GleanedInfo =
     match pattern with
     | Cst.DestructuredRecord fieldNames ->
         let justTheFieldNames = fieldNames |> NEL.map Cst.getNode
