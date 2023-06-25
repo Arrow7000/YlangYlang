@@ -3,6 +3,7 @@
 
 open Lexer
 open QualifiedSyntaxTree.Names
+open System
 
 module S = SyntaxTree
 module Q = QualifiedSyntaxTree
@@ -11,12 +12,47 @@ module Q = QualifiedSyntaxTree
 
 
 
+type BuiltInPrimitiveTypes =
+    | Float
+    | Int
+    | String
+    | Char
+    | Bool
 
-(* Types *)
 
-/// For types that can be mentioned not at the top level of a file, e.g. records or types declared elsewhere. But e.g. you can't create an ad hoc sum type inside a record or another sum type. Sum types and aliases need to be declared at the top level of a module.
-///
-/// @TODO: might need to make a separate version of this: one that can be used inside value type annotations where free type variables are allowed, and one to be used in type declarations, where free type variables are *not* allowed.
+/// Represents a correct type without clashes
+type DefinitiveType =
+    | DtUnitType
+    | DtPrimitiveType of BuiltInPrimitiveTypes
+    | DtTuple of InferredType tom
+    | DtList of InferredType
+    | DtRecordWith of referencedFields : Map<RecordFieldName, InferredType>
+    | DtRecordExact of Map<RecordFieldName, InferredType>
+    | DtReferencedType of typeName : ResolvedTypeName * typeParams : InferredType list
+    | DtArrow of fromType : InferredType * toType : InferredType
+
+
+
+
+and InferredType =
+    /// It being one or more captures the fact that multiple parameters or values may need to have the same type, regardless of what the specific type is
+    | Unconstrained of Guid set
+    | Constrained of DefinitiveType
+
+
+
+/// This describes the strictest type constraint that an expression needs to be, but no stricter!
+type TypeJudgment = Result<InferredType, DefinitiveType list>
+
+
+
+
+
+
+
+
+
+
 type MentionableType =
     | UnitType
     | GenericTypeVar of ResolvedTypeParam
@@ -144,11 +180,15 @@ and CaseMatchBranch =
       body : S.CstNode<Expression> }
 
 
-and Expression =
+and SingleOrCompoundExpr =
     | SingleValueExpression of SingleValueExpression
     | CompoundExpression of CompoundExpression
 
 
+/// A typed expression
+and Expression =
+    { inferredType : TypeJudgment
+      expr : SingleOrCompoundExpr }
 
 
 

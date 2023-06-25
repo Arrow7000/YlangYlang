@@ -252,10 +252,10 @@ and FunctionOrCaseMatchParams = Map<ResolvedLower, LowerIdent * PathToDestructur
 and CompoundValues =
     | List of S.CstNode<Expression> list
     | Tuple of S.CstNode<Expression> tom
-    | Record of (S.CstNode<LowerIdent> * S.CstNode<Expression>) list
+    | Record of (S.CstNode<RecordFieldName> * S.CstNode<Expression>) list
     | RecordExtension of
-        recordToExtend : S.CstNode<LowerIdent> *
-        additions : NEL<S.CstNode<LowerIdent> * S.CstNode<Expression>>
+        recordToExtend : S.CstNode<ResolvedLower * LowerIdent> *
+        additions : NEL<S.CstNode<RecordFieldName> * S.CstNode<Expression>>
 
 
 and FunctionValue =

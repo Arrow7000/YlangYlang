@@ -319,6 +319,14 @@ type Result<'a, 'e> with
         | Error err, Ok _ -> Error err
         | Error err1, Error err2 -> Error <| mapErrs err1 err2
 
+
+    static member bind2 bindOks (mapErrs : 'err -> 'err -> 'err) result1 result2 =
+        match result1, result2 with
+        | Ok ok1, Ok ok2 -> bindOks ok1 ok2
+        | Ok _, Error err
+        | Error err, Ok _ -> Error err
+        | Error err1, Error err2 -> Error <| mapErrs err1 err2
+
     static member map3 mapOks (mapErrs : 'err -> 'err -> 'err) result1 result2 result3 =
         match result1, result2, result3 with
         | Ok ok1, Ok ok2, Ok ok3 -> Ok <| mapOks ok1 ok2 ok3
@@ -415,6 +423,47 @@ module Map =
 
 
     let mergeMany maps = Seq.fold merge Map.empty maps
+
+    /// Merges two maps, but defers to the merging function if there are clashes
+    let mergeSafe (merger : 'Key -> 'T -> 'T -> 'T) map1 map2 =
+        map1
+        |> Map.fold
+            (fun merged key value ->
+                match Map.tryFind key merged with
+                | Some existingVal -> Map.add key (merger key existingVal value) merged
+                | None -> Map.add key value merged)
+            map2
+
+
+    let mergeSafeMany (merger : 'Key -> 'T -> 'T -> 'T) (maps : seq<Map<'Key, 'T>> when 'Key : comparison) =
+        Seq.fold (mergeSafe merger) Map.empty maps
+
+
+
+    /// Merges two maps that have exactly the same keys. Returns an error if they don't.
+    let mergeExact (merger : 'Key -> 'a -> 'b -> 'c) map1 map2 =
+        let keys1 = Map.keys map1 |> Set.ofSeq
+        let keys2 = Map.keys map2 |> Set.ofSeq
+
+        let allKeys = Set.union keys1 keys2
+        let disjointKeys = Set.difference allKeys (Set.intersect keys1 keys2)
+
+        allKeys
+        |> Seq.fold
+            (fun merged key ->
+                match merged with
+                | Ok merged_ ->
+                    match Map.tryFind key map1, Map.tryFind key map2 with
+                    | Some val1, Some val2 -> Map.add key (merger key val1 val2) merged_ |> Ok
+
+                    | Some _, None
+                    | None, Some _ -> Error disjointKeys
+                    | None, None ->
+                        // This shouldn't be possible
+                        Error disjointKeys
+                | Error err -> Error err)
+            (Ok Map.empty)
+
 
 
     let sequenceResult map =

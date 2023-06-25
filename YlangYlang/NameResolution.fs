@@ -1004,24 +1004,34 @@ module PreResolution =
             fields
             |> List.map (fun (fieldName, fieldVal) ->
                 qualifyCstNodeAndLiftResult (qualifyExpression moduleCtx resolvedNames) fieldVal
-                |> Result.map (fun qualVal -> S.mapNode unqualValToLowerIdent fieldName, qualVal))
+                |> Result.map (fun qualVal -> S.mapNode unqualValToRecField fieldName, qualVal))
             |> Result.sequenceList
             |> combineUnresolvedIdents
             |> Result.map Q.CompoundValues.Record
 
         | S.CompoundValues.RecordExtension (extendedRec, fields) ->
-            fields
-            |> NEL.map (fun (fieldName, fieldVal) ->
-                qualifyCstNodeAndLiftResult (qualifyExpression moduleCtx resolvedNames) fieldVal
-                |> Result.map (fun qualVal -> fieldName, qualVal))
-            |> NEL.sequenceResult
-            |> combineUnresolvedIdents
-            |> Result.map (fun qualFields ->
-                let mappedFields =
-                    qualFields
-                    |> NEL.map (Tuple.mapFst (S.mapNode unqualValToLowerIdent))
+            let unqualExendedIdent = UnqualValue extendedRec.node
+            let extendedIdent = convertValueIdentifierToIdentifier unqualExendedIdent
+            let convertedExtendedRec = tryFindValue unqualExendedIdent resolvedNames
 
-                Q.CompoundValues.RecordExtension (S.mapNode unqualValToLowerIdent extendedRec, mappedFields))
+            match convertedExtendedRec with
+            | Some (_, resolved) ->
+                fields
+                |> NEL.map (fun (fieldName, fieldVal) ->
+                    qualifyCstNodeAndLiftResult (qualifyExpression moduleCtx resolvedNames) fieldVal
+                    |> Result.map (fun qualVal -> fieldName, qualVal))
+                |> NEL.sequenceResult
+                |> combineUnresolvedIdents
+                |> Result.map (fun qualFields ->
+                    let mappedFields =
+                        qualFields
+                        |> NEL.map (Tuple.mapFst (S.mapNode unqualValToRecField))
+
+                    Q.CompoundValues.RecordExtension (
+                        S.mapNode (fun unqual -> resolved, unqualValToLowerIdent unqual) extendedRec,
+                        mappedFields
+                    ))
+            | None -> Error [ extendedIdent ]
 
 
 
