@@ -45,26 +45,47 @@ open TypedSyntaxTree
 let makeNewGeneric () = Guid.NewGuid () |> Set.singleton
 
 
+let lowerIdentToRecFieldName (LowerIdent ident) = RecordFieldName ident
 
 
-
-let rec mentionableTypeToDefinite (namesMaps : NamesMaps) (mentionable: Q.MentionableType) : InferredType =
+let rec mentionableTypeToDefinite (namesMaps : NamesMaps) (mentionable : Q.MentionableType) : InferredType =
     let innerFunc = mentionableTypeToDefinite namesMaps
 
     match mentionable with 
     | Q.UnitType -> Constrained DtUnitType
-    | Q.GenericTypeVar (ResolvedTypeParam genericTypeVar) ->
-        Unconstrained <| Set.singleton genericTypeVar
+    | Q.GenericTypeVar (ResolvedTypeParam genericTypeVar) -> Unconstrained <| Set.singleton genericTypeVar
 
-    | Q.Tuple {types=types} ->
-            types |> TOM.map (S.getNode >> innerFunc) |> DtTuple |> Constrained
+    | Q.Tuple { types = types } ->
+        types
+        |> TOM.map (S.getNode >> innerFunc)
+        |> DtTuple
+        |> Constrained
 
-    | Q.Record {fields=fields} ->
-        fields |> Map.mapKeyVal (fun key value -> key.node, innerFunc value.node) |> DtRecordExact |> Constrained
+    | Q.Record { fields = fields } ->
+        fields
+        |> Map.mapKeyVal (fun key value -> key.node, innerFunc value.node)
+        |> DtRecordExact
+        |> Constrained
 
-    | Q.ExtendedRecord {extendedAlias=alias;fields=fields} ->
+    | Q.ExtendedRecord { extendedAlias = alias
+                         fields = fields } ->
 
-    //| Q.ReferencedType referencedType ->
+        fields
+        |> Map.mapKeyVal (fun key value -> key.node, innerFunc value.node)
+        |> DtRecordWith
+        |> Constrained
+
+    | Q.ReferencedType (typeName, typeParams) ->
+        let definiteTypeParams = List.map (S.getNode >> innerFunc) typeParams
+
+        DtReferencedType (typeName, definiteTypeParams)
+        |> Constrained
+
+    | Q.Arrow (fromType, toTypes) ->
+        DtArrow (innerFunc fromType.node, NEL.map (S.getNode >> innerFunc) toTypes)
+        |> Constrained
+
+    | Q.Parensed parensed -> innerFunc parensed.node
     //| Q.Arrow arrow ->
     //| Q.Parensed parensed ->
 
@@ -80,7 +101,7 @@ let rec mentionableTypeToDefinite (namesMaps : NamesMaps) (mentionable: Q.Mentio
 
 
 
-let concatResultErrListNel (result : Result<'a, 'Err list nel>) =
+let concatResultErrListNel (result : Result<'a, 'Err list nel>) : Result<'a, 'Err list> =
     Result.mapError (NEL.toList >> List.concat) result
 
 
@@ -116,8 +137,19 @@ and unifyInferredDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveTyp
         |> Result.map (DtList >> Constrained)
 
     | DtArrow (fromA, toA), DtArrow (fromB, toB) ->
-        (unifyInferredTypes fromA fromB, unifyInferredTypes toA toB)
-        ||> Result.map2 (fun fromType toType -> DtArrow (fromType, toType) |> Constrained) (@)
+        let toTypes =
+            unifyTypesNel toA toB
+            |> Result.mapError (fun _ ->
+                [ DtArrow (fromA, toA)
+                  DtArrow (fromB, toB) ])
+            |> Result.bind (NEL.sequenceResult >> concatResultErrListNel)
+
+        (unifyInferredTypes fromA fromB, toTypes)
+        ||> Result.map2
+                (fun fromType toTypes_ -> DtArrow (fromType, toTypes_) |> Constrained)
+                (fun _ _ ->
+                    [ DtArrow (fromA, toA)
+                      DtArrow (fromB, toB) ])
 
     | DtReferencedType (typeRefA, typeParamsA), DtReferencedType (typeRefB, typeParamsB) ->
         if typeRefA = typeRefB then
@@ -247,6 +279,8 @@ let typeOfPrimitiveLiteralValue (primitive : S.PrimitiveLiteralValue) : T.Defini
 
 
 let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Expression =
+    let innerTypeCheck = typeCheckExpression namesMaps
+
     match expr with
     | Q.SingleValueExpression singleVal ->
         match singleVal with
@@ -266,23 +300,26 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Expr
 
 
             | Q.DotGetter dotGetter ->
+                let recFieldName = lowerIdentToRecFieldName dotGetter
+
                 let type_ =
                     Map.empty
-                    |> Map.add dotGetter (Unconstrained <| makeNewGeneric ())
+                    |> Map.add recFieldName (Unconstrained <| makeNewGeneric ())
                     |> DtRecordWith
                     |> Constrained
                     |> Ok
 
                 { inferredType = type_
                   expr =
-                    DotGetter dotGetter
+
+                    DotGetter recFieldName
                     |> ExplicitValue
                     |> SingleValueExpression }
 
             | Q.Compound compound ->
                 match compound with
                 | Q.List list ->
-                    let typedList = List.map (S.mapNode (typeCheckExpression namesMaps)) list
+                    let typedList = List.map (S.mapNode innerTypeCheck) list
 
                     let combinedType =
                         typedList
@@ -302,7 +339,7 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Expr
                         |> SingleValueExpression }
 
                 | Q.CompoundValues.Tuple tuple ->
-                    let typedList = TOM.map (S.mapNode (typeCheckExpression namesMaps)) tuple
+                    let typedList = TOM.map (S.mapNode innerTypeCheck) tuple
 
                     let combinedType =
                         typedList
@@ -322,7 +359,7 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Expr
                 | Q.CompoundValues.Record record ->
                     let typedList =
                         record
-                        |> List.map (fun (key, value) -> key, S.mapNode (typeCheckExpression namesMaps) value)
+                        |> List.map (fun (key, value) -> key, S.mapNode innerTypeCheck value)
 
                     let combinedType =
                         typedList

@@ -29,7 +29,7 @@ type DefinitiveType =
     | DtRecordWith of referencedFields : Map<RecordFieldName, InferredType>
     | DtRecordExact of Map<RecordFieldName, InferredType>
     | DtReferencedType of typeName : ResolvedTypeName * typeParams : InferredType list
-    | DtArrow of fromType : InferredType * toType : InferredType
+    | DtArrow of fromType : InferredType * toTypes : InferredType nel
 
 
 
@@ -129,10 +129,10 @@ and FunctionOrCaseMatchParams = Map<ResolvedLower, LowerIdent * PathToDestructur
 and CompoundValues =
     | List of S.CstNode<Expression> list
     | Tuple of S.CstNode<Expression> tom
-    | Record of (S.CstNode<LowerIdent> * S.CstNode<Expression>) list
+    | Record of (S.CstNode<RecordFieldName> * S.CstNode<Expression>) list
     | RecordExtension of
         recordToExtend : S.CstNode<LowerIdent> *
-        additions : NEL<S.CstNode<LowerIdent> * S.CstNode<Expression>>
+        additions : NEL<S.CstNode<RecordFieldName> * S.CstNode<Expression>>
 
 
 and FunctionValue =
@@ -147,7 +147,7 @@ and ExplicitValue =
     // functions and other values might be unified by just giving all values a possibly-empty list of parameters
     | Function of FunctionValue
     /// A `.someField` expression which are first class getters for record fields. A `.someField` getter is a function that takes a record that has a `someField` field and returns the value at that field
-    | DotGetter of recordField : LowerIdent
+    | DotGetter of recordField : RecordFieldName
 
 
 
@@ -172,7 +172,7 @@ and SingleValueExpression =
 and CompoundExpression =
     | Operator of left : S.CstNode<Expression> * opSequence : NEL<S.CstNode<Lexer.Operator> * S.CstNode<Expression>>
     | FunctionApplication of funcExpr : S.CstNode<Expression> * params' : NEL<S.CstNode<Expression>>
-    | DotAccess of expr : S.CstNode<Expression> * dotSequence : S.CstNode<NEL<LowerIdent>>
+    | DotAccess of expr : S.CstNode<Expression> * dotSequence : S.CstNode<NEL<RecordFieldName>>
 
 
 and CaseMatchBranch =

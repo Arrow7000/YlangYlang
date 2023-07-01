@@ -34,7 +34,7 @@ let main argv =
         >> Result.mapError ParsingError
     )
     |> Result.bind (
-        MakeQualified.qualifyModule
+        NameResolution.PreResolution.qualifyModule
         >> Result.mapError CanonicalisationError
     )
     |> printfn "%A"

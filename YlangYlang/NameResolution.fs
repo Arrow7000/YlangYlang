@@ -1365,10 +1365,8 @@ module PreResolution =
         match declarations with
         | Ok decls ->
             let namesMaps =
-                PostResolution.addModuleDeclarations
-                    ylModule.moduleDecl.moduleName.node
-                    (List.map S.getNode decls)
                     PostResolution.empty
+                |> PostResolution.addModuleDeclarations ylModule.moduleDecl.moduleName.node (List.map S.getNode decls)
 
             let values =
                 namesMaps.values
