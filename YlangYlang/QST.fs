@@ -196,7 +196,7 @@ type VariantCase =
 /// I.e. a sum type
 type NewTypeDeclaration =
     { typeParams : ResolvedTypeParams
-      variants : NEL<S.CstNode<VariantCase>> }
+      variants : NEL<ResolvedTypeConstructor * S.CstNode<VariantCase>> }
 
 
 type AliasDeclaration =
@@ -232,6 +232,8 @@ type InfixOpDeclaration =
 
 
 /// Note that each let binding could still create multiple named values through assignment patterns, so this is only the result of a single name, not a full binding
+///
+/// @TODO: we don't currently parse for value type declarations in let bindings, so we need to support this!
 type ResolvedLetBinding =
     { ident : LowerIdent
       tokens : TokenWithSource list
@@ -333,9 +335,9 @@ type ValueAnnotation =
 
 type Declaration =
     | ImportDeclaration of S.ImportDeclaration
-    | TypeDeclaration of name : S.CstNode<UpperIdent> * declaration : TypeDeclaration
-    | ValueTypeAnnotation of ValueAnnotation
-    | ValueDeclaration of ValueDeclaration
+    | TypeDeclaration of resolved : ResolvedTypeName * name : S.CstNode<UpperIdent> * declaration : TypeDeclaration
+    | ValueTypeAnnotation of resolved : ResolvedLower * ValueAnnotation
+    | ValueDeclaration of resolved : ResolvedLower * ValueDeclaration
 
 
 // Representing a whole file/module
@@ -343,7 +345,8 @@ type YlModule =
     { moduleDecl : S.ModuleDeclaration
       imports : S.ImportDeclaration list
       types : Map<ResolvedTypeName, UpperIdent * TypeDeclaration>
-      values : Map<ResolvedLower, LowerIdent * EitherOrBoth<ValueAnnotation, ValueDeclaration>> }
+      valueTypes : Map<ResolvedLower, LowerIdent * ValueAnnotation>
+      values : Map<ResolvedLower, LowerIdent * ValueDeclaration> }
 
 
 

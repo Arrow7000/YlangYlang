@@ -265,7 +265,7 @@ type Result<'a, 'e> with
         | Ok x -> Some x
         | Error _ -> None
 
-    static member fromOption errIfNone =
+    static member ofOption errIfNone =
         function
         | Some x -> Ok x
         | None -> Error errIfNone
