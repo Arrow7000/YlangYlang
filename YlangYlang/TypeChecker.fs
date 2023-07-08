@@ -2,7 +2,7 @@
 
 
 open Lexer
-open NameResolution.PostResolution
+open NameResolution
 open System
 
 
@@ -13,7 +13,7 @@ module Q = QualifiedSyntaxTree
 
 open Q.Names
 open TypedSyntaxTree
-
+open TypedNameResolution
 
 
 (*
@@ -42,57 +42,104 @@ open TypedSyntaxTree
 *)
 
 
-let makeNewGeneric () = Guid.NewGuid () |> Set.singleton
+let private makeNewGeneric () = Guid.NewGuid () |> Set.singleton
 
 
 let lowerIdentToRecFieldName (LowerIdent ident) = RecordFieldName ident
 
 
-let rec mentionableTypeToDefinite (namesMaps : NamesMaps) (mentionable : Q.MentionableType) : InferredType =
-    let innerFunc = mentionableTypeToDefinite namesMaps
-
-    match mentionable with 
-    | Q.UnitType -> Constrained DtUnitType
-    | Q.GenericTypeVar (ResolvedTypeParam genericTypeVar) -> Unconstrained <| Set.singleton genericTypeVar
+let rec mentionableTypeToDefinite (mentionable : Q.MentionableType) : InferredType =
+    match mentionable with
+    | Q.UnitType -> Definitive DtUnitType
+    | Q.GenericTypeVar resolved ->
+        ByTypeParam resolved
+        |> Set.singleton
+        |> Constrained
 
     | Q.Tuple { types = types } ->
         types
-        |> TOM.map (S.getNode >> innerFunc)
+        |> TOM.map (S.getNode >> mentionableTypeToDefinite)
         |> DtTuple
-        |> Constrained
+        |> Definitive
 
     | Q.Record { fields = fields } ->
         fields
-        |> Map.mapKeyVal (fun key value -> key.node, innerFunc value.node)
+        |> Map.mapKeyVal (fun key value -> key.node, mentionableTypeToDefinite value.node)
         |> DtRecordExact
-        |> Constrained
+        |> Definitive
 
     | Q.ExtendedRecord { extendedAlias = alias
                          fields = fields } ->
 
         fields
-        |> Map.mapKeyVal (fun key value -> key.node, innerFunc value.node)
+        |> Map.mapKeyVal (fun key value -> key.node, mentionableTypeToDefinite value.node)
         |> DtRecordWith
-        |> Constrained
+        |> Definitive
 
     | Q.ReferencedType (typeName, typeParams) ->
-        let definiteTypeParams = List.map (S.getNode >> innerFunc) typeParams
+        let definiteTypeParams =
+            List.map (S.getNode >> mentionableTypeToDefinite) typeParams
 
         DtReferencedType (typeName, definiteTypeParams)
-        |> Constrained
+        |> Definitive
 
     | Q.Arrow (fromType, toTypes) ->
-        DtArrow (innerFunc fromType.node, NEL.map (S.getNode >> innerFunc) toTypes)
-        |> Constrained
+        DtArrow (mentionableTypeToDefinite fromType.node, NEL.map (S.getNode >> mentionableTypeToDefinite) toTypes)
+        |> Definitive
 
-    | Q.Parensed parensed -> innerFunc parensed.node
-    //| Q.Arrow arrow ->
-    //| Q.Parensed parensed ->
+    | Q.Parensed parensed -> mentionableTypeToDefinite parensed.node
 
 
 
 
 
+
+
+
+type GatheredInferredNames = Map<ResolvedValue, InferredType>
+
+
+let rec getInferredTypeFromAssignmentPattern (pattern : Q.AssignmentPattern) : InferredType * GatheredInferredNames =
+    match pattern with
+    | Q.Named (resolved, _) ->
+        let inferredType = Constrained (Set.singleton <| ByValue resolved)
+
+        inferredType, Map.empty |> Map.add resolved inferredType
+
+    | Q.Ignored ->
+        let inferredType = Constrained Set.empty
+        inferredType, Map.empty
+
+    | Q.Unit ->
+        let inferredType = Definitive DtUnitType
+        inferredType, Map.empty
+
+    | Q.DestructuredPattern pattern -> getInferredTypeFromDestructuredPattern pattern
+
+    | Q.Aliased (pattern_, (resolved, _)) ->
+        let (inferredType, inferredNames) =
+            getInferredTypeFromAssignmentPattern pattern_.node
+
+        inferredType, inferredNames |> Map.add resolved inferredType
+
+
+and getInferredTypeFromDestructuredPattern (pattern : Q.DestructuredPattern) : InferredType * GatheredInferredNames =
+    match pattern with
+    | Q.DestructuredRecord fieldNames ->
+        let inferredType =
+            fieldNames
+            |> NEL.map (fun (resolved, ident) ->
+                lowerIdentToRecFieldName ident.node, ByValue resolved |> Set.singleton |> Constrained)
+            |> NEL.toList
+            |> Map.ofList
+            |> DtRecordWith
+            |> Definitive
+
+        inferredType,
+        fieldNames
+        |> NEL.map (fun (resolved, _) -> resolved, ByValue resolved |> Set.singleton |> Constrained)
+        |> NEL.toList
+        |> Map.ofList
 
 
 
@@ -108,7 +155,7 @@ let concatResultErrListNel (result : Result<'a, 'Err list nel>) : Result<'a, 'Er
 
 
 
-let makeTypedExpr (judgment : TypeJudgment) (expr : SingleOrCompoundExpr) : Expression =
+let makeTypedExpr (judgment : TypeJudgment) (expr : SingleOrCompoundExpr) : TypedExpr =
     { inferredType = judgment; expr = expr }
 
 
@@ -116,10 +163,10 @@ let makeTypedExpr (judgment : TypeJudgment) (expr : SingleOrCompoundExpr) : Expr
 /// This is for unifying concrete containers of multiple types... I think. So it's about
 let rec unifyInferredTypes (typeA : InferredType) (typeB : InferredType) : TypeJudgment =
     match typeA, typeB with
-    | Unconstrained guidsA, Unconstrained guidsB -> Set.union guidsA guidsB |> Unconstrained |> Ok
-    | Constrained a, Unconstrained _
-    | Unconstrained _, Constrained a -> Constrained a |> Ok
-    | Constrained a, Constrained b -> unifyInferredDefinitiveTypes a b
+    | Constrained guidsA, Constrained guidsB -> Set.union guidsA guidsB |> Constrained |> Ok
+    | Definitive a, Constrained _
+    | Constrained _, Definitive a -> Definitive a |> Ok
+    | Definitive a, Definitive b -> unifyInferredDefinitiveTypes a b
 
 
 
@@ -130,11 +177,11 @@ and unifyInferredDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveTyp
         unifyTypesTom a b
         |> Result.mapError (fun (first, second) -> [ DtTuple first; DtTuple second ])
         |> Result.bind (TOM.sequenceResult >> concatResultErrListNel)
-        |> Result.map (DtTuple >> Constrained)
+        |> Result.map (DtTuple >> Definitive)
 
     | DtList a, DtList b ->
         unifyInferredTypes a b
-        |> Result.map (DtList >> Constrained)
+        |> Result.map (DtList >> Definitive)
 
     | DtArrow (fromA, toA), DtArrow (fromB, toB) ->
         let toTypes =
@@ -146,7 +193,7 @@ and unifyInferredDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveTyp
 
         (unifyInferredTypes fromA fromB, toTypes)
         ||> Result.map2
-                (fun fromType toTypes_ -> DtArrow (fromType, toTypes_) |> Constrained)
+                (fun fromType toTypes_ -> DtArrow (fromType, toTypes_) |> Definitive)
                 (fun _ _ ->
                     [ DtArrow (fromA, toA)
                       DtArrow (fromB, toB) ])
@@ -160,7 +207,7 @@ and unifyInferredDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveTyp
             |> Result.bind (Result.sequenceList >> concatResultErrListNel)
             |> Result.map (fun unifiedParams ->
                 DtReferencedType (typeRefA, unifiedParams)
-                |> Constrained)
+                |> Definitive)
 
         else
             Error [ typeA; typeB ]
@@ -172,7 +219,7 @@ and unifyInferredDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveTyp
             Map.sequenceResult
             >> Result.mapError (Map.values >> List.concat)
         )
-        |> Result.map (DtRecordExact >> Constrained)
+        |> Result.map (DtRecordExact >> Definitive)
 
     | DtRecordWith a, DtRecordWith b ->
         Map.mergeExact (fun _ valueA valueB -> unifyInferredTypes valueA valueB) a b
@@ -181,12 +228,12 @@ and unifyInferredDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveTyp
             Map.sequenceResult
             >> Result.mapError (Map.values >> List.concat)
         )
-        |> Result.map (DtRecordExact >> Constrained)
+        |> Result.map (DtRecordExact >> Definitive)
 
-    | DtUnitType, DtUnitType -> DtUnitType |> Constrained |> Ok
+    | DtUnitType, DtUnitType -> DtUnitType |> Definitive |> Ok
     | DtPrimitiveType a, DtPrimitiveType b ->
         if a = b then
-            DtPrimitiveType a |> Constrained |> Ok
+            DtPrimitiveType a |> Definitive |> Ok
         else
             Error [ DtPrimitiveType a
                     DtPrimitiveType b ]
@@ -250,11 +297,11 @@ and tryUnifyJudgments (judgmentA : TypeJudgment) (judgmentB : TypeJudgment) =
     match judgmentA, judgmentB with
     | Ok a, Ok b -> unifyInferredTypes a b
 
-    | Error err, Ok (Constrained t)
-    | Ok (Constrained t), Error err -> Error (t :: err)
+    | Error err, Ok (Definitive t)
+    | Ok (Definitive t), Error err -> Error (t :: err)
 
-    | Error e, Ok (Unconstrained _)
-    | Ok (Unconstrained _), Error e -> Error e
+    | Error e, Ok (Constrained _)
+    | Ok (Constrained _), Error e -> Error e
 
     | Error a, Error b -> Error (List.append a b)
 
@@ -278,7 +325,7 @@ let typeOfPrimitiveLiteralValue (primitive : S.PrimitiveLiteralValue) : T.Defini
     | S.BoolPrimitive _ -> T.DtPrimitiveType T.Bool
 
 
-let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Expression =
+let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : TypedExpr =
     let innerTypeCheck = typeCheckExpression namesMaps
 
     match expr with
@@ -289,7 +336,7 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Expr
             | Q.Primitive primitive ->
                 let type_ =
                     typeOfPrimitiveLiteralValue primitive
-                    |> Constrained
+                    |> Definitive
                     |> Ok
 
                 { inferredType = type_
@@ -304,9 +351,9 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Expr
 
                 let type_ =
                     Map.empty
-                    |> Map.add recFieldName (Unconstrained <| makeNewGeneric ())
+                    |> Map.add recFieldName (Constrained Set.empty)
                     |> DtRecordWith
-                    |> Constrained
+                    |> Definitive
                     |> Ok
 
                 { inferredType = type_
@@ -328,7 +375,7 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Expr
                             (fun state expr ->
                                 (state, expr.inferredType)
                                 ||> Result.bind2 (fun stateSoFar inferred -> unifyInferredTypes stateSoFar inferred) (@))
-                            (makeNewGeneric () |> Unconstrained |> Ok)
+                            (Constrained Set.empty |> Ok)
 
                     { inferredType = combinedType
                       expr =
@@ -346,7 +393,7 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Expr
                         |> TOM.map (fun expr -> expr.node.inferredType)
                         |> TOM.sequenceResult
                         |> concatResultErrListNel
-                        |> Result.map (DtTuple >> Constrained)
+                        |> Result.map (DtTuple >> Definitive)
 
                     { inferredType = combinedType
                       expr =
@@ -369,7 +416,7 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Expr
                         |> Result.sequenceList
                         |> Result.map Map.ofList
                         |> concatResultErrListNel
-                        |> Result.map (DtRecordExact >> Constrained)
+                        |> Result.map (DtRecordExact >> Definitive)
 
                     { inferredType = combinedType
                       expr =
@@ -379,23 +426,115 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Expr
                         |> ExplicitValue
                         |> SingleValueExpression }
 
-                | Q.CompoundValues.RecordExtension (extended, record) ->
-                    let resolved = extended |> S.getNode |> snd 
-                    let resolvedItem = findValue resolved namesMaps
+                | Q.CompoundValues.RecordExtension (extended, additions) ->
+                    let resolved = extended |> S.mapNode fst
+                    let resolvedEditedRecord = findValue resolved.node namesMaps
+
+                    let typedList =
+                        additions
+                        |> NEL.map (fun (key, value) -> key, S.mapNode innerTypeCheck value)
+
+                    let typeOfEditedRecord = getInferredTypeFromLowercaseName resolvedEditedRecord
+
+                    let derivedFromFieldsType : TypeJudgment =
+                        typedList
+                        |> NEL.map (fun (key, expr) ->
+                            expr.node.inferredType
+                            |> Result.map (fun inferred -> key.node, inferred))
+                        |> NEL.sequenceResult
+                        |> Result.map (NEL.toList >> Map.ofList)
+                        |> concatResultErrListNel
+                        |> Result.map (DtRecordWith >> Definitive)
+
+                    let combinedType : TypeJudgment =
+                        (typeOfEditedRecord, derivedFromFieldsType)
+                        ||> Result.bind2 unifyInferredTypes (@)
+
+                    { inferredType = combinedType
+                      expr =
+                        CompoundValues.RecordExtension (
+                            S.mapNode
+                                (resolvedEditedRecord
+                                 |> getIdentFromLowercaseName
+                                 |> Tuple.makePairWithSnd)
+                                resolved,
+                            typedList
+                        )
+                        |> Compound
+                        |> ExplicitValue
+                        |> SingleValueExpression }
+
+            | Q.Function funcVal ->
+                let typeOfBody = innerTypeCheck funcVal.body.node
+
+                let funcParams : FunctionOrCaseMatchParams nel =
+                    funcVal.params_
+                    |> NEL.map (fun param_ ->
+                        let (typeOfPattern, gatheredNames) =
+                            getInferredTypeFromAssignmentPattern param_.paramPattern
+
+                        { paramPattern = param_.paramPattern
+                          inferredType = typeOfPattern
+                          namesMap =
+                            param_.namesMap
+                            |> Map.map (fun key qualifiedParam ->
+                                let inferredType = Map.find key gatheredNames
+
+                                { ident = qualifiedParam.ident
+                                  tokens = qualifiedParam.tokens
+                                  destructurePath = qualifiedParam.destructurePath
+                                  inferredType = inferredType }) })
+
+
+                let (NEL (firstParamType, restParamTypes)) =
+                    funcParams
+                    |> NEL.map (fun param_ -> param_.inferredType)
+
+                let arrowType : TypeJudgment =
+                    typeOfBody.inferredType
+                    |> Result.map (fun typeOfBody_ ->
+                        let toTypes =
+                            NEL.new_ typeOfBody_ (List.rev restParamTypes)
+                            |> NEL.reverse<_>
+
+                        DtArrow (firstParamType, toTypes) |> Definitive)
+
+
+                let funcVal : FunctionValue =
+                    { params_ = funcParams
+                      body = S.makeCstNode typeOfBody funcVal.body.source }
+
+                { expr =
+                    Function funcVal
+                    |> ExplicitValue
+                    |> SingleValueExpression
+                  inferredType = arrowType }
+
+
+        | Q.UpperIdentifier (name, resolved) ->
+            let (_, ctor) = findTypeConstructor resolved namesMaps
+            let (resolvedType, _) = ctor.fullTypeName
+            let typeParams = ctor.typeParamsList
+
+            let defType =
+                DtReferencedType (
+                    resolvedType,
+                    typeParams
+                    |> List.map (ByTypeParam >> Set.singleton >> Constrained)
+                )
+
+            defType
 
 
 //| Q.Tuple
 //| Q.Record
 //| Q.RecordExtension
 
-//| Q.Function func ->
 
 //| Q.UpperIdentifier
 //| Q.LowerIdentifier
 //| Q.LetExpression
 //| Q.ControlFlowExpression
-
-
 
 
 

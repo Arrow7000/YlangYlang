@@ -78,13 +78,13 @@ module Names =
 
 
     /// Special token that lets us access the referenced item directly, without returning an option. Because if we have this token that means the named value in question has already been resolved.
-    type ResolvedTypeName = | ResolvedTypeName of Guid
+    type ResolvedType = | ResolvedType of Guid
 
     /// Special token that lets us access the referenced item directly, without returning an option. Because if we have this token that means the named value in question has already been resolved.
     type ResolvedTypeConstructor = | ResolvedTypeConstructor of Guid
 
     /// Special token that lets us access the referenced item directly, without returning an option. Because if we have this token that means the named value in question has already been resolved.
-    type ResolvedLower = | ResolvedLower of Guid
+    type ResolvedValue = | ResolvedValue of Guid
 
     //type ResolvedLowerTypeDeclaration = private | ResolvedLowerTypeDeclaration of Guid
 
@@ -114,7 +114,10 @@ module Names =
 open Names
 
 
-
+type Param =
+    { ident : LowerIdent
+      tokens : TokenWithSource list
+      destructurePath : PathToDestructuredName }
 
 
 
@@ -129,7 +132,7 @@ open Names
 
 type DestructuredPattern =
     /// Destructured records need to have one destructured member
-    | DestructuredRecord of S.CstNode<LowerIdent> nel
+    | DestructuredRecord of (ResolvedValue * S.CstNode<LowerIdent>) nel
     /// Destructured tuples need to have at least two members
     | DestructuredTuple of S.CstNode<AssignmentPattern> tom
     | DestructuredCons of S.CstNode<AssignmentPattern> tom
@@ -137,11 +140,11 @@ type DestructuredPattern =
 
 /// Named - or ignored - variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
 and AssignmentPattern =
-    | Named of LowerIdent
+    | Named of resolved : ResolvedValue * ident : LowerIdent
     | Ignored // i.e. the underscore
     | Unit
     | DestructuredPattern of DestructuredPattern
-    | Aliased of pattern : S.CstNode<AssignmentPattern> * alias : S.CstNode<LowerIdent>
+    | Aliased of pattern : S.CstNode<AssignmentPattern> * alias : (ResolvedValue * S.CstNode<LowerIdent>)
 
 
 
@@ -166,7 +169,7 @@ type MentionableType =
     | Tuple of TupleType
     | Record of RecordType
     | ExtendedRecord of ExtendedRecordType
-    | ReferencedType of typeName : ResolvedTypeName * typeParams : S.CstNode<MentionableType> list
+    | ReferencedType of typeName : ResolvedType * typeParams : S.CstNode<MentionableType> list
     | Arrow of fromType : S.CstNode<MentionableType> * toType : NEL<S.CstNode<MentionableType>>
     | Parensed of S.CstNode<MentionableType>
 
@@ -225,7 +228,7 @@ type InfixOpDeclaration =
       associativity : InfixOpAssociativity
       precedence : int
       /// The value should be a function taking exactly two parameters
-      value : ResolvedLower }
+      value : ResolvedValue }
 
 
 
@@ -244,9 +247,12 @@ type ResolvedLetBinding =
 
 
 
-and LetDeclarationNames = Map<ResolvedLower, ResolvedLetBinding>
+and LetDeclarationNames = Map<ResolvedValue, ResolvedLetBinding>
 
-and FunctionOrCaseMatchParams = Map<ResolvedLower, LowerIdent * PathToDestructuredName * TokenWithSource list>
+/// Represents all the named params in a single function parameter or case match expression
+and FunctionOrCaseMatchParamMap =
+    { paramPattern : AssignmentPattern
+      namesMap : Map<ResolvedValue, Param> }
 
 
 
@@ -256,12 +262,12 @@ and CompoundValues =
     | Tuple of S.CstNode<Expression> tom
     | Record of (S.CstNode<RecordFieldName> * S.CstNode<Expression>) list
     | RecordExtension of
-        recordToExtend : S.CstNode<ResolvedLower * LowerIdent> *
+        recordToExtend : S.CstNode<ResolvedValue * LowerIdent> *
         additions : NEL<S.CstNode<RecordFieldName> * S.CstNode<Expression>>
 
 
 and FunctionValue =
-    { params_ : FunctionOrCaseMatchParams
+    { params_ : FunctionOrCaseMatchParamMap nel
       body : S.CstNode<Expression> }
 
 
@@ -287,7 +293,7 @@ and ControlFlowExpression =
 and SingleValueExpression =
     | ExplicitValue of ExplicitValue
     | UpperIdentifier of fullyQualifiedName : FullyQualifiedUpperIdent * resolved : ResolvedTypeConstructor
-    | LowerIdentifier of name : LowerNameValue * resolved : ResolvedLower
+    | LowerIdentifier of name : LowerNameValue * resolved : ResolvedValue
     | LetExpression of namedValues : LetDeclarationNames * expr : Expression
     | ControlFlowExpression of ControlFlowExpression
 
@@ -301,7 +307,7 @@ and CompoundExpression =
 
 
 and CaseMatchBranch =
-    { matchPattern : FunctionOrCaseMatchParams
+    { matchPattern : FunctionOrCaseMatchParamMap
       body : S.CstNode<Expression> }
 
 
@@ -335,18 +341,18 @@ type ValueAnnotation =
 
 type Declaration =
     | ImportDeclaration of S.ImportDeclaration
-    | TypeDeclaration of resolved : ResolvedTypeName * name : S.CstNode<UpperIdent> * declaration : TypeDeclaration
-    | ValueTypeAnnotation of resolved : ResolvedLower * ValueAnnotation
-    | ValueDeclaration of resolved : ResolvedLower * ValueDeclaration
+    | TypeDeclaration of resolved : ResolvedType * name : S.CstNode<UpperIdent> * declaration : TypeDeclaration
+    | ValueTypeAnnotation of resolved : ResolvedValue * ValueAnnotation
+    | ValueDeclaration of resolved : ResolvedValue * ValueDeclaration
 
 
 // Representing a whole file/module
 type YlModule =
     { moduleDecl : S.ModuleDeclaration
       imports : S.ImportDeclaration list
-      types : Map<ResolvedTypeName, UpperIdent * TypeDeclaration>
-      valueTypes : Map<ResolvedLower, LowerIdent * ValueAnnotation>
-      values : Map<ResolvedLower, LowerIdent * ValueDeclaration> }
+      types : Map<ResolvedType, UpperIdent * TypeDeclaration>
+      valueTypes : Map<ResolvedValue, LowerIdent * ValueAnnotation>
+      values : Map<ResolvedValue, LowerIdent * ValueDeclaration> }
 
 
 

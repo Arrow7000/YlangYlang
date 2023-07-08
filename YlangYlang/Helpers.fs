@@ -122,6 +122,18 @@ type NonEmptyList<'a> =
     static member traverseResult (f : 'a -> Result<'b, 'err>) = NEL.map f >> NEL.sequenceResult
 
 
+    static member reverse<'T> ((NEL (head, tail)) : NEL<'T>) =
+        match tail with
+        | [] -> NEL (head, [])
+        | neck :: [] -> NEL (neck, [ head ])
+        | neck :: rest ->
+            NEL.reverse<'T> (NEL (neck, rest))
+            |> NEL.appendList [ head ]
+
+
+
+
+
 /// A convenient alias for NonEmptyList
 and NEL<'a> = NonEmptyList<'a>
 
@@ -231,6 +243,10 @@ type TwoOrMore<'a> =
 
 
     static member traverseResult (f : 'T -> Result<'a, 'b>) list = TOM.map f list |> TOM.sequenceResult
+
+
+
+
 
 
 and TOM<'a> = TwoOrMore<'a>
@@ -590,5 +606,6 @@ and sod<'a> = SingleOrDuplicate<'a>
 
 module Tuple =
     let makePairWithFst a b = a, b
+    let makePairWithSnd b a = a, b
     let mapFst f (a, b) = f a, b
     let mapSnd f (a, b) = a, f b
