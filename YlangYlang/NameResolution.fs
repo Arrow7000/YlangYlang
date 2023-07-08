@@ -857,7 +857,7 @@ module PreResolution =
                         |> NEL.map (Tuple.mapFst (S.mapNode unqualValToRecField))
 
                     Q.CompoundValues.RecordExtension (
-                        S.mapNode (fun unqual -> resolved, unqualValToLowerIdent unqual) extendedRec,
+                        (resolved, S.mapNode unqualValToLowerIdent extendedRec),
                         mappedFields
                     ))
             | None -> Error [ extendedIdent ]

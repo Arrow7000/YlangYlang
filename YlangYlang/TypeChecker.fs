@@ -8,12 +8,12 @@ open System
 
 module Cst = ConcreteSyntaxTree
 module S = SyntaxTree
-module T = TypedSyntaxTree
 module Q = QualifiedSyntaxTree
 
 open Q.Names
 open TypedSyntaxTree
-open TypedNameResolution
+
+module NameRes = TypedNameResolution
 
 
 (*
@@ -160,7 +160,8 @@ let makeTypedExpr (judgment : TypeJudgment) (expr : SingleOrCompoundExpr) : Type
 
 
 
-/// This is for unifying concrete containers of multiple types... I think. So it's about
+/// @TODO: this needs to be fixed now that `Constrained` types no longer just refer to generically typed params, but also to references to concrete values defined elsewhere!
+/// Not entirely sure yet how to do this without having to pass in names maps to this function, which I don't want to do, because of the circular definition problem (i.e. in a let bindings list all values can reference all others, even ones defined after itself, so we can't type check each value in isolation but have to "convert" them to type checked values all at once, and the only way we can do that is by allowing a type of an expression to be a reference to "whatever the type of value X is")
 let rec unifyInferredTypes (typeA : InferredType) (typeB : InferredType) : TypeJudgment =
     match typeA, typeB with
     | Constrained guidsA, Constrained guidsB -> Set.union guidsA guidsB |> Constrained |> Ok
@@ -184,14 +185,14 @@ and unifyInferredDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveTyp
         |> Result.map (DtList >> Definitive)
 
     | DtArrow (fromA, toA), DtArrow (fromB, toB) ->
-        let toTypes =
+        let unifiedToTypes =
             unifyTypesNel toA toB
             |> Result.mapError (fun _ ->
                 [ DtArrow (fromA, toA)
                   DtArrow (fromB, toB) ])
             |> Result.bind (NEL.sequenceResult >> concatResultErrListNel)
 
-        (unifyInferredTypes fromA fromB, toTypes)
+        (unifyInferredTypes fromA fromB, unifiedToTypes)
         ||> Result.map2
                 (fun fromType toTypes_ -> DtArrow (fromType, toTypes_) |> Definitive)
                 (fun _ _ ->
@@ -313,19 +314,21 @@ and tryUnifyJudgments (judgmentA : TypeJudgment) (judgmentB : TypeJudgment) =
 
 
 
-let typeOfPrimitiveLiteralValue (primitive : S.PrimitiveLiteralValue) : T.DefinitiveType =
+let typeOfPrimitiveLiteralValue (primitive : S.PrimitiveLiteralValue) : DefinitiveType =
     match primitive with
     | S.NumberPrimitive num ->
         match num with
-        | S.FloatLiteral _ -> T.DtPrimitiveType T.Float
-        | S.IntLiteral _ -> T.DtPrimitiveType T.Int
-    | S.CharPrimitive _ -> T.DtPrimitiveType T.Char
-    | S.StringPrimitive _ -> T.DtPrimitiveType T.String
-    | S.UnitPrimitive _ -> T.DtUnitType
-    | S.BoolPrimitive _ -> T.DtPrimitiveType T.Bool
+        | S.FloatLiteral _ -> DtPrimitiveType Float
+        | S.IntLiteral _ -> DtPrimitiveType Int
+    | S.CharPrimitive _ -> DtPrimitiveType Char
+    | S.StringPrimitive _ -> DtPrimitiveType String
+    | S.UnitPrimitive _ -> DtUnitType
+    | S.BoolPrimitive _ -> DtPrimitiveType Bool
 
 
-let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : TypedExpr =
+
+
+let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression) : TypedExpr =
     let innerTypeCheck = typeCheckExpression namesMaps
 
     match expr with
@@ -374,7 +377,7 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Type
                         |> List.fold
                             (fun state expr ->
                                 (state, expr.inferredType)
-                                ||> Result.bind2 (fun stateSoFar inferred -> unifyInferredTypes stateSoFar inferred) (@))
+                                ||> Result.bind2 unifyInferredTypes (@))
                             (Constrained Set.empty |> Ok)
 
                     { inferredType = combinedType
@@ -426,15 +429,13 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Type
                         |> ExplicitValue
                         |> SingleValueExpression }
 
-                | Q.CompoundValues.RecordExtension (extended, additions) ->
-                    let resolved = extended |> S.mapNode fst
-                    let resolvedEditedRecord = findValue resolved.node namesMaps
+                | Q.CompoundValues.RecordExtension ((extended, ident), additions) ->
 
                     let typedList =
                         additions
                         |> NEL.map (fun (key, value) -> key, S.mapNode innerTypeCheck value)
 
-                    let typeOfEditedRecord = getInferredTypeFromLowercaseName resolvedEditedRecord
+                    let typeOfEditedRecord = ByValue extended |> Set.singleton |> Constrained
 
                     let derivedFromFieldsType : TypeJudgment =
                         typedList
@@ -447,19 +448,11 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Type
                         |> Result.map (DtRecordWith >> Definitive)
 
                     let combinedType : TypeJudgment =
-                        (typeOfEditedRecord, derivedFromFieldsType)
-                        ||> Result.bind2 unifyInferredTypes (@)
+                        Result.bind (unifyInferredTypes typeOfEditedRecord) derivedFromFieldsType
 
                     { inferredType = combinedType
                       expr =
-                        CompoundValues.RecordExtension (
-                            S.mapNode
-                                (resolvedEditedRecord
-                                 |> getIdentFromLowercaseName
-                                 |> Tuple.makePairWithSnd)
-                                resolved,
-                            typedList
-                        )
+                        CompoundValues.RecordExtension ((extended, ident), typedList)
                         |> Compound
                         |> ExplicitValue
                         |> SingleValueExpression }
@@ -513,7 +506,7 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Type
 
 
         | Q.UpperIdentifier (name, resolved) ->
-            let (_, ctor) = findTypeConstructor resolved namesMaps
+            let (_, ctor) = NameRes.findTypeConstructor resolved namesMaps
             let (resolvedType, _) = ctor.fullTypeName
             let typeParams = ctor.typeParamsList
 
@@ -530,24 +523,38 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Type
               inferredType = Definitive defType |> Ok }
 
         | Q.LowerIdentifier (name, resolved) ->
-            let value = findValue resolved namesMaps
 
             { expr =
                 LowerIdentifier (name, resolved)
                 |> SingleValueExpression
-              inferredType = getInferredTypeFromLowercaseName value }
+              inferredType =
+                ByValue resolved
+                |> Set.singleton
+                |> Constrained
+                |> Ok }
+
+        | Q.LetExpression (declarations, expr) ->
+            let typedDeclarations : LetDeclarationNames =
+                declarations
+                |> Map.map (fun key binding ->
+                    { ident = binding.ident
+                      tokens = binding.tokens
+                      destructurePath = binding.destructurePath
+                      assignedExpression = innerTypeCheck binding.assignedExpression })
+
+            let bodyExpr = innerTypeCheck expr
+
+            { inferredType = bodyExpr.inferredType
+              expr =
+                LetExpression (typedDeclarations, bodyExpr)
+                |> SingleValueExpression }
 
 
 
-//| Q.Tuple
-//| Q.Record
-//| Q.RecordExtension
 
 
-//| Q.UpperIdentifier
-//| Q.LowerIdentifier
-//| Q.LetExpression
-//| Q.ControlFlowExpression
+
+
 
 
 

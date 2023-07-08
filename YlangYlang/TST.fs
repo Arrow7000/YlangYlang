@@ -35,12 +35,15 @@ type DefinitiveType =
 
 and InferredType =
     /// It being one or more captures the fact that multiple parameters or values may need to have the same type, regardless of what the specific type is
-    | Constrained of ConstrainType set // not sure yet if it's only values that things can be linked to or other things also, like type params
+    | Constrained of ConstrainType set
     | Definitive of DefinitiveType
 
 
+
 and ConstrainType =
+    /// I.e. must be the same type as this value
     | ByValue of ResolvedValue
+    /// I.e. must be the same type as this type param
     | ByTypeParam of ResolvedTypeParam
 
 
@@ -143,7 +146,7 @@ and CompoundValues =
     | Tuple of S.CstNode<TypedExpr> tom
     | Record of (S.CstNode<RecordFieldName> * S.CstNode<TypedExpr>) list
     | RecordExtension of
-        recordToExtend : S.CstNode<ResolvedValue * LowerIdent> *
+        recordToExtend : (ResolvedValue * S.CstNode<LowerIdent>) *
         additions : NEL<S.CstNode<RecordFieldName> * S.CstNode<TypedExpr>>
 
 

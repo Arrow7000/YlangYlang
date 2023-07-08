@@ -262,7 +262,7 @@ and CompoundValues =
     | Tuple of S.CstNode<Expression> tom
     | Record of (S.CstNode<RecordFieldName> * S.CstNode<Expression>) list
     | RecordExtension of
-        recordToExtend : S.CstNode<ResolvedValue * LowerIdent> *
+        recordToExtend : (ResolvedValue * S.CstNode<LowerIdent>) *
         additions : NEL<S.CstNode<RecordFieldName> * S.CstNode<Expression>>
 
 
