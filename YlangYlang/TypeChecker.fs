@@ -465,7 +465,8 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Type
                         |> SingleValueExpression }
 
             | Q.Function funcVal ->
-                let typeOfBody = innerTypeCheck funcVal.body.node
+                // @TODO: we need to actually add the params to namesMaps before we can type check the expression
+                let typeOfBody = typeCheckExpression namesMaps funcVal.body.node
 
                 let funcParams : FunctionOrCaseMatchParams nel =
                     funcVal.params_
@@ -523,7 +524,19 @@ let rec typeCheckExpression (namesMaps : NamesMaps) (expr : Q.Expression) : Type
                     |> List.map (ByTypeParam >> Set.singleton >> Constrained)
                 )
 
-            defType
+            { expr =
+                UpperIdentifier (name, resolved)
+                |> SingleValueExpression
+              inferredType = Definitive defType |> Ok }
+
+        | Q.LowerIdentifier (name, resolved) ->
+            let value = findValue resolved namesMaps
+
+            { expr =
+                LowerIdentifier (name, resolved)
+                |> SingleValueExpression
+              inferredType = getInferredTypeFromLowercaseName value }
+
 
 
 //| Q.Tuple

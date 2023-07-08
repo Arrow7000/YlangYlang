@@ -167,12 +167,10 @@ let addFunctionParams (params_ : T.FunctionOrCaseMatchParams) (names : NamesMaps
                 names.values }
 
 
-///// Gets the expression from a lowercase name, if it contains an assigned expression, and None if it's a param
-//let getExpressionFromLowercaseName (lowerCaseName : LowerCaseName) =
-//    match lowerCaseName with
-//    | Param _ -> None
-//    | LocalName local -> Some local.assignedExpression
-//    | TopLevelName top -> Some top.value.node
+
+
+
+
 
 
 let getInferredTypeFromLowercaseName (lowerCaseName : LowerCaseName) : T.TypeJudgment =

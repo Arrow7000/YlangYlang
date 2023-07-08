@@ -970,9 +970,6 @@ module PreResolution =
                 let letBindings =
                     bindings
                     |> qualifyNelCstNodes (fun binding ->
-                        //let qualifiedExpression =
-                        //    qualifyCstNodeAndLiftResult (qualifyExpression moduleCtx namesMap_) binding.value
-
                         addParamAssignment resolvedNames binding.bindPattern
                         |> Result.map (fun paramsMap ->
                             paramsMap
