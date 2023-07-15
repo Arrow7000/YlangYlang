@@ -33,8 +33,9 @@ let main argv =
         >> Parser.toResult
         >> Result.mapError ParsingError
     )
+    |> tee (printfn "%A")
     |> Result.bind (
-        NameResolution.PreResolution.qualifyModule
+        NameResolution.qualifyModule
         >> Result.mapError CanonicalisationError
     )
     |> printfn "%A"

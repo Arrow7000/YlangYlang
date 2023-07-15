@@ -383,6 +383,30 @@ let addTypeJudgment (judgment : TypeJudgment) (expr : TypedExpr) : TypedExpr =
 
 
 
+
+
+
+type private FlatOpList<'a> =
+    | LastVal of 'a
+    | Op of left : 'a * op : Q.Operator * right : FlatOpList<'a>
+
+
+type OpBinaryTree =
+    { left : S.CstNode<TypedExpr>
+      op : S.CstNode<Q.Operator>
+      right : S.CstNode<TypedExpr> }
+
+
+/// Creates a binary tree of operations, correctly constructed according to associativity and precedence
+//let createOpBinaryTree (firstExpr : S.CstNode<Q.Expression >) (opExprSeq : (S.CstNode<Q.Operator > * S.CstNode<Q.Expression> ) nel ) : OpBinaryTree =
+// associativity: right is like the (::) operator. I.e. we consider everything to the right to be a single expression before appending the left things to it. Otherwise `a :: b :: []` would be parsed as `(a :: b) :: []`, which is wrong.
+// associativity: left is the opposite. i.e. `a (op) b (op) c` is equivalent to `(a (op) b) (op) c`
+
+
+
+
+
+
 let typeOfPrimitiveLiteralValue (primitive : S.PrimitiveLiteralValue) : DefinitiveType =
     match primitive with
     | S.NumberPrimitive num ->
@@ -430,7 +454,6 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
 
                 { inferredType = type_
                   expr =
-
                     DotGetter recFieldName
                     |> ExplicitValue
                     |> SingleValueExpression }
@@ -578,7 +601,6 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
               inferredType = makeConstraintsFromDefinitive defType |> Ok }
 
         | Q.LowerIdentifier (name, resolved) ->
-
             { expr =
                 LowerIdentifier (name, resolved)
                 |> SingleValueExpression
@@ -603,6 +625,125 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
               expr =
                 LetExpression (typedDeclarations, bodyExpr)
                 |> SingleValueExpression }
+
+        | Q.ControlFlowExpression controlFlow ->
+            match controlFlow with
+            | Q.IfExpression (cond, ifTrue, ifFalse) ->
+                // @TODO: need to add a type constraint that this expression should be of boolean type
+                let typedCond = S.mapNode innerTypeCheck cond
+
+                let conditionalWithBoolConstraint =
+                    S.mapNode (addDefinitiveConstraint (DtPrimitiveType Bool)) typedCond
+
+                // This is aiming to express the type constraint that both branches of the if expression should have the same type
+
+                let typedIfTrueBranch = S.mapNode innerTypeCheck ifTrue
+                let typedIfFalseBranch = S.mapNode innerTypeCheck ifFalse
+
+                let expressionType : TypeJudgment =
+                    match typedIfTrueBranch.node.inferredType with
+                    | Ok typedIfTrue -> Ok typedIfTrue
+                    | Error _ -> typedIfFalseBranch.node.inferredType
+
+                // This should leave whichever one had the original definitive type unchanged, and only add a definitive constraint to the other one
+                let unifiedTrue = S.mapNode (addTypeJudgment expressionType) typedIfTrueBranch
+                let unifiedFalse = S.mapNode (addTypeJudgment expressionType) typedIfFalseBranch
+
+
+                { inferredType = expressionType
+                  expr =
+                    IfExpression (conditionalWithBoolConstraint, unifiedTrue, unifiedFalse)
+                    |> ControlFlowExpression
+                    |> SingleValueExpression }
+
+
+            | Q.CaseMatch (exprToMatch, branches) ->
+                let typedExprToMatch = S.mapNode innerTypeCheck exprToMatch
+
+                let typedBranches =
+                    branches
+                    |> NEL.map (fun branch ->
+                        { matchPattern = typeFuncOrCaseMatchParam branch.matchPattern
+                          body = S.mapNode innerTypeCheck branch.body })
+
+
+                let (matchExprType, branchReturnTypeConstraints) =
+                    typedBranches
+                    |> NEL.fold<_, _>
+                        (fun (patternConstraints, branchConstraints) branch ->
+                            unifyJudgments patternConstraints (Ok branch.matchPattern.inferredType),
+                            unifyJudgments branchConstraints branch.body.node.inferredType)
+                        (typedExprToMatch.node.inferredType, Ok emptyConstraint)
+
+                { inferredType = branchReturnTypeConstraints
+                  expr =
+                    CaseMatch (S.mapNode (addTypeJudgment matchExprType) typedExprToMatch, typedBranches)
+                    |> ControlFlowExpression
+                    |> SingleValueExpression }
+
+    | Q.CompoundExpression compExpr ->
+        match compExpr with
+        | Q.FunctionApplication (funcExpr, params_) ->
+            let typedFunc = S.mapNode innerTypeCheck funcExpr
+
+            let typedParams = params_ |> NEL.map (S.mapNode innerTypeCheck)
+
+            let paramRequirementsFromDeFactoParams =
+                typedParams
+                |> NEL.map (fun e -> e.node.inferredType)
+                |> NEL.sequenceResult
+                |> concatResultErrListNel
+
+            let unified =
+                paramRequirementsFromDeFactoParams
+                |> Result.bind (fun paramRequirements ->
+                    let (NEL (firstParam, restParams)) = paramRequirements
+                    let restParamsAndReturnType = NEL.fromListAndLast restParams emptyConstraint
+
+                    let funcTypeRequirement = DtArrow (firstParam, restParamsAndReturnType)
+
+                    unifyJudgments
+                        typedFunc.node.inferredType
+                        (makeConstraintsFromDefinitive funcTypeRequirement
+                         |> Ok))
+
+            { inferredType = unified
+              expr =
+                FunctionApplication (typedFunc, typedParams)
+                |> CompoundExpression }
+
+        | Q.DotAccess (dottedExpr, dotSequence) ->
+            let rec makeNestedMap (fieldSeq : RecordFieldName list) =
+                match fieldSeq with
+                | [] -> emptyConstraint
+                | head :: rest ->
+                    Map.empty
+                    |> Map.add head (makeNestedMap rest)
+                    |> DtRecordWith
+                    |> makeConstraintsFromDefinitive
+
+            let typedExpr = S.mapNode innerTypeCheck dottedExpr
+
+            let exprTypeConstraint =
+                dotSequence.node
+                |> NEL.map lowerIdentToRecFieldName
+                |> NEL.toList
+                |> makeNestedMap
+
+            let fullyTypedExpr = addTypeConstraints exprTypeConstraint typedExpr.node
+
+            { inferredType = fullyTypedExpr.inferredType
+              expr =
+                DotAccess (
+                    typedExpr,
+                    dotSequence
+                    |> S.mapNode (NEL.map lowerIdentToRecFieldName)
+                )
+                |> CompoundExpression }
+
+//| Q.Operator (left, opSequence) ->
+
+
 
 
 
