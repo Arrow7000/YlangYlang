@@ -42,31 +42,46 @@ module NameRes = TypedNameResolution
 *)
 
 
-let private makeNewGeneric () = Guid.NewGuid () |> Set.singleton
 
 
 let lowerIdentToRecFieldName (LowerIdent ident) = RecordFieldName ident
 
 
-let rec mentionableTypeToDefinite (mentionable : Q.MentionableType) : InferredType =
+
+let makeConstraintsFromDefinitive (def : DefinitiveType) : TypeConstraints = TypeConstraints (Some def, Set.empty)
+
+let makeConstraintsFromConstraint (constr : ConstrainType) : TypeConstraints =
+    TypeConstraints (None, Set.singleton constr)
+
+let emptyConstraint : TypeConstraints = TypeConstraints (None, Set.empty)
+
+
+
+
+
+
+
+
+
+
+let rec mentionableTypeToDefinite (mentionable : Q.MentionableType) : TypeConstraints =
     match mentionable with
-    | Q.UnitType -> Definitive DtUnitType
+    | Q.UnitType -> makeConstraintsFromDefinitive DtUnitType
     | Q.GenericTypeVar resolved ->
         ByTypeParam resolved
-        |> Set.singleton
-        |> Constrained
+        |> makeConstraintsFromConstraint
 
     | Q.Tuple { types = types } ->
         types
         |> TOM.map (S.getNode >> mentionableTypeToDefinite)
         |> DtTuple
-        |> Definitive
+        |> makeConstraintsFromDefinitive
 
     | Q.Record { fields = fields } ->
         fields
         |> Map.mapKeyVal (fun key value -> key.node, mentionableTypeToDefinite value.node)
         |> DtRecordExact
-        |> Definitive
+        |> makeConstraintsFromDefinitive
 
     | Q.ExtendedRecord { extendedAlias = alias
                          fields = fields } ->
@@ -74,18 +89,18 @@ let rec mentionableTypeToDefinite (mentionable : Q.MentionableType) : InferredTy
         fields
         |> Map.mapKeyVal (fun key value -> key.node, mentionableTypeToDefinite value.node)
         |> DtRecordWith
-        |> Definitive
+        |> makeConstraintsFromDefinitive
 
     | Q.ReferencedType (typeName, typeParams) ->
         let definiteTypeParams =
             List.map (S.getNode >> mentionableTypeToDefinite) typeParams
 
         DtReferencedType (typeName, definiteTypeParams)
-        |> Definitive
+        |> makeConstraintsFromDefinitive
 
     | Q.Arrow (fromType, toTypes) ->
         DtArrow (mentionableTypeToDefinite fromType.node, NEL.map (S.getNode >> mentionableTypeToDefinite) toTypes)
-        |> Definitive
+        |> makeConstraintsFromDefinitive
 
     | Q.Parensed parensed -> mentionableTypeToDefinite parensed.node
 
@@ -96,23 +111,19 @@ let rec mentionableTypeToDefinite (mentionable : Q.MentionableType) : InferredTy
 
 
 
-type GatheredInferredNames = Map<ResolvedValue, InferredType>
+type GatheredInferredNames = Map<ResolvedValue, TypeConstraints>
 
 
-let rec getInferredTypeFromAssignmentPattern (pattern : Q.AssignmentPattern) : InferredType * GatheredInferredNames =
+let rec getInferredTypeFromAssignmentPattern (pattern : Q.AssignmentPattern) : TypeConstraints * GatheredInferredNames =
     match pattern with
     | Q.Named (resolved, _) ->
-        let inferredType = Constrained (Set.singleton <| ByValue resolved)
+        let inferredType = makeConstraintsFromConstraint <| ByValue resolved
 
         inferredType, Map.empty |> Map.add resolved inferredType
 
-    | Q.Ignored ->
-        let inferredType = Constrained Set.empty
-        inferredType, Map.empty
+    | Q.Ignored -> emptyConstraint, Map.empty
 
-    | Q.Unit ->
-        let inferredType = Definitive DtUnitType
-        inferredType, Map.empty
+    | Q.Unit -> makeConstraintsFromDefinitive DtUnitType, Map.empty
 
     | Q.DestructuredPattern pattern -> getInferredTypeFromDestructuredPattern pattern
 
@@ -123,21 +134,21 @@ let rec getInferredTypeFromAssignmentPattern (pattern : Q.AssignmentPattern) : I
         inferredType, inferredNames |> Map.add resolved inferredType
 
 
-and getInferredTypeFromDestructuredPattern (pattern : Q.DestructuredPattern) : InferredType * GatheredInferredNames =
+and getInferredTypeFromDestructuredPattern (pattern : Q.DestructuredPattern) : TypeConstraints * GatheredInferredNames =
     match pattern with
     | Q.DestructuredRecord fieldNames ->
         let inferredType =
             fieldNames
             |> NEL.map (fun (resolved, ident) ->
-                lowerIdentToRecFieldName ident.node, ByValue resolved |> Set.singleton |> Constrained)
+                lowerIdentToRecFieldName ident.node, ByValue resolved |> makeConstraintsFromConstraint)
             |> NEL.toList
             |> Map.ofList
             |> DtRecordWith
-            |> Definitive
+            |> makeConstraintsFromDefinitive
 
         inferredType,
         fieldNames
-        |> NEL.map (fun (resolved, _) -> resolved, ByValue resolved |> Set.singleton |> Constrained)
+        |> NEL.map (fun (resolved, _) -> resolved, ByValue resolved |> makeConstraintsFromConstraint)
         |> NEL.toList
         |> Map.ofList
 
@@ -162,27 +173,38 @@ let makeTypedExpr (judgment : TypeJudgment) (expr : SingleOrCompoundExpr) : Type
 
 /// @TODO: this needs to be fixed now that `Constrained` types no longer just refer to generically typed params, but also to references to concrete values defined elsewhere!
 /// Not entirely sure yet how to do this without having to pass in names maps to this function, which I don't want to do, because of the circular definition problem (i.e. in a let bindings list all values can reference all others, even ones defined after itself, so we can't type check each value in isolation but have to "convert" them to type checked values all at once, and the only way we can do that is by allowing a type of an expression to be a reference to "whatever the type of value X is")
-let rec unifyInferredTypes (typeA : InferredType) (typeB : InferredType) : TypeJudgment =
+let rec unifyTypeConstraints (typeA : TypeConstraints) (typeB : TypeConstraints) : TypeJudgment =
     match typeA, typeB with
-    | Constrained guidsA, Constrained guidsB -> Set.union guidsA guidsB |> Constrained |> Ok
-    | Definitive a, Constrained _
-    | Constrained _, Definitive a -> Definitive a |> Ok
-    | Definitive a, Definitive b -> unifyInferredDefinitiveTypes a b
+    | TypeConstraints (Some defA, cnstrntsA), TypeConstraints (Some defB, cnstrntsB) ->
+        unifyDefinitiveTypes defA defB
+        |> Result.map (fun unified -> TypeConstraints (Some unified, Set.union cnstrntsA cnstrntsB))
+
+    | TypeConstraints (Some def, cnstrntsA), TypeConstraints (None, cnstrntsB)
+    | TypeConstraints (None, cnstrntsA), TypeConstraints (Some def, cnstrntsB) ->
+        TypeConstraints (Some def, Set.union cnstrntsA cnstrntsB)
+        |> Ok
+
+    | TypeConstraints (None, cnstrntsA), TypeConstraints (None, cnstrntsB) ->
+        TypeConstraints (None, Set.union cnstrntsA cnstrntsB)
+        |> Ok
+
+
 
 
 
 /// @TODO: remember to resolve named types to check for unification, e.g. with named alias type and record
-and unifyInferredDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveType) : TypeJudgment =
+and unifyDefinitiveTypes
+    (typeA : DefinitiveType)
+    (typeB : DefinitiveType)
+    : Result<DefinitiveType, DefinitiveType list> =
     match typeA, typeB with
     | DtTuple a, DtTuple b ->
         unifyTypesTom a b
         |> Result.mapError (fun (first, second) -> [ DtTuple first; DtTuple second ])
         |> Result.bind (TOM.sequenceResult >> concatResultErrListNel)
-        |> Result.map (DtTuple >> Definitive)
+        |> Result.map DtTuple
 
-    | DtList a, DtList b ->
-        unifyInferredTypes a b
-        |> Result.map (DtList >> Definitive)
+    | DtList a, DtList b -> unifyTypeConstraints a b |> Result.map DtList
 
     | DtArrow (fromA, toA), DtArrow (fromB, toB) ->
         let unifiedToTypes =
@@ -192,9 +214,9 @@ and unifyInferredDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveTyp
                   DtArrow (fromB, toB) ])
             |> Result.bind (NEL.sequenceResult >> concatResultErrListNel)
 
-        (unifyInferredTypes fromA fromB, unifiedToTypes)
+        (unifyTypeConstraints fromA fromB, unifiedToTypes)
         ||> Result.map2
-                (fun fromType toTypes_ -> DtArrow (fromType, toTypes_) |> Definitive)
+                (fun fromType toTypes_ -> DtArrow (fromType, toTypes_))
                 (fun _ _ ->
                     [ DtArrow (fromA, toA)
                       DtArrow (fromB, toB) ])
@@ -206,41 +228,56 @@ and unifyInferredDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveTyp
                 [ DtReferencedType (typeRefA, first)
                   DtReferencedType (typeRefB, second) ])
             |> Result.bind (Result.sequenceList >> concatResultErrListNel)
-            |> Result.map (fun unifiedParams ->
-                DtReferencedType (typeRefA, unifiedParams)
-                |> Definitive)
+            |> Result.map (fun unifiedParams -> DtReferencedType (typeRefA, unifiedParams))
 
         else
             Error [ typeA; typeB ]
 
     | DtRecordExact a, DtRecordExact b ->
-        Map.mergeExact (fun _ valueA valueB -> unifyInferredTypes valueA valueB) a b
+        Map.mergeExact (fun _ valueA valueB -> unifyTypeConstraints valueA valueB) a b
         |> Result.mapError (fun _ -> [ DtRecordExact a; DtRecordExact b ])
         |> Result.bind (
             Map.sequenceResult
             >> Result.mapError (Map.values >> List.concat)
         )
-        |> Result.map (DtRecordExact >> Definitive)
+        |> Result.map DtRecordExact
 
     | DtRecordWith a, DtRecordWith b ->
-        Map.mergeExact (fun _ valueA valueB -> unifyInferredTypes valueA valueB) a b
+        Map.mergeExact (fun _ valueA valueB -> unifyTypeConstraints valueA valueB) a b
         |> Result.mapError (fun _ -> [ DtRecordWith a; DtRecordWith b ])
         |> Result.bind (
             Map.sequenceResult
             >> Result.mapError (Map.values >> List.concat)
         )
-        |> Result.map (DtRecordExact >> Definitive)
+        |> Result.map DtRecordExact
 
-    | DtUnitType, DtUnitType -> DtUnitType |> Definitive |> Ok
+    | DtUnitType, DtUnitType -> DtUnitType |> Ok
     | DtPrimitiveType a, DtPrimitiveType b ->
         if a = b then
-            DtPrimitiveType a |> Definitive |> Ok
+            DtPrimitiveType a |> Ok
         else
             Error [ DtPrimitiveType a
                     DtPrimitiveType b ]
 
     | _, _ -> Error [ typeA; typeB ]
 
+
+
+
+and addConstraint (newConstraint : ConstrainType) (TypeConstraints (def, cnstrnts)) : TypeConstraints =
+    TypeConstraints (def, Set.add newConstraint cnstrnts)
+
+
+and addDefinitiveType (newDefinitive : DefinitiveType) (TypeConstraints (def, cnstrnts)) : TypeJudgment =
+    match def with
+    | None ->
+        TypeConstraints (Some newDefinitive, cnstrnts)
+        |> Ok
+    | Some def_ ->
+        let unifiedResult = unifyDefinitiveTypes def_ newDefinitive
+
+        unifiedResult
+        |> Result.map (fun unified -> TypeConstraints (Some unified, cnstrnts))
 
 
 
@@ -253,7 +290,7 @@ and private listTraverser onLengthErr listA listB =
     match listA, listB with
     | [], [] -> Ok []
     | headA :: tailA, headB :: tailB ->
-        let unifiedHead = unifyInferredTypes headA headB
+        let unifiedHead = unifyTypeConstraints headA headB
 
         listTraverser onLengthErr tailA tailB
         |> Result.map (fun unifiedTail -> unifiedHead :: unifiedTail)
@@ -264,51 +301,83 @@ and private listTraverser onLengthErr listA listB =
 
 
 and unifyTypesList
-    (listA : InferredType list)
-    (listB : InferredType list)
-    : Result<TypeJudgment list, InferredType list * InferredType list> =
+    (listA : TypeConstraints list)
+    (listB : TypeConstraints list)
+    : Result<TypeJudgment list, TypeConstraints list * TypeConstraints list> =
     listTraverser (listA, listB) listA listB
 
 and unifyTypesNel
-    (NEL (headA, tailA) as nelA : InferredType nel)
-    (NEL (headB, tailB) as nelB : InferredType nel)
-    : Result<TypeJudgment nel, InferredType nel * InferredType nel> =
+    (NEL (headA, tailA) as nelA : TypeConstraints nel)
+    (NEL (headB, tailB) as nelB : TypeConstraints nel)
+    : Result<TypeJudgment nel, TypeConstraints nel * TypeConstraints nel> =
     listTraverser (nelA, nelB) tailA tailB
     |> Result.map (fun unifiedTail ->
-        let unifiedHead = unifyInferredTypes headA headB
+        let unifiedHead = unifyTypeConstraints headA headB
         NEL (unifiedHead, unifiedTail))
 
 
 
 and unifyTypesTom
-    (TOM (headA, neckA, tailA) as listA : InferredType tom)
-    (TOM (headB, neckB, tailB) as listB : InferredType tom)
-    : Result<TypeJudgment tom, InferredType tom * InferredType tom> =
+    (TOM (headA, neckA, tailA) as listA : TypeConstraints tom)
+    (TOM (headB, neckB, tailB) as listB : TypeConstraints tom)
+    : Result<TypeJudgment tom, TypeConstraints tom * TypeConstraints tom> =
     listTraverser (listA, listB) tailA tailB
     |> Result.map (fun unifiedTail ->
-        let unifiedHead = unifyInferredTypes headA headB
-        let unifiedNeck = unifyInferredTypes neckA neckB
+        let unifiedHead = unifyTypeConstraints headA headB
+        let unifiedNeck = unifyTypeConstraints neckA neckB
         TOM (unifiedHead, unifiedNeck, unifiedTail))
 
 
 
 
-
-and tryUnifyJudgments (judgmentA : TypeJudgment) (judgmentB : TypeJudgment) =
+/// If both judgments are ok it unifies their constraints. Otherwise it adds any concrete types to the errors list, or combines errors.
+///
+/// @TODO: this should really also include the other `ConstrainType`s that can be resolved and evaluate to definitive types in case some of them are also incompatible with the other constraints
+and unifyJudgments (judgmentA : TypeJudgment) (judgmentB : TypeJudgment) =
     match judgmentA, judgmentB with
-    | Ok a, Ok b -> unifyInferredTypes a b
+    | Ok a, Ok b -> unifyTypeConstraints a b
 
-    | Error err, Ok (Definitive t)
-    | Ok (Definitive t), Error err -> Error (t :: err)
+    | Error err, Ok (TypeConstraints (Some t, _))
+    | Ok (TypeConstraints (Some t, _)), Error err -> Error (t :: err)
 
-    | Error e, Ok (Constrained _)
-    | Ok (Constrained _), Error e -> Error e
+    | Error e, Ok (TypeConstraints (None, _))
+    | Ok (TypeConstraints (None, _)), Error e -> Error e
 
-    | Error a, Error b -> Error (List.append a b)
-
-
+    | Error a, Error b -> Error (a @ b)
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+let addDefinitiveConstraint (def : DefinitiveType) (expr : TypedExpr) : TypedExpr =
+    { expr with
+        inferredType =
+            expr.inferredType
+            |> Result.bind (addDefinitiveType def)
+            |> Result.mapError ((@) [ def ]) }
+
+let addTypeConstraints (constr : TypeConstraints) (expr : TypedExpr) : TypedExpr =
+    { expr with
+        inferredType =
+            expr.inferredType
+            |> Result.bind (unifyTypeConstraints constr) }
+
+let addConstrainType (constr : ConstrainType) (expr : TypedExpr) : TypedExpr =
+    addTypeConstraints (makeConstraintsFromConstraint constr) expr
+
+let addTypeJudgment (judgment : TypeJudgment) (expr : TypedExpr) : TypedExpr =
+    { expr with inferredType = unifyJudgments expr.inferredType judgment }
 
 
 
@@ -339,7 +408,7 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
             | Q.Primitive primitive ->
                 let type_ =
                     typeOfPrimitiveLiteralValue primitive
-                    |> Definitive
+                    |> makeConstraintsFromDefinitive
                     |> Ok
 
                 { inferredType = type_

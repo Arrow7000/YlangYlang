@@ -23,20 +23,20 @@ type BuiltInPrimitiveTypes =
 type DefinitiveType =
     | DtUnitType
     | DtPrimitiveType of BuiltInPrimitiveTypes
-    | DtTuple of InferredType tom
-    | DtList of InferredType
-    | DtRecordWith of referencedFields : Map<RecordFieldName, InferredType>
-    | DtRecordExact of Map<RecordFieldName, InferredType>
-    | DtReferencedType of typeName : ResolvedType * typeParams : InferredType list
-    | DtArrow of fromType : InferredType * toTypes : InferredType nel
+    | DtTuple of TypeConstraints tom
+    | DtList of TypeConstraints
+    | DtRecordWith of referencedFields : Map<RecordFieldName, TypeConstraints>
+    | DtRecordExact of Map<RecordFieldName, TypeConstraints>
+    | DtReferencedType of typeName : ResolvedType * typeParams : TypeConstraints list
+    | DtArrow of fromType : TypeConstraints * toTypes : TypeConstraints nel
 
 
 
 
-and InferredType =
-    /// It being one or more captures the fact that multiple parameters or values may need to have the same type, regardless of what the specific type is
-    | Constrained of ConstrainType set
-    | Definitive of DefinitiveType
+//and InferredType =
+//    /// It being one or more captures the fact that multiple parameters or values may need to have the same type, regardless of what the specific type is
+//    | Constrained of ConstrainType set
+//    | Definitive of DefinitiveType
 
 
 
@@ -48,17 +48,24 @@ and ConstrainType =
 
 
 
+/// Contains the definitive constraints that have been inferred so far, plus any other value or type param constraints that have not been evaluated yet.
+/// If a `ConstrainType` turns out to be incompatible with the existing definitive type, this will be transformed into a `TypeJudgment` with the incompatible definitive types listed in the `Error` case.
+and TypeConstraints = | TypeConstraints of definitive : DefinitiveType option * otherConstraints : ConstrainType set
+
+
+
+
 type Param =
     { ident : LowerIdent
       tokens : TokenWithSource list
       destructurePath : PathToDestructuredName
-      inferredType : InferredType }
+      /// Inferred through usage. If the param has a type annotation that will be a separate field.
+      inferredType : TypeConstraints }
 
 
 
-
-/// This describes the strictest type constraint that an expression needs to be, but no stricter!
-type TypeJudgment = Result<InferredType, DefinitiveType list>
+/// @TODO: this should really also contain the other `ConstrainType`s, in case some of them also get evaluated to incompatible definitive types
+type TypeJudgment = Result<TypeConstraints, DefinitiveType list>
 
 
 
@@ -124,7 +131,16 @@ type ResolvedLetBinding =
     { ident : LowerIdent
       tokens : TokenWithSource list
       destructurePath : PathToDestructuredName
-      /// This expression is actually the whole expression after the assignment, not just the bit that was destructured to this named identifier; that will have to be implemented at the type checking phase
+
+      (*
+      @TODO: we need to take into account the assignment pattern here so that we can:
+        a) add the type constraints implied by that pattern, and
+        b) partially evaluate or slice up the expression so that we're assigning the right sub-expressions to the right names
+
+      Although tbh evaluation of the assigned expression might not be straightforward, so maybe it is best to have something here to represent the fact that:
+        a) we've only got one expression we're evaluating per binding (and so not doing the duplicate work of evaluating the expression once for every named value in the assignment pattern), and
+        b) for each named value, what path to take in that expression to get the slice of the expression that should be assigned to it, e.g. a tuple, type destructuring, etc.
+      *)
       assignedExpression : TypedExpr }
 
 
@@ -133,10 +149,10 @@ type ResolvedLetBinding =
 and LetDeclarationNames = Map<ResolvedValue, ResolvedLetBinding>
 
 /// Represents all the named params in a single function parameter or case match expression
-and FunctionOrCaseMatchParams =
+and FunctionOrCaseMatchParam =
     { paramPattern : Q.AssignmentPattern
       namesMap : Map<ResolvedValue, Param>
-      inferredType : InferredType }
+      inferredType : TypeConstraints }
 
 
 
@@ -151,7 +167,7 @@ and CompoundValues =
 
 
 and FunctionValue =
-    { params_ : FunctionOrCaseMatchParams nel
+    { params_ : FunctionOrCaseMatchParam nel
       body : S.CstNode<TypedExpr> }
 
 
@@ -182,13 +198,13 @@ and SingleValueExpression =
 
 
 and CompoundExpression =
-    | Operator of left : S.CstNode<TypedExpr> * opSequence : NEL<S.CstNode<Lexer.Operator> * S.CstNode<TypedExpr>>
+    | Operator of left : S.CstNode<TypedExpr> * op : S.CstNode<Q.Operator> * right : S.CstNode<TypedExpr>
     | FunctionApplication of funcExpr : S.CstNode<TypedExpr> * params' : NEL<S.CstNode<TypedExpr>>
     | DotAccess of expr : S.CstNode<TypedExpr> * dotSequence : S.CstNode<NEL<RecordFieldName>>
 
 
 and CaseMatchBranch =
-    { matchPattern : FunctionOrCaseMatchParams
+    { matchPattern : FunctionOrCaseMatchParam
       body : S.CstNode<TypedExpr> }
 
 

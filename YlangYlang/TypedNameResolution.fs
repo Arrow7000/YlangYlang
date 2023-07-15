@@ -158,7 +158,7 @@ let addResolvedTypeParams (typeParams : Q.ResolvedTypeParams) (names : NamesMaps
     { names with typeParams = Map.merge typeParams names.typeParams }
 
 
-let addFunctionParams (params_ : T.FunctionOrCaseMatchParams) (names : NamesMaps) =
+let addFunctionParams (params_ : T.FunctionOrCaseMatchParam) (names : NamesMaps) =
     { names with
         values =
             Map.merge

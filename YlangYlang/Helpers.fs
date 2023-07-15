@@ -41,6 +41,9 @@ type NonEmptyList<'a> =
     static member head (NEL (head', _)) = head'
     static member tail (NEL (_, tail')) = tail'
 
+    static member split (NEL (head', tail')) = head', tail'
+
+
     static member map<'a, 'b> (f : 'a -> 'b) (NEL (first, rest) : 'a nel) = NEL (f first, List.map f rest)
 
     static member mapi<'a, 'b> (f : int -> 'a -> 'b) (NEL (first, rest) : 'a nel) =
@@ -50,6 +53,11 @@ type NonEmptyList<'a> =
         match l with
         | [] -> None
         | head :: rest -> Some <| NEL.new_ head rest
+
+    static member fromListAndLast (list : 'a list) (last : 'a) =
+        match list with
+        | [] -> NEL.make last
+        | head :: rest -> NEL.new_ head (rest @ [ last ])
 
     static member toList (NEL (head, tail) : 'a nel) = head :: tail
 
