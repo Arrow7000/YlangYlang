@@ -423,9 +423,9 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
 
                 let type_ =
                     Map.empty
-                    |> Map.add recFieldName (Constrained Set.empty)
+                    |> Map.add recFieldName emptyConstraint
                     |> DtRecordWith
-                    |> Definitive
+                    |> makeConstraintsFromDefinitive
                     |> Ok
 
                 { inferredType = type_
@@ -446,8 +446,8 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                         |> List.fold
                             (fun state expr ->
                                 (state, expr.inferredType)
-                                ||> Result.bind2 unifyInferredTypes (@))
-                            (Constrained Set.empty |> Ok)
+                                ||> Result.bind2 unifyTypeConstraints (@))
+                            (Ok emptyConstraint)
 
                     { inferredType = combinedType
                       expr =
@@ -465,7 +465,7 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                         |> TOM.map (fun expr -> expr.node.inferredType)
                         |> TOM.sequenceResult
                         |> concatResultErrListNel
-                        |> Result.map (DtTuple >> Definitive)
+                        |> Result.map (DtTuple >> makeConstraintsFromDefinitive)
 
                     { inferredType = combinedType
                       expr =
@@ -488,7 +488,7 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                         |> Result.sequenceList
                         |> Result.map Map.ofList
                         |> concatResultErrListNel
-                        |> Result.map (DtRecordExact >> Definitive)
+                        |> Result.map (DtRecordExact >> makeConstraintsFromDefinitive)
 
                     { inferredType = combinedType
                       expr =
@@ -504,7 +504,7 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                         additions
                         |> NEL.map (fun (key, value) -> key, S.mapNode innerTypeCheck value)
 
-                    let typeOfEditedRecord = ByValue extended |> Set.singleton |> Constrained
+                    let typeOfEditedRecord = ByValue extended |> makeConstraintsFromConstraint
 
                     let derivedFromFieldsType : TypeJudgment =
                         typedList
@@ -514,10 +514,10 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                         |> NEL.sequenceResult
                         |> Result.map (NEL.toList >> Map.ofList)
                         |> concatResultErrListNel
-                        |> Result.map (DtRecordWith >> Definitive)
+                        |> Result.map (DtRecordWith >> makeConstraintsFromDefinitive)
 
                     let combinedType : TypeJudgment =
-                        Result.bind (unifyInferredTypes typeOfEditedRecord) derivedFromFieldsType
+                        Result.bind (unifyTypeConstraints typeOfEditedRecord) derivedFromFieldsType
 
                     { inferredType = combinedType
                       expr =
@@ -530,24 +530,9 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                 // @TODO: we need to actually add the params to namesMaps before we can type check the expression
                 let typeOfBody = typeCheckExpression namesMaps funcVal.body.node
 
-                let funcParams : FunctionOrCaseMatchParams nel =
+                let funcParams : FunctionOrCaseMatchParam nel =
                     funcVal.params_
-                    |> NEL.map (fun param_ ->
-                        let (typeOfPattern, gatheredNames) =
-                            getInferredTypeFromAssignmentPattern param_.paramPattern
-
-                        { paramPattern = param_.paramPattern
-                          inferredType = typeOfPattern
-                          namesMap =
-                            param_.namesMap
-                            |> Map.map (fun key qualifiedParam ->
-                                let inferredType = Map.find key gatheredNames
-
-                                { ident = qualifiedParam.ident
-                                  tokens = qualifiedParam.tokens
-                                  destructurePath = qualifiedParam.destructurePath
-                                  inferredType = inferredType }) })
-
+                    |> NEL.map typeFuncOrCaseMatchParam
 
                 let (NEL (firstParamType, restParamTypes)) =
                     funcParams
@@ -560,7 +545,8 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                             NEL.new_ typeOfBody_ (List.rev restParamTypes)
                             |> NEL.reverse<_>
 
-                        DtArrow (firstParamType, toTypes) |> Definitive)
+                        DtArrow (firstParamType, toTypes)
+                        |> makeConstraintsFromDefinitive)
 
 
                 let funcVal : FunctionValue =
@@ -583,13 +569,13 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                 DtReferencedType (
                     resolvedType,
                     typeParams
-                    |> List.map (ByTypeParam >> Set.singleton >> Constrained)
+                    |> List.map (ByTypeParam >> makeConstraintsFromConstraint)
                 )
 
             { expr =
                 UpperIdentifier (name, resolved)
                 |> SingleValueExpression
-              inferredType = Definitive defType |> Ok }
+              inferredType = makeConstraintsFromDefinitive defType |> Ok }
 
         | Q.LowerIdentifier (name, resolved) ->
 
@@ -598,8 +584,7 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                 |> SingleValueExpression
               inferredType =
                 ByValue resolved
-                |> Set.singleton
-                |> Constrained
+                |> makeConstraintsFromConstraint
                 |> Ok }
 
         | Q.LetExpression (declarations, expr) ->
@@ -609,6 +594,7 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                     { ident = binding.ident
                       tokens = binding.tokens
                       destructurePath = binding.destructurePath
+                      // @TODO: actually we need to add another type constraint to the inferred type of the assigned expression, and
                       assignedExpression = innerTypeCheck binding.assignedExpression })
 
             let bodyExpr = innerTypeCheck expr
@@ -624,6 +610,21 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
 
 
 
+and typeFuncOrCaseMatchParam (param_ : Q.FunctionOrCaseMatchParam) : FunctionOrCaseMatchParam =
+    let (typeOfPattern, gatheredNames) =
+        getInferredTypeFromAssignmentPattern param_.paramPattern
+
+    { paramPattern = param_.paramPattern
+      inferredType = typeOfPattern
+      namesMap =
+        param_.namesMap
+        |> Map.map (fun key qualifiedParam ->
+            let inferredType = Map.find key gatheredNames
+
+            { ident = qualifiedParam.ident
+              tokens = qualifiedParam.tokens
+              destructurePath = qualifiedParam.destructurePath
+              inferredType = inferredType }) }
 
 
 
