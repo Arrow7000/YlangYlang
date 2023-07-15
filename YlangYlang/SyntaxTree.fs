@@ -115,12 +115,28 @@ type InfixOpAssociativity =
     | Right
     | Non
 
-type InfixOpDeclaration<'Lower> =
-    { name : Lexer.Operator
+type BuiltInOperator =
+    | EqualityOp
+    | InequalityOp
+    | AppendOp
+    | PlusOp
+    | MinusOp
+    | MultOp
+    | DivOp
+    | ExpOp
+    | AndOp
+    | OrOp
+    | ForwardComposeOp
+    | BackwardComposeOp
+    | ForwardPipeOp
+    | BackwardPipeOp
+    | ConsOp
+
+
+type InfixOpBuiltIn =
+    { name : BuiltInOperator
       associativity : InfixOpAssociativity
-      precedence : int
-      /// The value should be a function taking exactly two parameters
-      value : 'Lower }
+      precedence : int }
 
 
 
@@ -206,6 +222,20 @@ and Expression<'Upper, 'Lower when 'Lower : comparison> =
     | ParensedExpression of Expression<'Upper, 'Lower> // doesn't make much difference for the syntax tree, but useful for debugging
 
 
+type InfixOpDeclaration<'Upper, 'Lower when 'Lower : comparison> =
+
+    { /// Need to ensure we don't try to overwrite built-in operators in a new declaration here
+      name : Lexer.Operator
+      associativity : InfixOpAssociativity
+      precedence : int
+      /// The value should be a function taking exactly two parameters
+      value : CstNode<Expression<'Upper, 'Lower>> }
+
+
+type InfixOp<'Upper, 'Lower when 'Lower : comparison> =
+    | BuiltIn of InfixOpBuiltIn
+    | UserDefined of InfixOpDeclaration<'Upper, 'Lower>
+
 
 type ValueDeclaration<'Upper, 'Lower when 'Lower : comparison> =
     { valueName : CstNode<Lexer.UnqualValueIdentifier>
@@ -265,6 +295,7 @@ type Declaration<'Upper, 'Lower when 'Lower : comparison> =
     | TypeDeclaration of name : CstNode<Lexer.UnqualTypeOrModuleIdentifier> * declaration : TypeDeclaration<'Upper>
     | ValueTypeAnnotation of ValueAnnotation<'Upper>
     | ValueDeclaration of ValueDeclaration<'Upper, 'Lower>
+    | InfixOperatorDeclaration of InfixOpDeclaration<'Upper, 'Lower>
 
 
 // Representing a whole file/module

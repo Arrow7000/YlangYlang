@@ -218,21 +218,15 @@ type TypeDeclaration =
 
 (* Values *)
 
-type InfixOpAssociativity =
-    | Left
-    | Right
-    | Non
-
-type InfixOpDeclaration =
-    { name : Lexer.Operator
-      associativity : InfixOpAssociativity
-      precedence : int
-      /// The value should be a function taking exactly two parameters
-      value : ResolvedValue }
 
 
 
 
+
+
+type Operator =
+    | BuiltInOp of Lexer.BuiltInOperator
+    | OtherOp of resolved : ResolvedValue * ident : LowerIdent
 
 /// Note that each let binding could still create multiple named values through assignment patterns, so this is only the result of a single name, not a full binding
 ///
@@ -250,7 +244,7 @@ type ResolvedLetBinding =
 and LetDeclarationNames = Map<ResolvedValue, ResolvedLetBinding>
 
 /// Represents all the named params in a single function parameter or case match expression
-and FunctionOrCaseMatchParamMap =
+and FunctionOrCaseMatchParam =
     { paramPattern : AssignmentPattern
       namesMap : Map<ResolvedValue, Param> }
 
@@ -267,7 +261,7 @@ and CompoundValues =
 
 
 and FunctionValue =
-    { params_ : FunctionOrCaseMatchParamMap nel
+    { params_ : FunctionOrCaseMatchParam nel
       body : S.CstNode<Expression> }
 
 
@@ -301,13 +295,13 @@ and SingleValueExpression =
 
 
 and CompoundExpression =
-    | Operator of left : S.CstNode<Expression> * opSequence : NEL<S.CstNode<Lexer.Operator> * S.CstNode<Expression>>
+    | Operator of left : S.CstNode<Expression> * opSequence : NEL<S.CstNode<Operator> * S.CstNode<Expression>>
     | FunctionApplication of funcExpr : S.CstNode<Expression> * params' : NEL<S.CstNode<Expression>>
     | DotAccess of expr : S.CstNode<Expression> * dotSequence : S.CstNode<NEL<LowerIdent>>
 
 
 and CaseMatchBranch =
-    { matchPattern : FunctionOrCaseMatchParamMap
+    { matchPattern : FunctionOrCaseMatchParam
       body : S.CstNode<Expression> }
 
 
@@ -319,6 +313,12 @@ and Expression =
 
 
 
+type InfixOpDeclaration =
+    { name : LowerIdent
+      associativity : S.InfixOpAssociativity
+      precedence : int
+      /// The value should be a function taking exactly two parameters
+      value : S.CstNode<Expression> }
 
 
 type ValueDeclaration =
@@ -335,6 +335,10 @@ type ValueAnnotation =
 
 
 
+type InfixOp =
+    | BuiltIn of S.InfixOpBuiltIn
+    | UserDefined of declaration : InfixOpDeclaration * resolved : ResolvedValue
+
 
 
 
@@ -344,6 +348,7 @@ type Declaration =
     | TypeDeclaration of resolved : ResolvedType * name : S.CstNode<UpperIdent> * declaration : TypeDeclaration
     | ValueTypeAnnotation of resolved : ResolvedValue * ValueAnnotation
     | ValueDeclaration of resolved : ResolvedValue * ValueDeclaration
+    | InfixOperatorDeclaration of resolved : ResolvedValue * InfixOpDeclaration
 
 
 // Representing a whole file/module
@@ -352,7 +357,8 @@ type YlModule =
       imports : S.ImportDeclaration list
       types : Map<ResolvedType, UpperIdent * TypeDeclaration>
       valueTypes : Map<ResolvedValue, LowerIdent * ValueAnnotation>
-      values : Map<ResolvedValue, LowerIdent * ValueDeclaration> }
+      values : Map<ResolvedValue, LowerIdent * ValueDeclaration>
+      operators : Map<ResolvedValue, InfixOpDeclaration> }
 
 
 

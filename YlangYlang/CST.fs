@@ -120,7 +120,7 @@ type TypeDeclaration = S.TypeDeclaration<TypeOrModuleIdentifier>
 //    | Right
 //    | Non
 
-type InfixOpDeclaration = S.InfixOpDeclaration<ValueIdentifier>
+type InfixOpDeclaration = S.InfixOpDeclaration<TypeOrModuleIdentifier, ValueIdentifier>
 //{ name : Lexer.Operator
 //  associativity : InfixOpAssociativity
 //  precedence : int
@@ -213,6 +213,9 @@ type ValueAnnotation = S.ValueAnnotation<TypeOrModuleIdentifier>
 //{ valueName : CstNode<UnqualValueIdentifier>
 //  annotatedType : CstNode<MentionableType> }
 
+
+
+type InfixOp = S.InfixOp<TypeOrModuleIdentifier, ValueIdentifier>
 
 (* The module as a whole *)
 

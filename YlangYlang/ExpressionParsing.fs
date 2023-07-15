@@ -226,18 +226,18 @@ let private parseChoosePrimitiveLiteral chooser =
 let inline negate (n : ^a) = n * -LanguagePrimitives.GenericOne
 
 let parseUnaryNegationOpInt : ExpressionParser<uint -> int> =
-    let token = Token.Operator Operator.MinusOp
+    let token = Token.Operator (Lexer.BuiltInOp Lexer.BuiltInOperator.MinusOp)
 
     parseExpectedToken (ExpectedToken token) (function
-        | Token.Operator Operator.MinusOp -> Some (int >> negate)
+        | Token.Operator (Lexer.BuiltInOp Lexer.BuiltInOperator.MinusOp) -> Some (int >> negate)
         | _ -> None)
 
 
 let parseUnaryNegationOpFloat : ExpressionParser<float -> float> =
-    let token = Token.Operator Operator.MinusOp
+    let token = Token.Operator (Lexer.BuiltInOp Lexer.BuiltInOperator.MinusOp)
 
     parseExpectedToken (ExpectedToken token) (function
-        | Token.Operator Operator.MinusOp -> Some negate
+        | Token.Operator (Lexer.BuiltInOp Lexer.BuiltInOperator.MinusOp) -> Some negate
         | _ -> None)
 
 
@@ -307,6 +307,8 @@ let parseOperator =
         | Token.Operator op -> Some op
         | _ -> None)
     |> addCtxToStack ParsingCtx.Operator
+
+
 
 let parseUpperIdentifier : ExpressionParser<CstNode<SingleValueExpression>> =
     parseExpectedToken (ExpectedString "identifier") (function
@@ -480,7 +482,10 @@ and parseConsDestructuredParam =
     |= oneOrMore (
         succeed id
         |. spaces
-        |. symbol (Lexer.Operator Operator.ConsOp)
+        |. symbol (
+            Lexer.BuiltInOp Lexer.BuiltInOperator.ConsOp
+            |> Lexer.Operator
+        )
         |. spaces
         |= parseItem
     )
@@ -592,7 +597,7 @@ let rec private combineEndParser expr opAndFuncParam : Expression =
 
 
 
-let infixOpDeclarationParser =
+let rec infixOpDeclarationParser =
     let associativityParser =
         parseExpectedToken (ExpectedString "associativity signifier") (function
             | Token.Identifier (SingleValueIdentifier (UnqualValueIdentifier str)) ->
@@ -621,11 +626,11 @@ let infixOpDeclarationParser =
     |. spaces
     |. symbol AssignmentEquals
     |. spaces
-    |= (map getNode parseIdentifier)
+    |= lazyParser (fun _ -> addCstNode parseExpression)
 
 
 
-let rec parseLambda =
+and parseLambda =
     succeed (fun params_ body -> { params_ = params_; body = body })
     |. symbol Backslash
     |. commit
@@ -634,7 +639,7 @@ let rec parseLambda =
     |. spaces
     |. symbol Token.Arrow
     |. spaces
-    |= lazyParser (fun _ -> parseExpression |> addCstNode)
+    |= lazyParser (fun _ -> addCstNode parseExpression)
     |> addCtxToStack PCtx.Lambda
 
 

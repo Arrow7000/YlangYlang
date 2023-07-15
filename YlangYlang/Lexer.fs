@@ -87,9 +87,7 @@ type Identifier =
 
 
 
-
-
-type Operator =
+type BuiltInOperator =
     | EqualityOp
     | InequalityOp
     | AppendOp
@@ -105,7 +103,11 @@ type Operator =
     | ForwardPipeOp
     | BackwardPipeOp
     | ConsOp
+
+type Operator =
+    | BuiltInOp of BuiltInOperator
     | OtherOp of UnqualValueIdentifier
+
 
 type Token =
     | Whitespace of WhitespaceChar
@@ -456,15 +458,15 @@ module Matchers =
     let bracesClose = singleCharMatcher "\}" BracesClose
     let comma = singleCharMatcher "\," Comma
 
-    let equality = simpleMatch (Operator EqualityOp) "\=\="
+    let equality = simpleMatch (BuiltInOp EqualityOp |> Operator) "\=\="
 
-    let inequality = simpleMatch (Operator InequalityOp) "\/\="
+    let inequality = simpleMatch (BuiltInOp InequalityOp |> Operator) "\/\="
 
     let assignment = singleCharMatcher "\=" AssignmentEquals
 
     let append cursor =
         function
-        | MultiCharRegex "\+\+" str -> makeTokenWithCtx cursor (Operator AppendOp) str
+        | MultiCharRegex "\+\+" str -> makeTokenWithCtx cursor (BuiltInOp AppendOp |> Operator) str
         | _ -> NoMatch
 
     let typeKeyword = simpleMatch TypeKeyword "type\\b"
@@ -486,19 +488,19 @@ module Matchers =
     let elseKeyword = simpleMatch ElseKeyword "else\\b"
     let infixKeyword = simpleMatch InfixKeyword "infix\\b"
 
-    let forwardComposeOp = simpleMatch (Operator ForwardComposeOp) "\>\>"
-    let backwardComposeOp = simpleMatch (Operator BackwardComposeOp) "\<\<"
-    let forwardPipeOp = simpleMatch (Operator ForwardPipeOp) "\|\>"
-    let backwardPipeOp = simpleMatch (Operator BackwardPipeOp) "\<\|"
-    let consOp = simpleMatch (Operator ConsOp) "::"
-    let andOp = simpleMatch (Operator AndOp) "&&"
-    let orOp = simpleMatch (Operator OrOp) "\|\|"
+    let forwardComposeOp = simpleMatch (BuiltInOp ForwardComposeOp |> Operator) "\>\>"
+    let backwardComposeOp = simpleMatch (BuiltInOp BackwardComposeOp |> Operator) "\<\<"
+    let forwardPipeOp = simpleMatch (BuiltInOp ForwardPipeOp |> Operator) "\|\>"
+    let backwardPipeOp = simpleMatch (BuiltInOp BackwardPipeOp |> Operator) "\<\|"
+    let consOp = simpleMatch (BuiltInOp ConsOp |> Operator) "::"
+    let andOp = simpleMatch (BuiltInOp AndOp |> Operator) "&&"
+    let orOp = simpleMatch (BuiltInOp OrOp |> Operator) "\|\|"
 
-    let plus = singleCharMatcher "\+" (Operator PlusOp)
-    let minus = singleCharMatcher "\\-" (Operator MinusOp)
-    let mult = singleCharMatcher "\\*" (Operator MultOp)
-    let div = singleCharMatcher "\/" (Operator DivOp)
-    let exp = singleCharMatcher "\^" (Operator ExpOp)
+    let plus = singleCharMatcher "\+" (BuiltInOp PlusOp |> Operator)
+    let minus = singleCharMatcher "\\-" (BuiltInOp MinusOp |> Operator)
+    let mult = singleCharMatcher "\\*" (BuiltInOp MultOp |> Operator)
+    let div = singleCharMatcher "\/" (BuiltInOp DivOp |> Operator)
+    let exp = singleCharMatcher "\^" (BuiltInOp ExpOp |> Operator)
     let pipe = singleCharMatcher "\|" PipeChar
     let colon = singleCharMatcher "\:" Colon
     let backslash = simpleMatch Backslash "\\\\"

@@ -613,7 +613,7 @@ and sod<'a> = SingleOrDuplicate<'a>
 
 
 module Tuple =
-    let makePairWithFst a b = a, b
+    let makePair a b = a, b
     let makePairWithSnd b a = a, b
     let mapFst f (a, b) = f a, b
     let mapSnd f (a, b) = a, f b
