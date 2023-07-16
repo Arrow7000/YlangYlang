@@ -5,17 +5,18 @@
 open QualifiedSyntaxTree.Names
 
 module S = SyntaxTree
+module C = ConcreteSyntaxTree
 module Q = QualifiedSyntaxTree
 
 
 
 type DestructuredPattern =
     /// Destructured records need to have one destructured member
-    | DestructuredRecord of LowerIdent nel
+    | DestructuredRecord of RecordFieldName nel
     /// Destructured tuples need to have at least two members
     | DestructuredTuple of AssignmentPattern tom
     | DestructuredCons of AssignmentPattern tom
-    | DestructuredTypeVariant of constructor : UpperIdent * params' : AssignmentPattern list
+    | DestructuredTypeVariant of constructor : UpperNameValue * params' : AssignmentPattern list
 
 /// Named - or ignored - variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
 and AssignmentPattern =
@@ -48,7 +49,7 @@ type DefinitiveType =
     | DtList of TypeConstraints
     | DtRecordWith of referencedFields : Map<RecordFieldName, TypeConstraints>
     | DtRecordExact of Map<RecordFieldName, TypeConstraints>
-    | DtReferencedType of typeName : UpperIdent * typeParams : TypeConstraints list
+    | DtReferencedType of typeName : UpperNameValue * typeParams : TypeConstraints list
     | DtArrow of fromType : TypeConstraints * toTypes : TypeConstraints nel
 
 
@@ -63,11 +64,11 @@ type DefinitiveType =
 
 and ConstrainType =
     /// I.e. must be the same type as this value
-    | ByValue of LowerIdent
+    | ByValue of LowerNameValue
     /// I.e. must be the same type as this type param
-    | ByTypeParam of LowerIdent
+    | ByTypeParam of LowerNameValue
     /// I.e. must be the type that this constructor is a variant of
-    | ByConstructorType of UpperIdent
+    | ByConstructorType of UpperNameValue
 
 
 
@@ -106,11 +107,11 @@ type TypeJudgment = Result<TypeConstraints, DefinitiveType list>
 
 type MentionableType =
     | UnitType
-    | GenericTypeVar of LowerIdent
+    | GenericTypeVar of LowerNameValue
     | Tuple of TupleType
     | Record of RecordType
     | ExtendedRecord of ExtendedRecordType
-    | ReferencedType of typeName : UpperIdent * typeParams : MentionableType list
+    | ReferencedType of typeName : UpperNameValue * typeParams : MentionableType list
     | Arrow of fromType : MentionableType * toType : NEL<MentionableType>
     | Parensed of MentionableType
 
@@ -152,16 +153,17 @@ type TypeDeclarationContent =
 
 (* Dictionaries of declared names *)
 
-type TypeDeclarations = Map<UpperIdent, TypeDeclaration>
+type TypeDeclarations = Map<UpperIdent, SOD<TypeDeclaration>>
 
-and TypeConstructors = Map<UpperIdent, VariantConstructor>
+and TypeConstructors = Map<UpperIdent, SOD<VariantConstructor>>
 
-and ValueDeclarations = Map<LowerIdent, LowerCaseName>
+and ValueDeclarations = Map<LowerIdent, SOD<LowerCaseName>>
 
-and ValueTypeDeclarations = Map<LowerIdent, ValueAnnotation>
+and ValueTypeDeclarations = Map<LowerIdent, SOD<ValueAnnotation>>
 
-and TypeParams = Map<LowerIdent, unit>
+and TypeParams = Map<LowerIdent, SOD<unit>>
 
+and InfixOps = Map<LowerIdent, SOD<C.InfixOp>>
 
 
 
@@ -171,7 +173,8 @@ and VariantConstructor =
     { typeParamsList : LowerIdent list // So as to not lose track of the order of the type params
       typeParamsMap : TypeParams
       variantCase : VariantCase
-      allVariants : NEL<VariantCase> }
+      allVariants : NEL<VariantCase>
+      typeName : UpperIdent }
 
 
 
@@ -216,12 +219,12 @@ and LetBinding =
 
 
 
-and LetDeclarationNames = Map<LowerIdent, LetBinding>
+and LetDeclarationNames = Map<LowerIdent, SOD<LetBinding>>
 
 /// Represents all the named params in a single function parameter or case match expression
 and FunctionOrCaseMatchParam =
     { paramPattern : AssignmentPattern
-      namesMap : Map<LowerIdent, Param>
+      namesMap : Map<LowerIdent, SOD<Param>>
       inferredType : TypeConstraints }
 
 
@@ -284,6 +287,7 @@ and SingleOrCompoundExpr =
 /// A typed expression
 and TypedExpr =
     { inferredType : TypeJudgment
+      //freeVariables :
       expr : SingleOrCompoundExpr }
 
 
@@ -301,8 +305,7 @@ and Operator =
 
 
 and ValueAnnotation =
-    { valueName : LowerIdent
-      /// these aren't in the source code, but they're gathered from the type expression implicitly
+    { /// these aren't in the source code, but they're gathered from the type expression implicitly
       gatheredImplicitParams : TypeParams
       annotatedType : MentionableType }
 
@@ -325,4 +328,5 @@ and YlModule =
       imports : S.ImportDeclaration list
       types : TypeDeclarations
       valueTypes : ValueTypeDeclarations
-      values : Map<LowerIdent, TypedExpr> }
+      values : Map<LowerIdent, SOD<TypedExpr>>
+      infixOperators : Map<LowerIdent, SOD<C.InfixOpDeclaration>> }

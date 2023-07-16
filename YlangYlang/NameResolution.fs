@@ -45,6 +45,23 @@ let addNewRefWithTokens (ident : S.CstNode<'name>) (value : 'v) =
 
 
 
+let makeSodMapFromList (list : ('a * 'b) list when 'a : comparison) =
+    let listFolder (acc : Map<'a, SingleOrDuplicate<'b>>) ((key, value) : 'a * 'b) : Map<'a, SingleOrDuplicate<'b>> =
+        Map.change
+            key
+            (fun oldValueOpt ->
+                match oldValueOpt with
+                | Some oldVal ->
+                    match oldVal with
+                    | Single oldRef -> Some (Duplicate <| TOM.make value oldRef)
+                    | Duplicate duplRefs -> Some (Duplicate <| TOM.cons value duplRefs)
+                | None -> Some <| SOD.new_ value)
+            acc
+
+    list |> List.fold listFolder Map.empty
+
+
+
 
 let combineTwoReferenceMaps map1 map2 =
     let mapFolder
@@ -388,7 +405,7 @@ let private moduleNameToModulePath (QualifiedModuleOrTypeIdentifier moduleIdent)
 let private getModulePath (moduleCtx : C.YlModule) : ModulePath =
     moduleNameToModulePath moduleCtx.moduleDecl.moduleName.node
 
-let private convertTypeOrModuleIdentifierToFullyQualified
+let convertTypeOrModuleIdentifierToFullyQualified
     (moduleName : QualifiedModuleOrTypeIdentifier)
     : TypeOrModuleIdentifier -> FullyQualifiedUpperIdent =
     function

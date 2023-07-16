@@ -587,6 +587,8 @@ type SingleOrDuplicate<'a> =
     | Single of 'a
     | Duplicate of TwoOrMore<'a>
 
+    static member new_ (a : 'a) = Single a
+
     static member map (f : 'a -> 'b) sod =
         match sod with
         | Single a -> Single (f a)
@@ -602,6 +604,11 @@ type SingleOrDuplicate<'a> =
         match sod with
         | Single a -> Duplicate (TOM.new_ newHead a List.empty)
         | Duplicate tom -> TOM.cons newHead tom |> Duplicate
+
+    static member toList (sod : SingleOrDuplicate<'a>) =
+        match sod with
+        | Single a -> List.singleton a
+        | Duplicate tom -> TOM.toList tom
 
 
 /// Alias for SingleOrDuplicate

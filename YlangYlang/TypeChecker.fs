@@ -9,6 +9,7 @@ open System
 module Cst = ConcreteSyntaxTree
 module S = SyntaxTree
 module Q = QualifiedSyntaxTree
+module T = TypedSyntaxTree
 
 open Q.Names
 open TypedSyntaxTree
@@ -44,10 +45,6 @@ module NameRes = TypedNameResolution
 
 
 
-let lowerIdentToRecFieldName (LowerIdent ident) = RecordFieldName ident
-
-
-
 let makeConstraintsFromDefinitive (def : DefinitiveType) : TypeConstraints = TypeConstraints (Some def, Set.empty)
 
 let makeConstraintsFromConstraint (constr : ConstrainType) : TypeConstraints =
@@ -64,45 +61,140 @@ let emptyConstraint : TypeConstraints = TypeConstraints (None, Set.empty)
 
 
 
-let rec mentionableTypeToDefinite (mentionable : Q.MentionableType) : TypeConstraints =
+let reifyModuleName (QualifiedModuleOrTypeIdentifier moduleName) : ModulePath =
+    moduleName
+    |> NEL.map (fun (UnqualTypeOrModuleIdentifier segment) -> segment)
+    |> ModulePath
+
+let reifyUpper
+    (moduleName : QualifiedModuleOrTypeIdentifier)
+    (UnqualTypeOrModuleIdentifier topLevelIdent)
+    : FullyQualifiedUpperIdent =
+    FullyQualifiedUpperIdent (reifyModuleName moduleName, UpperIdent topLevelIdent)
+
+let reifyLower
+    (moduleName : QualifiedModuleOrTypeIdentifier)
+    (UnqualValueIdentifier topLevelIdent)
+    : FullyQualifiedTopLevelLowerIdent =
+    FullyQualifiedTopLevelLowerIdent (reifyModuleName moduleName, LowerIdent topLevelIdent)
+
+
+
+let unqualValToRecField (UnqualValueIdentifier str) = RecordFieldName str
+let unqualValToLowerIdent (UnqualValueIdentifier str) = LowerIdent str
+
+let unqualValToLowerName (UnqualValueIdentifier str) = LowerIdent str |> LocalLower
+
+let recFieldToLowerIdent (RecordFieldName str) = LowerIdent str
+let lowerIdentToUnqualVal (LowerIdent str) = UnqualValueIdentifier str
+
+//let unqualTypeToUpperIdent (label : S.CstNode<UnqualTypeOrModuleIdentifier>) : S.CstNode<UpperIdent> =
+let unqualTypeToUpperIdent (UnqualTypeOrModuleIdentifier label) = UpperIdent label
+//let getLabel (UnqualTypeOrModuleIdentifier str) = str
+//S.mapNode (getLabel >> UpperIdent) label
+
+
+let convertRecordMapFields map =
+    Map.mapKeyVal (fun key v -> S.mapNode unqualValToRecField key, v) map
+
+
+let lowerIdentToRecFieldName (LowerIdent ident) = RecordFieldName ident
+
+let private convertTypeOrModuleIdentifierToIdentifier : TypeOrModuleIdentifier -> Identifier =
+    function
+    | QualifiedType ident -> ModuleSegmentsOrQualifiedTypeOrVariant ident
+    | UnqualType ident -> TypeNameOrVariantOrTopLevelModule ident
+
+
+let private convertValueIdentifierToIdentifier : ValueIdentifier -> Identifier =
+    function
+    | QualifiedValue ident -> QualifiedPathValueIdentifier ident
+    | UnqualValue ident -> SingleValueIdentifier ident
+
+
+
+let private convertValueIdentifierToLowerName : ValueIdentifier -> LowerNameValue =
+    function
+    | QualifiedValue (QualifiedValueIdentifier (path, valIdent)) ->
+        reifyLower (QualifiedModuleOrTypeIdentifier path) valIdent
+        |> FullyQualifiedLower
+    | UnqualValue ident -> unqualValToLowerIdent ident |> LocalLower
+
+
+let private moduleNameToModulePath (QualifiedModuleOrTypeIdentifier moduleIdent) : ModulePath =
+    moduleIdent
+    |> NEL.map (fun (UnqualTypeOrModuleIdentifier segment) -> segment)
+    |> ModulePath
+
+
+let private getModulePath (moduleCtx : Cst.YlModule) : ModulePath =
+    moduleNameToModulePath moduleCtx.moduleDecl.moduleName.node
+
+
+
+
+let typeOrModuleIdentToUpperNameVal : Lexer.TypeOrModuleIdentifier -> UpperNameValue =
+    function
+    | Lexer.QualifiedType (QualifiedModuleOrTypeIdentifier path) ->
+        let (moduleSegments, UnqualTypeOrModuleIdentifier ident) = NEL.peelOffLast path
+
+        let modulePath =
+            moduleSegments
+            |> NEL.map (fun (UnqualTypeOrModuleIdentifier segment) -> segment)
+
+        FullyQualifiedUpperIdent (ModulePath modulePath, UpperIdent ident)
+        |> FullyQualifiedUpper
+
+    | Lexer.UnqualType (UnqualTypeOrModuleIdentifier ident) -> UpperIdent ident |> LocalUpper
+
+
+
+
+
+
+
+
+
+let rec mentionableTypeToDefinite (mentionable : Cst.MentionableType) : TypeConstraints =
     match mentionable with
-    | Q.UnitType -> makeConstraintsFromDefinitive DtUnitType
-    | Q.GenericTypeVar resolved ->
-        ByTypeParam resolved
+    | S.UnitType -> makeConstraintsFromDefinitive DtUnitType
+    | S.GenericTypeVar unqual ->
+        unqualValToLowerName unqual
+        |> ByTypeParam
         |> makeConstraintsFromConstraint
 
-    | Q.Tuple { types = types } ->
+    | S.Tuple { types = types } ->
         types
         |> TOM.map (S.getNode >> mentionableTypeToDefinite)
         |> DtTuple
         |> makeConstraintsFromDefinitive
 
-    | Q.Record { fields = fields } ->
+    | S.Record { fields = fields } ->
         fields
-        |> Map.mapKeyVal (fun key value -> key.node, mentionableTypeToDefinite value.node)
+        |> Map.mapKeyVal (fun key value -> unqualValToRecField key.node, mentionableTypeToDefinite value.node)
         |> DtRecordExact
         |> makeConstraintsFromDefinitive
 
-    | Q.ExtendedRecord { extendedAlias = alias
+    | S.ExtendedRecord { extendedAlias = alias
                          fields = fields } ->
 
         fields
-        |> Map.mapKeyVal (fun key value -> key.node, mentionableTypeToDefinite value.node)
+        |> Map.mapKeyVal (fun key value -> unqualValToRecField key.node, mentionableTypeToDefinite value.node)
         |> DtRecordWith
         |> makeConstraintsFromDefinitive
 
-    | Q.ReferencedType (typeName, typeParams) ->
+    | S.ReferencedType (typeName, typeParams) ->
         let definiteTypeParams =
             List.map (S.getNode >> mentionableTypeToDefinite) typeParams
 
-        DtReferencedType (typeName, definiteTypeParams)
+        DtReferencedType (typeOrModuleIdentToUpperNameVal typeName.node, definiteTypeParams)
         |> makeConstraintsFromDefinitive
 
-    | Q.Arrow (fromType, toTypes) ->
+    | S.Arrow (fromType, toTypes) ->
         DtArrow (mentionableTypeToDefinite fromType.node, NEL.map (S.getNode >> mentionableTypeToDefinite) toTypes)
         |> makeConstraintsFromDefinitive
 
-    | Q.Parensed parensed -> mentionableTypeToDefinite parensed.node
+    | S.Parensed parensed -> mentionableTypeToDefinite parensed.node
 
 
 
@@ -111,36 +203,46 @@ let rec mentionableTypeToDefinite (mentionable : Q.MentionableType) : TypeConstr
 
 
 
-type GatheredInferredNames = Map<ResolvedValue, TypeConstraints>
+type GatheredInferredNames = Map<LowerIdent, SOD<TypeConstraints>>
 
 
-let rec getInferredTypeFromAssignmentPattern (pattern : Q.AssignmentPattern) : TypeConstraints * GatheredInferredNames =
+let rec getInferredTypeFromAssignmentPattern (pattern : AssignmentPattern) : TypeConstraints * GatheredInferredNames =
     match pattern with
-    | Q.Named (resolved, _) ->
-        let inferredType = makeConstraintsFromConstraint <| ByValue resolved
+    | Named ident ->
+        let inferredType =
+            LocalLower ident
+            |> ByValue
+            |> makeConstraintsFromConstraint
 
-        inferredType, Map.empty |> Map.add resolved inferredType
+        inferredType,
+        Map.empty
+        |> NameResolution.addNewReference ident inferredType
 
-    | Q.Ignored -> emptyConstraint, Map.empty
+    | Ignored -> emptyConstraint, Map.empty
 
-    | Q.Unit -> makeConstraintsFromDefinitive DtUnitType, Map.empty
+    | Unit -> makeConstraintsFromDefinitive DtUnitType, Map.empty
 
-    | Q.DestructuredPattern pattern -> getInferredTypeFromDestructuredPattern pattern
+    | DestructuredPattern destructured -> getInferredTypeFromDestructuredPattern destructured
 
-    | Q.Aliased (pattern_, (resolved, _)) ->
-        let (inferredType, inferredNames) =
-            getInferredTypeFromAssignmentPattern pattern_.node
+    | Aliased (pattern_, alias) ->
+        let (inferredType, inferredNames) = getInferredTypeFromAssignmentPattern pattern_
 
-        inferredType, inferredNames |> Map.add resolved inferredType
+        inferredType,
+        inferredNames
+        |> NameResolution.addNewReference alias inferredType
 
 
-and getInferredTypeFromDestructuredPattern (pattern : Q.DestructuredPattern) : TypeConstraints * GatheredInferredNames =
+and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : TypeConstraints * GatheredInferredNames =
     match pattern with
-    | Q.DestructuredRecord fieldNames ->
+    | DestructuredRecord fieldNames ->
         let inferredType =
             fieldNames
-            |> NEL.map (fun (resolved, ident) ->
-                lowerIdentToRecFieldName ident.node, ByValue resolved |> makeConstraintsFromConstraint)
+            |> NEL.map (fun recFieldName ->
+                recFieldName,
+                recFieldToLowerIdent recFieldName
+                |> LocalLower
+                |> ByValue
+                |> makeConstraintsFromConstraint)
             |> NEL.toList
             |> Map.ofList
             |> DtRecordWith
@@ -148,9 +250,16 @@ and getInferredTypeFromDestructuredPattern (pattern : Q.DestructuredPattern) : T
 
         inferredType,
         fieldNames
-        |> NEL.map (fun (resolved, _) -> resolved, ByValue resolved |> makeConstraintsFromConstraint)
+        |> NEL.map (fun ident ->
+            let lowerIdent = recFieldToLowerIdent ident
+
+            lowerIdent,
+            lowerIdent
+            |> LocalLower
+            |> ByValue
+            |> makeConstraintsFromConstraint)
         |> NEL.toList
-        |> Map.ofList
+        |> NameResolution.makeSodMapFromList
 
 
 
@@ -388,12 +497,12 @@ let addTypeJudgment (judgment : TypeJudgment) (expr : TypedExpr) : TypedExpr =
 
 type private FlatOpList<'a> =
     | LastVal of 'a
-    | Op of left : 'a * op : Q.Operator * right : FlatOpList<'a>
+    | Op of left : 'a * op : T.Operator * right : FlatOpList<'a>
 
 
 type OpBinaryTree =
     { left : S.CstNode<TypedExpr>
-      op : S.CstNode<Q.Operator>
+      op : S.CstNode<T.Operator>
       right : S.CstNode<TypedExpr> }
 
 
@@ -401,6 +510,126 @@ type OpBinaryTree =
 //let createOpBinaryTree (firstExpr : S.CstNode<Q.Expression >) (opExprSeq : (S.CstNode<Q.Operator > * S.CstNode<Q.Expression> ) nel ) : OpBinaryTree =
 // associativity: right is like the (::) operator. I.e. we consider everything to the right to be a single expression before appending the left things to it. Otherwise `a :: b :: []` would be parsed as `(a :: b) :: []`, which is wrong.
 // associativity: left is the opposite. i.e. `a (op) b (op) c` is equivalent to `(a (op) b) (op) c`
+
+
+
+
+
+
+let rec convertAssignmentPattern (pattern : Cst.AssignmentPattern) : AssignmentPattern =
+    match pattern with
+    | S.Named name -> Named (unqualValToLowerIdent name)
+    | S.Ignored -> Ignored
+    | S.Unit -> Unit
+    | S.DestructuredPattern p ->
+        convertDestructuredPattern p
+        |> DestructuredPattern
+    | S.Aliased (p, alias) -> Aliased (convertAssignmentPattern p.node, unqualValToLowerIdent alias.node)
+
+and convertDestructuredPattern (pattern : Cst.DestructuredPattern) : DestructuredPattern =
+    match pattern with
+    | S.DestructuredRecord fields ->
+        NEL.map (S.getNode >> unqualValToRecField) fields
+        |> DestructuredRecord
+    | S.DestructuredTuple items ->
+        TOM.map (S.getNode >> convertAssignmentPattern) items
+        |> DestructuredTuple
+    | S.DestructuredCons items ->
+        TOM.map (S.getNode >> convertAssignmentPattern) items
+        |> DestructuredCons
+    | S.DestructuredTypeVariant (ctor, params_) ->
+        DestructuredTypeVariant (
+            typeOrModuleIdentToUpperNameVal ctor.node,
+            List.map (S.getNode >> convertAssignmentPattern) params_
+        )
+
+
+
+
+let rec gatherParams (pattern : AssignmentPattern) : FunctionOrCaseMatchParam =
+    match pattern with
+    | Named ident ->
+        let param_ : Param =
+            { destructurePath = SimpleName
+              inferredType = emptyConstraint }
+
+        { paramPattern = pattern
+          namesMap = Map.add ident (SOD.new_ param_) Map.empty
+          inferredType = emptyConstraint }
+
+    | Ignored ->
+        { paramPattern = pattern
+          namesMap = Map.empty
+          inferredType = emptyConstraint }
+
+    | Unit ->
+        { paramPattern = pattern
+          namesMap = Map.empty
+          inferredType = makeConstraintsFromDefinitive DtUnitType }
+
+    | DestructuredPattern destructured ->
+        let (inferredType, _) = getInferredTypeFromDestructuredPattern destructured
+
+        { paramPattern = pattern
+          namesMap = gatherDestructuredPattern destructured
+          inferredType = inferredType }
+
+    | Aliased (aliased, alias) ->
+        let (inferredType, _) = getInferredTypeFromAssignmentPattern aliased
+
+        let param_ : Param =
+            { destructurePath = SimpleName
+              inferredType = inferredType }
+
+        let gatheredFromAlias = gatherParams aliased
+
+        { paramPattern = pattern
+          namesMap =
+            gatheredFromAlias.namesMap
+            |> NameResolution.addNewReference alias param_
+          inferredType = inferredType }
+
+
+
+
+and gatherDestructuredPattern (pattern : DestructuredPattern) : Map<LowerIdent, SOD<Param>> =
+    /// Adjusts the destructure path of a param to account for the fact that it is contained inside a nested destructuring
+    let adjustDestructurePath newPath (param_ : Param) : Param =
+        { param_ with destructurePath = newPath }
+
+
+    match pattern with
+    | DestructuredRecord fields ->
+        fields
+        |> NEL.map (fun ident -> recFieldToLowerIdent ident, { Param.destructurePath = InverseRecord })
+        |> NEL.toList
+        |> NameResolution.makeSodMapFromList
+
+    | DestructuredTuple patterns ->
+        TOM.map gatherParams patterns
+        |> TOM.mapi (fun index tupleItem ->
+            tupleItem.namesMap
+            |> Map.map (fun _ param -> adjustDestructurePath (InverseTuple (uint index, param.destructurePath)) param))
+        |> TOM.fold<_, _> NameResolution.combineTwoReferenceMaps Map.empty
+
+
+    | DestructuredCons patterns ->
+        patterns
+        |> TOM.map gatherParams
+        |> TOM.mapi (fun index params_ ->
+            params_.namesMap
+            |> Map.map (fun _ param_ -> adjustDestructurePath (InverseCons (uint index, param_.destructurePath)) param_))
+        |> TOM.fold<_, _> Map.merge Map.empty
+
+    | DestructuredTypeVariant (ctor, params_) ->
+        params_
+        |> List.map gatherParams
+        |> List.mapi (fun index params__ ->
+            params__.namesMap
+            |> Map.map (fun _ param_ ->
+                adjustDestructurePath (InverseTypeVariant (ctor, uint index, param_.destructurePath)) param_))
+        |> List.fold Map.merge Map.empty
+
 
 
 
@@ -421,15 +650,15 @@ let typeOfPrimitiveLiteralValue (primitive : S.PrimitiveLiteralValue) : Definiti
 
 
 
-let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression) : TypedExpr =
+let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Cst.Expression) : TypedExpr =
     let innerTypeCheck = typeCheckExpression namesMaps
 
     match expr with
-    | Q.SingleValueExpression singleVal ->
+    | S.SingleValueExpression singleVal ->
         match singleVal with
-        | Q.ExplicitValue explicit ->
+        | S.ExplicitValue explicit ->
             match explicit with
-            | Q.Primitive primitive ->
+            | S.Primitive primitive ->
                 let type_ =
                     typeOfPrimitiveLiteralValue primitive
                     |> makeConstraintsFromDefinitive
@@ -442,8 +671,8 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                     |> SingleValueExpression }
 
 
-            | Q.DotGetter dotGetter ->
-                let recFieldName = lowerIdentToRecFieldName dotGetter
+            | S.DotGetter dotGetter ->
+                let recFieldName = unqualValToRecField dotGetter
 
                 let type_ =
                     Map.empty
@@ -458,14 +687,13 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                     |> ExplicitValue
                     |> SingleValueExpression }
 
-            | Q.Compound compound ->
+            | S.Compound compound ->
                 match compound with
-                | Q.List list ->
-                    let typedList = List.map (S.mapNode innerTypeCheck) list
+                | S.List list ->
+                    let typedList = List.map (S.getNode >> innerTypeCheck) list
 
                     let combinedType =
                         typedList
-                        |> List.map S.getNode
                         |> List.fold
                             (fun state expr ->
                                 (state, expr.inferredType)
@@ -475,17 +703,17 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                     { inferredType = combinedType
                       expr =
                         typedList
-                        |> List
+                        |> T.List
                         |> Compound
                         |> ExplicitValue
                         |> SingleValueExpression }
 
-                | Q.CompoundValues.Tuple tuple ->
-                    let typedList = TOM.map (S.mapNode innerTypeCheck) tuple
+                | S.CompoundValues.Tuple tuple ->
+                    let typedList = TOM.map (S.getNode >> innerTypeCheck) tuple
 
                     let combinedType =
                         typedList
-                        |> TOM.map (fun expr -> expr.node.inferredType)
+                        |> TOM.map (fun expr -> expr.inferredType)
                         |> TOM.sequenceResult
                         |> concatResultErrListNel
                         |> Result.map (DtTuple >> makeConstraintsFromDefinitive)
@@ -498,16 +726,16 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                         |> ExplicitValue
                         |> SingleValueExpression }
 
-                | Q.CompoundValues.Record record ->
+                | S.CompoundValues.Record record ->
                     let typedList =
                         record
-                        |> List.map (fun (key, value) -> key, S.mapNode innerTypeCheck value)
+                        |> List.map (fun (key, value) -> unqualValToRecField key.node, innerTypeCheck value.node)
 
                     let combinedType =
                         typedList
                         |> List.map (fun (key, expr) ->
-                            expr.node.inferredType
-                            |> Result.map (fun inferred -> key.node, inferred))
+                            expr.inferredType
+                            |> Result.map (fun inferred -> key, inferred))
                         |> Result.sequenceList
                         |> Result.map Map.ofList
                         |> concatResultErrListNel
@@ -521,19 +749,22 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                         |> ExplicitValue
                         |> SingleValueExpression }
 
-                | Q.CompoundValues.RecordExtension ((extended, ident), additions) ->
+                | S.CompoundValues.RecordExtension (extended, additions) ->
 
                     let typedList =
                         additions
-                        |> NEL.map (fun (key, value) -> key, S.mapNode innerTypeCheck value)
+                        |> NEL.map (fun (key, value) -> unqualValToRecField key.node, innerTypeCheck value.node)
 
-                    let typeOfEditedRecord = ByValue extended |> makeConstraintsFromConstraint
+                    let typeOfEditedRecord =
+                        unqualValToLowerName extended.node
+                        |> ByValue
+                        |> makeConstraintsFromConstraint
 
                     let derivedFromFieldsType : TypeJudgment =
                         typedList
                         |> NEL.map (fun (key, expr) ->
-                            expr.node.inferredType
-                            |> Result.map (fun inferred -> key.node, inferred))
+                            expr.inferredType
+                            |> Result.map (fun inferred -> key, inferred))
                         |> NEL.sequenceResult
                         |> Result.map (NEL.toList >> Map.ofList)
                         |> concatResultErrListNel
@@ -544,18 +775,18 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
 
                     { inferredType = combinedType
                       expr =
-                        CompoundValues.RecordExtension ((extended, ident), typedList)
+                        CompoundValues.RecordExtension (unqualValToLowerIdent extended.node, typedList)
                         |> Compound
                         |> ExplicitValue
                         |> SingleValueExpression }
 
-            | Q.Function funcVal ->
+            | S.Function funcVal ->
                 // @TODO: we need to actually add the params to namesMaps before we can type check the expression
                 let typeOfBody = typeCheckExpression namesMaps funcVal.body.node
 
                 let funcParams : FunctionOrCaseMatchParam nel =
                     funcVal.params_
-                    |> NEL.map typeFuncOrCaseMatchParam
+                    |> NEL.map (S.getNode >> typeFuncOrCaseMatchParam)
 
                 let (NEL (firstParamType, restParamTypes)) =
                     funcParams
@@ -574,7 +805,7 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
 
                 let funcVal : FunctionValue =
                     { params_ = funcParams
-                      body = S.makeCstNode typeOfBody funcVal.body.source }
+                      body = typeOfBody }
 
                 { expr =
                     Function funcVal
@@ -583,39 +814,30 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                   inferredType = arrowType }
 
 
-        | Q.UpperIdentifier (name, resolved) ->
-            let (_, ctor) = NameRes.findTypeConstructor resolved namesMaps
-            let (resolvedType, _) = ctor.fullTypeName
-            let typeParams = ctor.typeParamsList
+        | S.UpperIdentifier name ->
+            let ctorName = typeOrModuleIdentToUpperNameVal name
+            let defType = ByConstructorType ctorName
 
-            let defType =
-                DtReferencedType (
-                    resolvedType,
-                    typeParams
-                    |> List.map (ByTypeParam >> makeConstraintsFromConstraint)
-                )
+            { expr = UpperIdentifier ctorName |> SingleValueExpression
+              inferredType = makeConstraintsFromConstraint defType |> Ok }
+
+        | S.LowerIdentifier name ->
+            let lowerNameVal = convertValueIdentifierToLowerName name
 
             { expr =
-                UpperIdentifier (name, resolved)
-                |> SingleValueExpression
-              inferredType = makeConstraintsFromDefinitive defType |> Ok }
-
-        | Q.LowerIdentifier (name, resolved) ->
-            { expr =
-                LowerIdentifier (name, resolved)
+                LowerIdentifier lowerNameVal
                 |> SingleValueExpression
               inferredType =
-                ByValue resolved
+                ByValue lowerNameVal
                 |> makeConstraintsFromConstraint
                 |> Ok }
 
-        | Q.LetExpression (declarations, expr) ->
+        | S.LetExpression (declarations, expr) ->
             let typedDeclarations : LetDeclarationNames =
                 declarations
+                |> NEL.map (fun binding -> binding.node.bindPattern)
                 |> Map.map (fun key binding ->
-                    { ident = binding.ident
-                      tokens = binding.tokens
-                      destructurePath = binding.destructurePath
+                    { destructurePath = binding.destructurePath
                       // @TODO: actually we need to add another type constraint to the inferred type of the assigned expression, and
                       assignedExpression = innerTypeCheck binding.assignedExpression })
 
@@ -626,9 +848,9 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                 LetExpression (typedDeclarations, bodyExpr)
                 |> SingleValueExpression }
 
-        | Q.ControlFlowExpression controlFlow ->
+        | S.ControlFlowExpression controlFlow ->
             match controlFlow with
-            | Q.IfExpression (cond, ifTrue, ifFalse) ->
+            | S.IfExpression (cond, ifTrue, ifFalse) ->
                 // @TODO: need to add a type constraint that this expression should be of boolean type
                 let typedCond = S.mapNode innerTypeCheck cond
 
@@ -657,7 +879,7 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                     |> SingleValueExpression }
 
 
-            | Q.CaseMatch (exprToMatch, branches) ->
+            | S.CaseMatch (exprToMatch, branches) ->
                 let typedExprToMatch = S.mapNode innerTypeCheck exprToMatch
 
                 let typedBranches =
@@ -681,9 +903,9 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                     |> ControlFlowExpression
                     |> SingleValueExpression }
 
-    | Q.CompoundExpression compExpr ->
+    | S.CompoundExpression compExpr ->
         match compExpr with
-        | Q.FunctionApplication (funcExpr, params_) ->
+        | S.FunctionApplication (funcExpr, params_) ->
             let typedFunc = S.mapNode innerTypeCheck funcExpr
 
             let typedParams = params_ |> NEL.map (S.mapNode innerTypeCheck)
@@ -712,7 +934,7 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
                 FunctionApplication (typedFunc, typedParams)
                 |> CompoundExpression }
 
-        | Q.DotAccess (dottedExpr, dotSequence) ->
+        | S.DotAccess (dottedExpr, dotSequence) ->
             let rec makeNestedMap (fieldSeq : RecordFieldName list) =
                 match fieldSeq with
                 | [] -> emptyConstraint
@@ -751,7 +973,7 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Q.Expression
 
 
 
-and typeFuncOrCaseMatchParam (param_ : Q.FunctionOrCaseMatchParam) : FunctionOrCaseMatchParam =
+and typeFuncOrCaseMatchParam (param_ : Cst.AssignmentPattern) : FunctionOrCaseMatchParam =
     let (typeOfPattern, gatheredNames) =
         getInferredTypeFromAssignmentPattern param_.paramPattern
 
