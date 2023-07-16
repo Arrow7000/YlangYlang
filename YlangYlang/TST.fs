@@ -1,11 +1,32 @@
 ﻿module TypedSyntaxTree
 
 
-open Lexer
+
 open QualifiedSyntaxTree.Names
 
 module S = SyntaxTree
 module Q = QualifiedSyntaxTree
+
+
+
+type DestructuredPattern =
+    /// Destructured records need to have one destructured member
+    | DestructuredRecord of LowerIdent nel
+    /// Destructured tuples need to have at least two members
+    | DestructuredTuple of AssignmentPattern tom
+    | DestructuredCons of AssignmentPattern tom
+    | DestructuredTypeVariant of constructor : UpperIdent * params' : AssignmentPattern list
+
+/// Named - or ignored - variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
+and AssignmentPattern =
+    | Named of ident : LowerIdent
+    | Ignored // i.e. the underscore
+    | Unit
+    | DestructuredPattern of DestructuredPattern
+    | Aliased of pattern : AssignmentPattern * alias : LowerIdent
+
+
+
 
 
 
@@ -27,7 +48,7 @@ type DefinitiveType =
     | DtList of TypeConstraints
     | DtRecordWith of referencedFields : Map<RecordFieldName, TypeConstraints>
     | DtRecordExact of Map<RecordFieldName, TypeConstraints>
-    | DtReferencedType of typeName : ResolvedType * typeParams : TypeConstraints list
+    | DtReferencedType of typeName : UpperIdent * typeParams : TypeConstraints list
     | DtArrow of fromType : TypeConstraints * toTypes : TypeConstraints nel
 
 
@@ -42,9 +63,11 @@ type DefinitiveType =
 
 and ConstrainType =
     /// I.e. must be the same type as this value
-    | ByValue of ResolvedValue
+    | ByValue of LowerIdent
     /// I.e. must be the same type as this type param
-    | ByTypeParam of ResolvedTypeParam
+    | ByTypeParam of LowerIdent
+    /// I.e. must be the type that this constructor is a variant of
+    | ByConstructorType of UpperIdent
 
 
 
@@ -56,8 +79,7 @@ and TypeConstraints = | TypeConstraints of definitive : DefinitiveType option * 
 
 
 type Param =
-    { ident : LowerIdent
-      tokens : TokenWithSource list
+    { //tokens : TokenWithSource list
       destructurePath : PathToDestructuredName
       /// Inferred through usage. If the param has a type annotation that will be a separate field.
       inferredType : TypeConstraints }
@@ -71,53 +93,102 @@ type TypeJudgment = Result<TypeConstraints, DefinitiveType list>
 
 
 
+(* Name dictionaries *)
+
+
+
+
+
+
+
 
 
 
 type MentionableType =
     | UnitType
-    | GenericTypeVar of ResolvedTypeParam
+    | GenericTypeVar of LowerIdent
     | Tuple of TupleType
     | Record of RecordType
     | ExtendedRecord of ExtendedRecordType
-    | ReferencedType of typeName : ResolvedType * typeParams : S.CstNode<MentionableType> list
-    | Arrow of fromType : S.CstNode<MentionableType> * toType : NEL<S.CstNode<MentionableType>>
-    | Parensed of S.CstNode<MentionableType>
+    | ReferencedType of typeName : UpperIdent * typeParams : MentionableType list
+    | Arrow of fromType : MentionableType * toType : NEL<MentionableType>
+    | Parensed of MentionableType
 
 
 
 /// Because there need to be at least two members for it to be a tuple type. Otherwise it's just a parensed expression.
-and TupleType =
-    { types : S.CstNode<MentionableType> tom }
+and TupleType = { types : MentionableType tom }
 
 
 and RecordType =
-    { fields : Map<S.CstNode<RecordFieldName>, S.CstNode<MentionableType>> }
+    { fields : Map<RecordFieldName, MentionableType> }
 
 /// @TODO: as said above at MentionableType, we may need separate versions of this for value type annotations vs for use in type declarations; because in the former free type variables are allowed, but in the latter they are not.
 and ExtendedRecordType =
-    { extendedAlias : S.CstNode<ResolvedTypeParam> // Because it has to be a type param
-      fields : Map<S.CstNode<RecordFieldName>, S.CstNode<MentionableType>> }
+    { extendedAlias : LowerIdent // Because it has to be a type param
+      fields : Map<RecordFieldName, MentionableType> }
 
 
 
 
 
 type VariantCase =
-    { label : ResolvedTypeConstructor * S.CstNode<UpperIdent>
-      contents : S.CstNode<MentionableType> list }
+    { label : UpperIdent
+      contents : MentionableType list }
 
 
 
 
 type TypeDeclarationContent =
-    | Sum of variants : NEL<S.CstNode<VariantCase>>
-    | Alias of referent : S.CstNode<MentionableType>
+    | Sum of variants : NEL<VariantCase>
+    | Alias of referent : MentionableType
 
 
-type TypeDeclaration =
-    { typeParamsMap : Q.ResolvedTypeParams
-      typeParamsList : ResolvedTypeParam list
+
+
+
+
+
+
+(* Dictionaries of declared names *)
+
+type TypeDeclarations = Map<UpperIdent, TypeDeclaration>
+
+and TypeConstructors = Map<UpperIdent, VariantConstructor>
+
+and ValueDeclarations = Map<LowerIdent, LowerCaseName>
+
+and ValueTypeDeclarations = Map<LowerIdent, ValueAnnotation>
+
+and TypeParams = Map<LowerIdent, unit>
+
+
+
+
+
+
+and VariantConstructor =
+    { typeParamsList : LowerIdent list // So as to not lose track of the order of the type params
+      typeParamsMap : TypeParams
+      variantCase : VariantCase
+      allVariants : NEL<VariantCase> }
+
+
+
+and LowerCaseName =
+    | LocalName of LetBinding
+    | Param of Param
+    | TopLevelName of TypedExpr // ValueDeclaration -- This really only carried a TypedExpr anyway, so why stick it in a special wrapper record type
+
+
+
+
+
+
+
+and TypeDeclaration =
+    { typeParamsMap : TypeParams
+      typeParamsList : LowerIdent list
       typeDeclaration : TypeDeclarationContent }
 
 
@@ -127,10 +198,9 @@ type TypeDeclaration =
 
 
 /// Note that each let binding could still create multiple named values through assignment patterns, so this is only the result of a single name, not a full binding
-type ResolvedLetBinding =
-    { ident : LowerIdent
-      tokens : TokenWithSource list
-      destructurePath : PathToDestructuredName
+and LetBinding =
+    //{ tokens : TokenWithSource list
+    { destructurePath : PathToDestructuredName
 
       (*
       @TODO: we need to take into account the assignment pattern here so that we can:
@@ -146,29 +216,27 @@ type ResolvedLetBinding =
 
 
 
-and LetDeclarationNames = Map<ResolvedValue, ResolvedLetBinding>
+and LetDeclarationNames = Map<LowerIdent, LetBinding>
 
 /// Represents all the named params in a single function parameter or case match expression
 and FunctionOrCaseMatchParam =
-    { paramPattern : Q.AssignmentPattern
-      namesMap : Map<ResolvedValue, Param>
+    { paramPattern : AssignmentPattern
+      namesMap : Map<LowerIdent, Param>
       inferredType : TypeConstraints }
 
 
 
 
 and CompoundValues =
-    | List of S.CstNode<TypedExpr> list
-    | Tuple of S.CstNode<TypedExpr> tom
-    | Record of (S.CstNode<RecordFieldName> * S.CstNode<TypedExpr>) list
-    | RecordExtension of
-        recordToExtend : (ResolvedValue * S.CstNode<LowerIdent>) *
-        additions : NEL<S.CstNode<RecordFieldName> * S.CstNode<TypedExpr>>
+    | List of TypedExpr list
+    | Tuple of TypedExpr tom
+    | Record of (RecordFieldName * TypedExpr) list
+    | RecordExtension of recordToExtend : LowerIdent * additions : NEL<RecordFieldName * TypedExpr>
 
 
 and FunctionValue =
     { params_ : FunctionOrCaseMatchParam nel
-      body : S.CstNode<TypedExpr> }
+      body : TypedExpr }
 
 
 and ExplicitValue =
@@ -184,13 +252,13 @@ and ExplicitValue =
 
 
 and ControlFlowExpression =
-    | IfExpression of condition : S.CstNode<TypedExpr> * ifTrue : S.CstNode<TypedExpr> * ifFalse : S.CstNode<TypedExpr>
-    | CaseMatch of exprToMatch : S.CstNode<TypedExpr> * branches : CaseMatchBranch nel
+    | IfExpression of condition : TypedExpr * ifTrue : TypedExpr * ifFalse : TypedExpr
+    | CaseMatch of exprToMatch : TypedExpr * branches : CaseMatchBranch nel
 
 and SingleValueExpression =
     | ExplicitValue of ExplicitValue
-    | UpperIdentifier of fullyQualifiedName : FullyQualifiedUpperIdent * resolved : ResolvedTypeConstructor
-    | LowerIdentifier of name : LowerNameValue * resolved : ResolvedValue
+    | UpperIdentifier of name : UpperNameValue
+    | LowerIdentifier of name : LowerNameValue
     | LetExpression of namedValues : LetDeclarationNames * expr : TypedExpr
     | ControlFlowExpression of ControlFlowExpression
 
@@ -198,14 +266,14 @@ and SingleValueExpression =
 
 
 and CompoundExpression =
-    | Operator of left : S.CstNode<TypedExpr> * op : S.CstNode<Q.Operator> * right : S.CstNode<TypedExpr>
-    | FunctionApplication of funcExpr : S.CstNode<TypedExpr> * params' : NEL<S.CstNode<TypedExpr>>
-    | DotAccess of expr : S.CstNode<TypedExpr> * dotSequence : S.CstNode<NEL<RecordFieldName>>
+    | Operator of left : TypedExpr * op : Operator * right : TypedExpr
+    | FunctionApplication of funcExpr : TypedExpr * params' : NEL<TypedExpr>
+    | DotAccess of expr : TypedExpr * dotSequence : NEL<RecordFieldName>
 
 
 and CaseMatchBranch =
     { matchPattern : FunctionOrCaseMatchParam
-      body : S.CstNode<TypedExpr> }
+      body : TypedExpr }
 
 
 and SingleOrCompoundExpr =
@@ -220,19 +288,23 @@ and TypedExpr =
 
 
 
-
-
-type ValueDeclaration =
-    { valueName : S.CstNode<LowerIdent>
-      value : S.CstNode<TypedExpr> }
+and Operator =
+    | BuiltInOp of Lexer.BuiltInOperator
+    | OtherOp of ident : LowerIdent
 
 
 
-type ValueAnnotation =
-    { valueName : S.CstNode<LowerIdent>
+//and ValueDeclaration =
+//    { //valueName : LowerIdent
+//      value : TypedExpr }
+
+
+
+and ValueAnnotation =
+    { valueName : LowerIdent
       /// these aren't in the source code, but they're gathered from the type expression implicitly
-      gatheredImplicitParams : Q.ResolvedTypeParams
-      annotatedType : S.CstNode<MentionableType> }
+      gatheredImplicitParams : TypeParams
+      annotatedType : MentionableType }
 
 
 
@@ -240,17 +312,17 @@ type ValueAnnotation =
 
 
 
-type Declaration =
-    | ImportDeclaration of S.ImportDeclaration
-    | TypeDeclaration of resolved : ResolvedType * name : S.CstNode<UpperIdent> * declaration : TypeDeclaration
-    | ValueTypeAnnotation of resolved : ResolvedValue * ValueAnnotation
-    | ValueDeclaration of resolved : ResolvedValue * ValueDeclaration
+//and Declaration =
+//    | ImportDeclaration of S.ImportDeclaration
+//    | TypeDeclaration of name : UpperIdent * declaration : TypeDeclaration
+//    | ValueTypeAnnotation of name : LowerIdent * ValueAnnotation
+//    | ValueDeclaration of name : LowerIdent * ValueDeclaration
 
 
 // Representing a whole file/module
-type YlModule =
+and YlModule =
     { moduleDecl : S.ModuleDeclaration
       imports : S.ImportDeclaration list
-      types : Map<ResolvedType, UpperIdent * TypeDeclaration>
-      valueTypes : Map<ResolvedValue, LowerIdent * ValueAnnotation>
-      values : Map<ResolvedValue, LowerIdent * ValueDeclaration> }
+      types : TypeDeclarations
+      valueTypes : ValueTypeDeclarations
+      values : Map<LowerIdent, TypedExpr> }

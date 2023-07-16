@@ -15,46 +15,49 @@ open System
 
 
 
-type VariantConstructor =
-    { typeParamsList : ResolvedTypeParam list
-      typeParamsMap : Q.ResolvedTypeParams
-      variantCase : T.VariantCase
-      allVariants : NEL<T.VariantCase>
-      fullTypeName : ResolvedType * FullyQualifiedUpperIdent
-    //typeName : ResolvedType * UpperIdent
-     }
+//type VariantConstructor =
+//    { typeParamsList : ResolvedTypeParam list
+//      typeParamsMap : Q.ResolvedTypeParams
+//      variantCase : T.VariantCase
+//      allVariants : NEL<T.VariantCase>
+//      fullTypeName : ResolvedType * FullyQualifiedUpperIdent
+//    //typeName : ResolvedType * UpperIdent
+//     }
 
 
 
 
 
-type LowerCaseName =
-    | LocalName of
-        {| ident : LowerIdent
-           tokens : TokenWithSource list
-           destructurePath : PathToDestructuredName
-           assignedExpression : T.TypedExpr |}
-    | Param of T.Param
-    | TopLevelName of T.ValueDeclaration
+
+
+
+//type LowerCaseName =
+//    | LocalName of T.LetBinding
+//    | Param of T.Param
+//    | TopLevelName of T.ValueDeclaration
 
 
 /// @TODO: we probably want to have a way of keeping track of what the name (both locally referenced and fully qualified) of the type is
-type ResolvedTypeDeclarations = Map<ResolvedType, UpperIdent * T.TypeDeclaration>
+//type TypeDeclarations = Map<UpperIdent, T.TypeDeclaration>
 
-type ResolvedTypeConstructors = Map<ResolvedTypeConstructor, UpperIdent * VariantConstructor>
+//type TypeConstructors = Map<UpperIdent, VariantConstructor>
 
-type ResolvedValueDeclarations = Map<ResolvedValue, LowerCaseName>
+//type ValueDeclarations = Map<LowerIdent, LowerCaseName>
 
-type ResolvedValueTypeDeclarations = Map<ResolvedValue, LowerIdent * T.ValueAnnotation>
+//type ValueTypeDeclarations = Map<LowerIdent, T.ValueAnnotation>
+
+//type TypeParams = Map<LowerIdent, unit>
+
+
 
 
 
 type NamesMaps =
-    { typeDeclarations : ResolvedTypeDeclarations
-      typeConstructors : ResolvedTypeConstructors
-      typeParams : Q.ResolvedTypeParams
-      values : ResolvedValueDeclarations
-      valueTypes : ResolvedValueTypeDeclarations }
+    { typeDeclarations : TypeDeclarations
+      typeConstructors : TypeConstructors
+      typeParams : TypeParams
+      values : ValueDeclarations
+      valueTypes : ValueTypeDeclarations }
 
 
 
@@ -64,18 +67,17 @@ let addLetBindings (bindings : T.LetDeclarationNames) (names : NamesMaps) =
             bindings
             |> Map.map (fun _ value ->
                 LocalName
-                    {| ident = value.ident
-                       tokens = value.tokens
+                    {| tokens = value.tokens
                        destructurePath = value.destructurePath
                        assignedExpression = value.assignedExpression |})
             |> Map.merge names.values }
 
 
 
-let getTypeDeclarations names : ResolvedTypeDeclarations = names.typeDeclarations
-let getTypeConstructors names : ResolvedTypeConstructors = names.typeConstructors
+let getTypeDeclarations names : TypeDeclarations = names.typeDeclarations
+let getTypeConstructors names : TypeConstructors = names.typeConstructors
 let getTypeParams names : Q.ResolvedTypeParams = names.typeParams
-let getValues names : ResolvedValueDeclarations = names.values
+let getValues names : ValueDeclarations = names.values
 
 
 let empty : NamesMaps =
@@ -87,11 +89,11 @@ let empty : NamesMaps =
 
 
 
-let findTypeDeclaration (name : ResolvedType) { typeDeclarations = nameMap } = Map.find name nameMap
+let findTypeDeclaration (name : UpperIdent) { typeDeclarations = nameMap } = Map.tryFind name nameMap
 
-let findTypeConstructor (name : ResolvedTypeConstructor) { typeConstructors = nameMap } = Map.find name nameMap
+let findTypeConstructor (name : UpperIdent) { typeConstructors = nameMap } = Map.tryFind name nameMap
 
-let findTypeParam (name : ResolvedTypeParam) ({ typeParams = nameMap } : NamesMaps) = Map.find name nameMap
+let findTypeParam (name) ({ typeParams = nameMap } : NamesMaps) = Map.tryFind name nameMap
 
 
 (* @TODO: hmm it's actually a bit problematic to make both the value and value type annotation getters be non-nullable, because it's possible that only a value or only a type annotation has been declared, in which case one of these *will* fail... *)

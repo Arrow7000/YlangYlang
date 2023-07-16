@@ -996,14 +996,14 @@ and qualifyExpression
                             "This shouldn't be possible. To fix this we'd need to create another lowercase name resolution map exclusively for qualified value paths"
 
                     | UnqualValue (UnqualValueIdentifier unqual) ->
-                        let lowerName = LowerIdent unqual |> LocalOrParam
+                        let lowerName = LowerIdent unqual |> LocalLower
 
                         Q.LowerIdentifier (lowerName, resolvedLower)
                         |> Q.SingleValueExpression
                         |> Ok
 
                 | TopLevelName topLevel ->
-                    Q.LowerIdentifier (TopLevelValue topLevel.fullName, resolvedLower)
+                    Q.LowerIdentifier (FullyQualifiedLower topLevel.fullName, resolvedLower)
                     |> Q.SingleValueExpression
                     |> Ok
 
