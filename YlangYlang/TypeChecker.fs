@@ -219,11 +219,8 @@ let rec getInferredTypeFromAssignmentPattern (pattern : AssignmentPattern) : Typ
         |> NameResolution.addNewReference ident inferredType
 
     | Ignored -> emptyConstraint, Map.empty
-
     | Unit -> makeConstraintsFromDefinitive DtUnitType, Map.empty
-
     | DestructuredPattern destructured -> getInferredTypeFromDestructuredPattern destructured
-
     | Aliased (pattern_, alias) ->
         let (inferredType, inferredNames) = getInferredTypeFromAssignmentPattern pattern_
 
@@ -259,7 +256,7 @@ and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : Typ
             |> ByValue
             |> makeConstraintsFromConstraint)
         |> NEL.toList
-        |> NameResolution.makeSodMapFromList
+        |> SOD.makeMapFromList
 
 
 
@@ -594,22 +591,32 @@ let rec gatherParams (pattern : AssignmentPattern) : FunctionOrCaseMatchParam =
 
 and gatherDestructuredPattern (pattern : DestructuredPattern) : Map<LowerIdent, SOD<Param>> =
     /// Adjusts the destructure path of a param to account for the fact that it is contained inside a nested destructuring
-    let adjustDestructurePath newPath (param_ : Param) : Param =
+    let adjustDestructurePath (newPath : PathToDestructuredName) (param_ : Param) : Param =
         { param_ with destructurePath = newPath }
 
 
     match pattern with
     | DestructuredRecord fields ->
         fields
-        |> NEL.map (fun ident -> recFieldToLowerIdent ident, { Param.destructurePath = InverseRecord })
+        |> NEL.map (fun recField ->
+            let ident = recFieldToLowerIdent recField
+
+            ident,
+            { Param.destructurePath = InverseRecord
+              inferredType =
+                LocalLower ident
+                |> ByValue
+                |> makeConstraintsFromConstraint })
         |> NEL.toList
-        |> NameResolution.makeSodMapFromList
+        |> SOD.makeMapFromList
 
     | DestructuredTuple patterns ->
         TOM.map gatherParams patterns
         |> TOM.mapi (fun index tupleItem ->
             tupleItem.namesMap
-            |> Map.map (fun _ param -> adjustDestructurePath (InverseTuple (uint index, param.destructurePath)) param))
+            |> Map.map (fun _ paramsEntries ->
+                paramsEntries
+                |> SOD.map (fun param -> adjustDestructurePath (InverseTuple (uint index, param.destructurePath)) param)))
         |> TOM.fold<_, _> NameResolution.combineTwoReferenceMaps Map.empty
 
 
@@ -618,7 +625,10 @@ and gatherDestructuredPattern (pattern : DestructuredPattern) : Map<LowerIdent, 
         |> TOM.map gatherParams
         |> TOM.mapi (fun index params_ ->
             params_.namesMap
-            |> Map.map (fun _ param_ -> adjustDestructurePath (InverseCons (uint index, param_.destructurePath)) param_))
+            |> Map.map (fun _ paramEntries ->
+                paramEntries
+                |> SOD.map (fun param_ ->
+                    adjustDestructurePath (InverseCons (uint index, param_.destructurePath)) param_)))
         |> TOM.fold<_, _> Map.merge Map.empty
 
     | DestructuredTypeVariant (ctor, params_) ->
@@ -626,8 +636,10 @@ and gatherDestructuredPattern (pattern : DestructuredPattern) : Map<LowerIdent, 
         |> List.map gatherParams
         |> List.mapi (fun index params__ ->
             params__.namesMap
-            |> Map.map (fun _ param_ ->
-                adjustDestructurePath (InverseTypeVariant (ctor, uint index, param_.destructurePath)) param_))
+            |> Map.map (fun _ paramEntries ->
+                paramEntries
+                |> SOD.map (fun param_ ->
+                    adjustDestructurePath (InverseTypeVariant (ctor, uint index, param_.destructurePath)) param_)))
         |> List.fold Map.merge Map.empty
 
 
@@ -833,15 +845,18 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Cst.Expressi
                 |> Ok }
 
         | S.LetExpression (declarations, expr) ->
-            let typedDeclarations : LetDeclarationNames =
+            let typedDeclarations : LetBindings =
                 declarations
-                |> NEL.map (fun binding -> binding.node.bindPattern)
-                |> Map.map (fun key binding ->
-                    { destructurePath = binding.destructurePath
-                      // @TODO: actually we need to add another type constraint to the inferred type of the assigned expression, and
-                      assignedExpression = innerTypeCheck binding.assignedExpression })
+                |> NEL.map (fun binding -> binding.node.bindPattern.node, binding.node.value.node)
+                |> NEL.map (fun (bindPattern, bindValue) ->
+                    let param = typeFuncOrCaseMatchParam bindPattern
 
-            let bodyExpr = innerTypeCheck expr
+                    { paramPattern = param.paramPattern
+                      namesMap = param.namesMap
+                      bindingPatternInferredType = param.inferredType
+                      assignedExpression = innerTypeCheck bindValue })
+
+            let bodyExpr = innerTypeCheck expr.node
 
             { inferredType = bodyExpr.inferredType
               expr =
@@ -852,24 +867,24 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Cst.Expressi
             match controlFlow with
             | S.IfExpression (cond, ifTrue, ifFalse) ->
                 // @TODO: need to add a type constraint that this expression should be of boolean type
-                let typedCond = S.mapNode innerTypeCheck cond
+                let typedCond = innerTypeCheck cond.node
 
                 let conditionalWithBoolConstraint =
-                    S.mapNode (addDefinitiveConstraint (DtPrimitiveType Bool)) typedCond
+                    addDefinitiveConstraint (DtPrimitiveType Bool) typedCond
 
                 // This is aiming to express the type constraint that both branches of the if expression should have the same type
 
-                let typedIfTrueBranch = S.mapNode innerTypeCheck ifTrue
-                let typedIfFalseBranch = S.mapNode innerTypeCheck ifFalse
+                let typedIfTrueBranch = innerTypeCheck ifTrue.node
+                let typedIfFalseBranch = innerTypeCheck ifFalse.node
 
                 let expressionType : TypeJudgment =
-                    match typedIfTrueBranch.node.inferredType with
+                    match typedIfTrueBranch.inferredType with
                     | Ok typedIfTrue -> Ok typedIfTrue
-                    | Error _ -> typedIfFalseBranch.node.inferredType
+                    | Error _ -> typedIfFalseBranch.inferredType
 
                 // This should leave whichever one had the original definitive type unchanged, and only add a definitive constraint to the other one
-                let unifiedTrue = S.mapNode (addTypeJudgment expressionType) typedIfTrueBranch
-                let unifiedFalse = S.mapNode (addTypeJudgment expressionType) typedIfFalseBranch
+                let unifiedTrue = addTypeJudgment expressionType typedIfTrueBranch
+                let unifiedFalse = addTypeJudgment expressionType typedIfFalseBranch
 
 
                 { inferredType = expressionType
@@ -880,13 +895,13 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Cst.Expressi
 
 
             | S.CaseMatch (exprToMatch, branches) ->
-                let typedExprToMatch = S.mapNode innerTypeCheck exprToMatch
+                let typedExprToMatch = innerTypeCheck exprToMatch.node
 
                 let typedBranches =
                     branches
-                    |> NEL.map (fun branch ->
-                        { matchPattern = typeFuncOrCaseMatchParam branch.matchPattern
-                          body = S.mapNode innerTypeCheck branch.body })
+                    |> NEL.map (fun (pattern, branchExpr) ->
+                        { matchPattern = typeFuncOrCaseMatchParam pattern.node
+                          body = innerTypeCheck branchExpr.node })
 
 
                 let (matchExprType, branchReturnTypeConstraints) =
@@ -894,25 +909,25 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Cst.Expressi
                     |> NEL.fold<_, _>
                         (fun (patternConstraints, branchConstraints) branch ->
                             unifyJudgments patternConstraints (Ok branch.matchPattern.inferredType),
-                            unifyJudgments branchConstraints branch.body.node.inferredType)
-                        (typedExprToMatch.node.inferredType, Ok emptyConstraint)
+                            unifyJudgments branchConstraints branch.body.inferredType)
+                        (typedExprToMatch.inferredType, Ok emptyConstraint)
 
                 { inferredType = branchReturnTypeConstraints
                   expr =
-                    CaseMatch (S.mapNode (addTypeJudgment matchExprType) typedExprToMatch, typedBranches)
+                    CaseMatch (addTypeJudgment matchExprType typedExprToMatch, typedBranches)
                     |> ControlFlowExpression
                     |> SingleValueExpression }
 
     | S.CompoundExpression compExpr ->
         match compExpr with
         | S.FunctionApplication (funcExpr, params_) ->
-            let typedFunc = S.mapNode innerTypeCheck funcExpr
+            let typedFunc = innerTypeCheck funcExpr.node
 
-            let typedParams = params_ |> NEL.map (S.mapNode innerTypeCheck)
+            let typedParams = params_ |> NEL.map (S.getNode >> innerTypeCheck)
 
             let paramRequirementsFromDeFactoParams =
                 typedParams
-                |> NEL.map (fun e -> e.node.inferredType)
+                |> NEL.map (fun e -> e.inferredType)
                 |> NEL.sequenceResult
                 |> concatResultErrListNel
 
@@ -925,7 +940,7 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Cst.Expressi
                     let funcTypeRequirement = DtArrow (firstParam, restParamsAndReturnType)
 
                     unifyJudgments
-                        typedFunc.node.inferredType
+                        typedFunc.inferredType
                         (makeConstraintsFromDefinitive funcTypeRequirement
                          |> Ok))
 
@@ -944,23 +959,19 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Cst.Expressi
                     |> DtRecordWith
                     |> makeConstraintsFromDefinitive
 
-            let typedExpr = S.mapNode innerTypeCheck dottedExpr
+            let typedExpr = innerTypeCheck dottedExpr.node
 
             let exprTypeConstraint =
                 dotSequence.node
-                |> NEL.map lowerIdentToRecFieldName
+                |> NEL.map unqualValToRecField
                 |> NEL.toList
                 |> makeNestedMap
 
-            let fullyTypedExpr = addTypeConstraints exprTypeConstraint typedExpr.node
+            let fullyTypedExpr = addTypeConstraints exprTypeConstraint typedExpr
 
             { inferredType = fullyTypedExpr.inferredType
               expr =
-                DotAccess (
-                    typedExpr,
-                    dotSequence
-                    |> S.mapNode (NEL.map lowerIdentToRecFieldName)
-                )
+                DotAccess (typedExpr, dotSequence.node |> NEL.map unqualValToRecField)
                 |> CompoundExpression }
 
 //| Q.Operator (left, opSequence) ->
@@ -974,21 +985,7 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Cst.Expressi
 
 
 and typeFuncOrCaseMatchParam (param_ : Cst.AssignmentPattern) : FunctionOrCaseMatchParam =
-    let (typeOfPattern, gatheredNames) =
-        getInferredTypeFromAssignmentPattern param_.paramPattern
-
-    { paramPattern = param_.paramPattern
-      inferredType = typeOfPattern
-      namesMap =
-        param_.namesMap
-        |> Map.map (fun key qualifiedParam ->
-            let inferredType = Map.find key gatheredNames
-
-            { ident = qualifiedParam.ident
-              tokens = qualifiedParam.tokens
-              destructurePath = qualifiedParam.destructurePath
-              inferredType = inferredType }) }
-
+    convertAssignmentPattern param_ |> gatherParams
 
 
 

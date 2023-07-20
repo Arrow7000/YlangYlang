@@ -104,7 +104,7 @@ module Names =
         | InverseRecord
         | InverseTuple of index : uint * child : PathToDestructuredName
         | InverseCons of index : uint * child : PathToDestructuredName
-        | InverseTypeVariant of constructor : UpperIdent * index : uint * child : PathToDestructuredName
+        | InverseTypeVariant of constructor : UpperNameValue * index : uint * child : PathToDestructuredName
 
 
 

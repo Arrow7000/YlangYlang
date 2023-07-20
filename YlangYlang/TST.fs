@@ -202,8 +202,9 @@ and TypeDeclaration =
 
 /// Note that each let binding could still create multiple named values through assignment patterns, so this is only the result of a single name, not a full binding
 and LetBinding =
-    //{ tokens : TokenWithSource list
-    { destructurePath : PathToDestructuredName
+    { paramPattern : AssignmentPattern
+      namesMap : Map<LowerIdent, SOD<Param>>
+      bindingPatternInferredType : TypeConstraints
 
       (*
       @TODO: we need to take into account the assignment pattern here so that we can:
@@ -219,7 +220,8 @@ and LetBinding =
 
 
 
-and LetDeclarationNames = Map<LowerIdent, SOD<LetBinding>>
+
+and LetBindings = LetBinding nel
 
 /// Represents all the named params in a single function parameter or case match expression
 and FunctionOrCaseMatchParam =
@@ -262,7 +264,7 @@ and SingleValueExpression =
     | ExplicitValue of ExplicitValue
     | UpperIdentifier of name : UpperNameValue
     | LowerIdentifier of name : LowerNameValue
-    | LetExpression of namedValues : LetDeclarationNames * expr : TypedExpr
+    | LetExpression of namedValues : LetBindings * expr : TypedExpr
     | ControlFlowExpression of ControlFlowExpression
 
 
