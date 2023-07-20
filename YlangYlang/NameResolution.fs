@@ -45,30 +45,12 @@ let addNewRefWithTokens (ident : S.CstNode<'name>) (value : 'v) =
 
 
 
-let makeSodMapFromList (list : ('a * 'b) list when 'a : comparison) =
-    let listFolder (acc : Map<'a, SingleOrDuplicate<'b>>) ((key, value) : 'a * 'b) : Map<'a, SingleOrDuplicate<'b>> =
-        Map.change
-            key
-            (fun oldValueOpt ->
-                match oldValueOpt with
-                | Some oldVal ->
-                    match oldVal with
-                    | Single oldRef -> Some (Duplicate <| TOM.make value oldRef)
-                    | Duplicate duplRefs -> Some (Duplicate <| TOM.cons value duplRefs)
-                | None -> Some <| SOD.new_ value)
-            acc
-
-    list |> List.fold listFolder Map.empty
-
-
-
-
 let combineTwoReferenceMaps map1 map2 =
     let mapFolder
-        (acc : Map<'a, SingleOrDuplicate<'b>>)
-        (key : 'a)
-        (value : SingleOrDuplicate<'b>)
-        : Map<'a, SingleOrDuplicate<'b>> =
+        (acc : Map<'Key, SingleOrDuplicate<'a>>)
+        (key : 'Key)
+        (value : SingleOrDuplicate<'a>)
+        : Map<'Key, SingleOrDuplicate<'a>> =
         Map.change
             key
             (fun oldValueOpt ->
@@ -88,7 +70,7 @@ let combineTwoReferenceMaps map1 map2 =
     Map.fold mapFolder map1 map2
 
 
-let combineReferenceMaps (mapList : Map<'a, SingleOrDuplicate<'b>> seq) : Map<'a, SingleOrDuplicate<'b>> =
+let combineReferenceMaps (mapList : Map<'Key, SingleOrDuplicate<'a>> seq) : Map<'Key, SingleOrDuplicate<'a>> =
     Seq.fold combineTwoReferenceMaps Map.empty mapList
 
 

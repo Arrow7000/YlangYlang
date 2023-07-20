@@ -69,7 +69,7 @@ type NonEmptyList<'a> =
     static member cons (newHead : 'a) (NEL (head, tail)) = NEL (newHead, head :: tail)
 
     /// Appends the list to the end of the NEL
-    static member appendList (list : 'a list) (NEL (head, tail)) = NEL (head, tail @ list)
+    static member appendList (NEL (head, tail)) (list : 'a list) = NEL (head, tail @ list)
 
     static member fold (f : 'State -> 'Item -> 'State) (state : 'State) (NEL (head, tail) : 'Item nel) : 'State =
         tail |> List.fold f (f state head)
@@ -107,23 +107,22 @@ type NonEmptyList<'a> =
                     match state with
                     | Ok oks ->
                         match res with
-                        | Ok ok -> Ok (NEL.appendList (List.singleton ok) oks)
+                        | Ok ok -> Ok (NEL.appendList oks [ ok ])
                         | Error err -> Error (NEL.make err)
                     | Error errs ->
                         match res with
-                        | Error err -> Error (NEL.appendList (List.singleton err) errs)
+                        | Error err -> Error (NEL.appendList errs [ err ])
                         | Ok _ -> Error errs)
                 (Ok (NEL.make okHead))
                 tail)
         | Error err ->
-            NEL.make err
-            |> NEL.appendList (
-                List.choose
+            NEL.new_
+                err
+                (List.choose
                     (function
                     | Error e -> Some e
                     | Ok _ -> None)
-                    tail
-            )
+                    tail)
             |> Error
 
 
@@ -134,9 +133,7 @@ type NonEmptyList<'a> =
         match tail with
         | [] -> NEL (head, [])
         | neck :: [] -> NEL (neck, [ head ])
-        | neck :: rest ->
-            NEL.reverse<'T> (NEL (neck, rest))
-            |> NEL.appendList [ head ]
+        | neck :: rest -> NEL.appendList (NEL.reverse<'T> (NEL (neck, rest))) [ head ]
 
 
 
@@ -186,7 +183,8 @@ type TwoOrMore<'a> =
 
             TOM (head1, neck1, rest1 @ (head2 :: neck2 :: rest2))
 
-    static member appendList (list : 'a list) (TOM (head, neck, tail)) = TOM (head, neck, tail @ list)
+    /// Append a list to the end of the TOM
+    static member appendList (TOM (head, neck, tail)) (list : 'a list) = TOM (head, neck, tail @ list)
 
     static member fold<'State, 'Item>
         (f : 'State -> 'Item -> 'State)
@@ -219,34 +217,33 @@ type TwoOrMore<'a> =
                     match state with
                     | Ok oks ->
                         match res with
-                        | Ok ok -> Ok (TOM.appendList (List.singleton ok) oks)
+                        | Ok ok -> Ok (TOM.appendList oks [ ok ])
                         | Error err -> Error (NEL.make err)
                     | Error errs ->
                         match res with
-                        | Error err -> Error (NEL.appendList (List.singleton err) errs)
+                        | Error err -> Error (NEL.appendList errs [ err ])
                         | Ok _ -> Error errs)
                 (Ok (TOM.make okHead okNeck))
                 tail)
         | Error err, Ok _
         | Ok _, Error err ->
-            NEL.make err
-            |> NEL.appendList (
-                List.choose
+            NEL.new_
+                err
+                (List.choose
                     (function
                     | Error e -> Some e
                     | Ok _ -> None)
-                    tail
-            )
+                    tail)
             |> Error
         | Error err1, Error err2 ->
-            NEL.new_ err1 [ err2 ]
-            |> NEL.appendList (
-                List.choose
-                    (function
-                    | Error e -> Some e
-                    | Ok _ -> None)
-                    tail
-            )
+            NEL.new_
+                err1
+                (err2
+                 :: (List.choose
+                         (function
+                         | Error e -> Some e
+                         | Ok _ -> None)
+                         tail))
             |> Error
 
 
@@ -600,7 +597,7 @@ type SingleOrDuplicate<'a> =
         | Single a -> a
         | Duplicate tom -> TOM.head tom
 
-    static member cons newHead sod =
+    static member cons (newHead : 'a) sod =
         match sod with
         | Single a -> Duplicate (TOM.new_ newHead a List.empty)
         | Duplicate tom -> TOM.cons newHead tom |> Duplicate
@@ -609,6 +606,43 @@ type SingleOrDuplicate<'a> =
         match sod with
         | Single a -> List.singleton a
         | Duplicate tom -> TOM.toList tom
+
+    static member append (sod1 : SingleOrDuplicate<'a>) sod2 =
+        match sod1, sod2 with
+        | Single a, Single b -> Duplicate (TOM.make a b)
+        | Duplicate (TOM (head, neck, tail)), Duplicate b -> Duplicate (TOM.new_ head neck (tail @ TOM.toList b))
+        | Single a, Duplicate b -> Duplicate (TOM.cons a b)
+        | Duplicate a, Single b -> TOM.appendList a [ b ] |> Duplicate
+
+    static member makeMapFromList<'Key when 'Key : comparison> (list : ('Key * 'a) list) =
+        let listFolder (acc : Map<'Key, SOD<'a>>) ((key, value) : 'Key * 'a) : Map<'Key, SOD<'a>> =
+            Map.change
+                key
+                (Option.map (SOD.cons value)
+                 >> Option.defaultValue (SOD.new_ value)
+                 >> Some)
+                acc
+
+        list |> List.fold listFolder Map.empty
+
+
+    static member combineTwoReferenceMaps<'Key when 'Key : comparison> map1 map2 =
+        let mapFolder (acc : Map<'Key, SOD<'a>>) (key : 'Key) (value : SOD<'a>) : Map<'Key, SOD<'a>> =
+            Map.change
+                key
+                (fun oldValueOpt ->
+                    match oldValueOpt with
+                    | Some oldVal -> SOD.append oldVal value |> Some
+                    | None -> Some value)
+                acc
+
+        Map.fold mapFolder map1 map2
+
+
+    static member combineReferenceMaps mapList =
+        Seq.fold SOD.combineTwoReferenceMaps Map.empty mapList
+
+
 
 
 /// Alias for SingleOrDuplicate

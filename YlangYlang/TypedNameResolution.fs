@@ -85,7 +85,7 @@ let makeNamesMapFromAllModuleTopLevelDeclarations (ylModule : T.YlModule) : Name
             SOD.map (getConstructorFromType typeName) types
             |> SOD.toList
             |> List.collect id)
-        |> NameResolution.makeSodMapFromList
+        |> SOD.makeMapFromList
 
 
     { typeDeclarations = ylModule.types
