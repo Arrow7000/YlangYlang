@@ -152,119 +152,6 @@ let typeOrModuleIdentToUpperNameVal : Lexer.TypeOrModuleIdentifier -> UpperNameV
 
 
 
-
-
-
-let rec mentionableTypeToDefinite (mentionable : Cst.MentionableType) : TypeConstraints =
-    match mentionable with
-    | S.UnitType -> makeConstraintsFromDefinitive DtUnitType
-    | S.GenericTypeVar unqual ->
-        unqualValToLowerName unqual
-        |> ByTypeParam
-        |> makeConstraintsFromConstraint
-
-    | S.Tuple { types = types } ->
-        types
-        |> TOM.map (S.getNode >> mentionableTypeToDefinite)
-        |> DtTuple
-        |> makeConstraintsFromDefinitive
-
-    | S.Record { fields = fields } ->
-        fields
-        |> Map.mapKeyVal (fun key value -> unqualValToRecField key.node, mentionableTypeToDefinite value.node)
-        |> DtRecordExact
-        |> makeConstraintsFromDefinitive
-
-    | S.ExtendedRecord { extendedAlias = alias
-                         fields = fields } ->
-
-        fields
-        |> Map.mapKeyVal (fun key value -> unqualValToRecField key.node, mentionableTypeToDefinite value.node)
-        |> DtRecordWith
-        |> makeConstraintsFromDefinitive
-
-    | S.ReferencedType (typeName, typeParams) ->
-        let definiteTypeParams =
-            List.map (S.getNode >> mentionableTypeToDefinite) typeParams
-
-        DtReferencedType (typeOrModuleIdentToUpperNameVal typeName.node, definiteTypeParams)
-        |> makeConstraintsFromDefinitive
-
-    | S.Arrow (fromType, toTypes) ->
-        DtArrow (mentionableTypeToDefinite fromType.node, NEL.map (S.getNode >> mentionableTypeToDefinite) toTypes)
-        |> makeConstraintsFromDefinitive
-
-    | S.Parensed parensed -> mentionableTypeToDefinite parensed.node
-
-
-
-
-
-
-
-
-type GatheredInferredNames = Map<LowerIdent, SOD<TypeConstraints>>
-
-
-let rec getInferredTypeFromAssignmentPattern (pattern : AssignmentPattern) : TypeConstraints * GatheredInferredNames =
-    match pattern with
-    | Named ident ->
-        let inferredType =
-            LocalLower ident
-            |> ByValue
-            |> makeConstraintsFromConstraint
-
-        inferredType,
-        Map.empty
-        |> NameResolution.addNewReference ident inferredType
-
-    | Ignored -> emptyConstraint, Map.empty
-    | Unit -> makeConstraintsFromDefinitive DtUnitType, Map.empty
-    | DestructuredPattern destructured -> getInferredTypeFromDestructuredPattern destructured
-    | Aliased (pattern_, alias) ->
-        let (inferredType, inferredNames) = getInferredTypeFromAssignmentPattern pattern_
-
-        inferredType,
-        inferredNames
-        |> NameResolution.addNewReference alias inferredType
-
-
-and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : TypeConstraints * GatheredInferredNames =
-    match pattern with
-    | DestructuredRecord fieldNames ->
-        let inferredType =
-            fieldNames
-            |> NEL.map (fun recFieldName ->
-                recFieldName,
-                recFieldToLowerIdent recFieldName
-                |> LocalLower
-                |> ByValue
-                |> makeConstraintsFromConstraint)
-            |> NEL.toList
-            |> Map.ofList
-            |> DtRecordWith
-            |> makeConstraintsFromDefinitive
-
-        inferredType,
-        fieldNames
-        |> NEL.map (fun ident ->
-            let lowerIdent = recFieldToLowerIdent ident
-
-            lowerIdent,
-            lowerIdent
-            |> LocalLower
-            |> ByValue
-            |> makeConstraintsFromConstraint)
-        |> NEL.toList
-        |> SOD.makeMapFromList
-
-
-
-
-
-
-
-
 let concatResultErrListNel (result : Result<'a, 'Err list nel>) : Result<'a, 'Err list> =
     Result.mapError (NEL.toList >> List.concat) result
 
@@ -274,6 +161,29 @@ let concatResultErrListNel (result : Result<'a, 'Err list nel>) : Result<'a, 'Er
 
 let makeTypedExpr (judgment : TypeJudgment) (expr : SingleOrCompoundExpr) : TypedExpr =
     { inferredType = judgment; expr = expr }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -327,14 +237,12 @@ and unifyDefinitiveTypes
                     [ DtArrow (fromA, toA)
                       DtArrow (fromB, toB) ])
 
-    | DtReferencedType (typeRefA, typeParamsA), DtReferencedType (typeRefB, typeParamsB) ->
+    | DtNewType (typeRefA, typeParamsA), DtNewType (typeRefB, typeParamsB) ->
         if typeRefA = typeRefB then
-            unifyTypesList typeParamsA typeParamsB
-            |> Result.mapError (fun (first, second) ->
-                [ DtReferencedType (typeRefA, first)
-                  DtReferencedType (typeRefB, second) ])
+            unifyTypesList (List.map snd typeParamsA) (List.map snd typeParamsB)
+            |> Result.mapError (fun (first, second) -> [ typeA; typeB ])
             |> Result.bind (Result.sequenceList >> concatResultErrListNel)
-            |> Result.map (fun unifiedParams -> DtReferencedType (typeRefA, unifiedParams))
+            |> Result.map (fun unifiedParams -> DtNewType (typeRefA, List.zip (List.map fst typeParamsA) unifiedParams))
 
         else
             Error [ typeA; typeB ]
@@ -392,7 +300,7 @@ and addDefinitiveType (newDefinitive : DefinitiveType) (TypeConstraints (def, cn
 
 
 /// If lengths are the same, returns a list of that length of the type judgments of trying to merge the type at every index in both lists. If lengths are not the same though, returns an error result of both inferred types lists.
-and private listTraverser onLengthErr listA listB =
+and private listTraverser (onLengthErr : 'Err) (listA : TypeConstraints list) (listB : TypeConstraints list) =
     match listA, listB with
     | [], [] -> Ok []
     | headA :: tailA, headB :: tailB ->
@@ -455,11 +363,165 @@ and unifyJudgments (judgmentA : TypeJudgment) (judgmentB : TypeJudgment) =
 
 
 
+let rec mentionableTypeToDefinite (mentionable : Cst.MentionableType) : TypeConstraints =
+    match mentionable with
+    | S.UnitType -> makeConstraintsFromDefinitive DtUnitType
+    | S.GenericTypeVar unqual ->
+        unqualValToLowerIdent unqual
+        |> ByTypeParam
+        |> makeConstraintsFromConstraint
+
+    | S.Tuple { types = types } ->
+        types
+        |> TOM.map (S.getNode >> mentionableTypeToDefinite)
+        |> DtTuple
+        |> makeConstraintsFromDefinitive
+
+    | S.Record { fields = fields } ->
+        fields
+        |> Map.mapKeyVal (fun key value -> unqualValToRecField key.node, mentionableTypeToDefinite value.node)
+        |> DtRecordExact
+        |> makeConstraintsFromDefinitive
+
+    | S.ExtendedRecord { extendedAlias = alias
+                         fields = fields } ->
+
+        fields
+        |> Map.mapKeyVal (fun key value -> unqualValToRecField key.node, mentionableTypeToDefinite value.node)
+        |> DtRecordWith
+        |> makeConstraintsFromDefinitive
+
+    | S.ReferencedType (typeName, typeParams) ->
+        let definiteTypeParams =
+            List.map (S.getNode >> mentionableTypeToDefinite) typeParams
+
+        IsOfTypeByName (typeOrModuleIdentToUpperNameVal typeName.node, definiteTypeParams)
+        |> makeConstraintsFromConstraint
+
+    | S.Arrow (fromType, toTypes) ->
+        DtArrow (mentionableTypeToDefinite fromType.node, NEL.map (S.getNode >> mentionableTypeToDefinite) toTypes)
+        |> makeConstraintsFromDefinitive
+
+    | S.Parensed parensed -> mentionableTypeToDefinite parensed.node
 
 
 
 
 
+type GatheredInferredNames = Map<LowerIdent, SOD<TypeJudgment>>
+
+
+
+let rec getInferredTypeFromAssignmentPattern (pattern : AssignmentPattern) : TypeJudgment * GatheredInferredNames =
+    match pattern with
+    | Named ident ->
+        let inferredType =
+            LocalLower ident
+            |> ByValue
+            |> makeConstraintsFromConstraint
+            |> Ok
+
+        inferredType,
+        Map.empty
+        |> NameResolution.addNewReference ident inferredType
+
+    | Ignored -> Ok emptyConstraint, Map.empty
+    | Unit -> makeConstraintsFromDefinitive DtUnitType |> Ok, Map.empty
+    | DestructuredPattern destructured -> getInferredTypeFromDestructuredPattern destructured
+    | Aliased (pattern_, alias) ->
+        let (inferredType, inferredNames) = getInferredTypeFromAssignmentPattern pattern_
+
+        inferredType,
+        inferredNames
+        |> NameResolution.addNewReference alias inferredType
+
+
+and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : TypeJudgment * GatheredInferredNames =
+    match pattern with
+    | DestructuredRecord fieldNames ->
+        let inferredType =
+            fieldNames
+            |> NEL.map (fun recFieldName ->
+                recFieldName,
+                recFieldToLowerIdent recFieldName
+                |> LocalLower
+                |> ByValue
+                |> makeConstraintsFromConstraint)
+            |> NEL.toList
+            |> Map.ofList
+            |> DtRecordWith
+            |> makeConstraintsFromDefinitive
+            |> Ok
+
+        inferredType,
+        fieldNames
+        |> NEL.map (fun ident ->
+            let lowerIdent = recFieldToLowerIdent ident
+
+            lowerIdent,
+            lowerIdent
+            |> LocalLower
+            |> ByValue
+            |> makeConstraintsFromConstraint
+            |> Ok)
+        |> NEL.toList
+        |> SOD.makeMapFromList
+
+    | DestructuredCons consItems ->
+        let gatheredItems =
+            consItems
+            |> TOM.map getInferredTypeFromAssignmentPattern
+
+        let namesMap =
+            gatheredItems
+            |> TOM.map snd
+            |> TOM.toList
+            |> SOD.combineReferenceMaps
+
+        let typeConstraints =
+            gatheredItems
+            |> TOM.map fst
+            |> TOM.fold<_, _> unifyJudgments (Ok emptyConstraint)
+
+        typeConstraints, namesMap
+
+    | DestructuredTuple tupleItems ->
+        let gatheredItems =
+            tupleItems
+            |> TOM.map getInferredTypeFromAssignmentPattern
+
+        let namesMap =
+            gatheredItems
+            |> TOM.map snd
+            |> TOM.toList
+            |> SOD.combineReferenceMaps
+
+        let typeConstraints =
+            gatheredItems
+            |> TOM.map fst
+            |> TOM.sequenceResult
+            |> Result.map (DtTuple >> makeConstraintsFromDefinitive)
+            |> concatResultErrListNel
+
+        typeConstraints, namesMap
+
+    | DestructuredTypeVariant (ctor, params_) ->
+        let gatheredItems =
+            params_
+            |> List.map getInferredTypeFromAssignmentPattern
+
+        let namesMap =
+            gatheredItems
+            // @TODO: not sure if it's ok to just discard the fst of gatheredItems or not
+            |> List.map snd
+            |> SOD.combineReferenceMaps
+
+        let typeConstraints =
+            ByConstructorType ctor
+            |> makeConstraintsFromConstraint
+            |> Ok
+
+        typeConstraints, namesMap
 
 
 
@@ -548,21 +610,21 @@ let rec gatherParams (pattern : AssignmentPattern) : FunctionOrCaseMatchParam =
     | Named ident ->
         let param_ : Param =
             { destructurePath = SimpleName
-              inferredType = emptyConstraint }
+              inferredType = Ok emptyConstraint }
 
         { paramPattern = pattern
           namesMap = Map.add ident (SOD.new_ param_) Map.empty
-          inferredType = emptyConstraint }
+          inferredType = Ok emptyConstraint }
 
     | Ignored ->
         { paramPattern = pattern
           namesMap = Map.empty
-          inferredType = emptyConstraint }
+          inferredType = Ok emptyConstraint }
 
     | Unit ->
         { paramPattern = pattern
           namesMap = Map.empty
-          inferredType = makeConstraintsFromDefinitive DtUnitType }
+          inferredType = makeConstraintsFromDefinitive DtUnitType |> Ok }
 
     | DestructuredPattern destructured ->
         let (inferredType, _) = getInferredTypeFromDestructuredPattern destructured
@@ -606,7 +668,8 @@ and gatherDestructuredPattern (pattern : DestructuredPattern) : Map<LowerIdent, 
               inferredType =
                 LocalLower ident
                 |> ByValue
-                |> makeConstraintsFromConstraint })
+                |> makeConstraintsFromConstraint
+                |> Ok })
         |> NEL.toList
         |> SOD.makeMapFromList
 
@@ -662,8 +725,8 @@ let typeOfPrimitiveLiteralValue (primitive : S.PrimitiveLiteralValue) : Definiti
 
 
 
-let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Cst.Expression) : TypedExpr =
-    let innerTypeCheck = typeCheckExpression namesMaps
+let rec typeCheckExpression (resolvedNames : NameRes.NamesMaps) (expr : Cst.Expression) : TypedExpr =
+    let innerTypeCheck = typeCheckExpression resolvedNames
 
     match expr with
     | S.SingleValueExpression singleVal ->
@@ -794,25 +857,29 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Cst.Expressi
 
             | S.Function funcVal ->
                 // @TODO: we need to actually add the params to namesMaps before we can type check the expression
-                let typeOfBody = typeCheckExpression namesMaps funcVal.body.node
+                let typeOfBody = typeCheckExpression resolvedNames funcVal.body.node
 
                 let funcParams : FunctionOrCaseMatchParam nel =
                     funcVal.params_
                     |> NEL.map (S.getNode >> typeFuncOrCaseMatchParam)
 
-                let (NEL (firstParamType, restParamTypes)) =
+                //let (NEL (firstParamType, restParamTypes)) =
+                let funcParamTypes =
                     funcParams
-                    |> NEL.map (fun param_ -> param_.inferredType)
+                    |> NEL.traverseResult (fun param_ -> param_.inferredType)
+                    |> concatResultErrListNel
 
                 let arrowType : TypeJudgment =
-                    typeOfBody.inferredType
-                    |> Result.map (fun typeOfBody_ ->
-                        let toTypes =
-                            NEL.new_ typeOfBody_ (List.rev restParamTypes)
-                            |> NEL.reverse<_>
+                    (typeOfBody.inferredType, funcParamTypes)
+                    ||> Result.map2
+                            (fun typeOfBody_ (NEL (firstParamType, restParamTypes)) ->
+                                let toTypes =
+                                    NEL.new_ typeOfBody_ (List.rev restParamTypes)
+                                    |> NEL.reverse<_>
 
-                        DtArrow (firstParamType, toTypes)
-                        |> makeConstraintsFromDefinitive)
+                                DtArrow (firstParamType, toTypes)
+                                |> makeConstraintsFromDefinitive)
+                            (@)
 
 
                 let funcVal : FunctionValue =
@@ -908,7 +975,7 @@ let rec typeCheckExpression (namesMaps : NameRes.NamesMaps) (expr : Cst.Expressi
                     typedBranches
                     |> NEL.fold<_, _>
                         (fun (patternConstraints, branchConstraints) branch ->
-                            unifyJudgments patternConstraints (Ok branch.matchPattern.inferredType),
+                            unifyJudgments patternConstraints branch.matchPattern.inferredType,
                             unifyJudgments branchConstraints branch.body.inferredType)
                         (typedExprToMatch.inferredType, Ok emptyConstraint)
 

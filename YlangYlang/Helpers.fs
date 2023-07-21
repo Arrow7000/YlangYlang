@@ -639,7 +639,7 @@ type SingleOrDuplicate<'a> =
         Map.fold mapFolder map1 map2
 
 
-    static member combineReferenceMaps mapList =
+    static member combineReferenceMaps<'Key when 'Key : comparison> (mapList : Map<'Key, SOD<'a>> list) =
         Seq.fold SOD.combineTwoReferenceMaps Map.empty mapList
 
 

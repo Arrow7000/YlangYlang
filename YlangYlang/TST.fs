@@ -41,24 +41,38 @@ type BuiltInPrimitiveTypes =
     | Bool
 
 
+type TypeParamOrDefType =
+    | DefType of DefinitiveType
+    | TypeParam of LowerIdent
+
+///// A representation of a newtype, rather than a representation of a declaration of one.
+//and NewType =
+//    { name : UpperNameValue
+//      /// This is the list of type params along with any type constraints imposed on the current instance of it thus far
+//      typeParams : (LowerIdent * TypeConstraints) list
+//    //variants : {| ctorLabel : UpperIdent
+//    //              params_ : TypeParamOrDefType list |} nel
+//     }
+
+
+
 /// Represents a correct type without clashes
-type DefinitiveType =
+and DefinitiveType =
     | DtUnitType
     | DtPrimitiveType of BuiltInPrimitiveTypes
     | DtTuple of TypeConstraints tom
     | DtList of TypeConstraints
+    /// I think we need to pass in a type param to the extended record, so that not including one is a type error
     | DtRecordWith of referencedFields : Map<RecordFieldName, TypeConstraints>
     | DtRecordExact of Map<RecordFieldName, TypeConstraints>
-    | DtReferencedType of typeName : UpperNameValue * typeParams : TypeConstraints list
+    /// This guy will only be able to be assigned at the root of a file once we have the types on hand to resolve them and assign
+    | DtNewType of name : UpperNameValue * typeParams : (LowerIdent * TypeConstraints) list
+    //| DtNewType of NewType
+    //| DtReferencedType of typeName : UpperNameValue * typeParams : TypeConstraints list
     | DtArrow of fromType : TypeConstraints * toTypes : TypeConstraints nel
 
 
 
-
-//and InferredType =
-//    /// It being one or more captures the fact that multiple parameters or values may need to have the same type, regardless of what the specific type is
-//    | Constrained of ConstrainType set
-//    | Definitive of DefinitiveType
 
 
 
@@ -66,9 +80,11 @@ and ConstrainType =
     /// I.e. must be the same type as this value
     | ByValue of LowerNameValue
     /// I.e. must be the same type as this type param
-    | ByTypeParam of LowerNameValue
+    | ByTypeParam of LowerIdent
     /// I.e. must be the type that this constructor is a variant of
     | ByConstructorType of UpperNameValue
+    /// I.e. must be this type name + have this many type params
+    | IsOfTypeByName of typeName : UpperNameValue * typeParams : TypeConstraints list
 
 
 
@@ -83,12 +99,12 @@ type Param =
     { //tokens : TokenWithSource list
       destructurePath : PathToDestructuredName
       /// Inferred through usage. If the param has a type annotation that will be a separate field.
-      inferredType : TypeConstraints }
+      inferredType : TypeJudgment }
 
 
 
 /// @TODO: this should really also contain the other `ConstrainType`s, in case some of them also get evaluated to incompatible definitive types
-type TypeJudgment = Result<TypeConstraints, DefinitiveType list>
+and TypeJudgment = Result<TypeConstraints, DefinitiveType list>
 
 
 
@@ -204,7 +220,7 @@ and TypeDeclaration =
 and LetBinding =
     { paramPattern : AssignmentPattern
       namesMap : Map<LowerIdent, SOD<Param>>
-      bindingPatternInferredType : TypeConstraints
+      bindingPatternInferredType : TypeJudgment
 
       (*
       @TODO: we need to take into account the assignment pattern here so that we can:
@@ -227,7 +243,7 @@ and LetBindings = LetBinding nel
 and FunctionOrCaseMatchParam =
     { paramPattern : AssignmentPattern
       namesMap : Map<LowerIdent, SOD<Param>>
-      inferredType : TypeConstraints }
+      inferredType : TypeJudgment }
 
 
 
