@@ -554,21 +554,249 @@ let addTypeJudgment (judgment : TypeJudgment) (expr : TypedExpr) : TypedExpr =
 
 
 
-type private FlatOpList<'a> =
-    | LastVal of 'a
-    | Op of left : 'a * op : T.Operator * right : FlatOpList<'a>
+//type FlatOpList<'a> =
+//    | LastVal of 'a
+//    | Op of left : 'a * op : Lexer.BuiltInOperator * right : FlatOpList<'a>
 
 
-type OpBinaryTree =
-    { left : S.CstNode<TypedExpr>
-      op : S.CstNode<T.Operator>
-      right : S.CstNode<TypedExpr> }
+//let rec opSeqToFlatOpList
+//    (leftOperand : Cst.Expression)
+//    (opSequence : (Lexer.BuiltInOperator * Cst.Expression) nel)
+//    : FlatOpList<Cst.Expression> =
+//    let (NEL ((firstOp, sndExpr), rest)) = opSequence
+
+//    Op (
+//        leftOperand,
+//        firstOp,
+//        (match rest with
+//         | [] -> LastVal sndExpr
+//         | headOfRest :: restOfRest -> opSeqToFlatOpList sndExpr (NEL.new_ headOfRest restOfRest))
+//    )
 
 
-/// Creates a binary tree of operations, correctly constructed according to associativity and precedence
-//let createOpBinaryTree (firstExpr : S.CstNode<Q.Expression >) (opExprSeq : (S.CstNode<Q.Operator > * S.CstNode<Q.Expression> ) nel ) : OpBinaryTree =
-// associativity: right is like the (::) operator. I.e. we consider everything to the right to be a single expression before appending the left things to it. Otherwise `a :: b :: []` would be parsed as `(a :: b) :: []`, which is wrong.
-// associativity: left is the opposite. i.e. `a (op) b (op) c` is equivalent to `(a (op) b) (op) c`
+///// @TODO: this currently only supports built-in operators, not custom ones
+//type OpBinaryTree =
+//    { left : BinaryTreeBranch
+//      op : Lexer.BuiltInOperator
+//      right : BinaryTreeBranch }
+
+
+//and BinaryTreeBranch =
+//    | Branch of OpBinaryTree
+//    | Leaf of Cst.Expression
+
+
+
+
+//let updateLastInList updater list =
+//    List.rev list
+//    |> (function
+//    | [] -> []
+//    | head :: rest -> updater head :: rest)
+//    |> List.rev
+
+
+//let updateOrAddIfEmpty updater toAdd list =
+//    List.rev list
+//    |> (function
+//    | [] -> [ toAdd ]
+//    | head :: rest -> updater head :: rest)
+//    |> List.rev
+
+
+//type ExprWithOpsList<'a> = | ExprWithOpsList of 'a * (BuiltInOperator * 'a) list
+
+
+
+//type SplitLists<'a> = ExprWithOpsList<ExprWithOpsList<'a>>
+
+
+//let newExprWithOpsList a = ExprWithOpsList (a, List.empty)
+
+//let addToExprWithOpsList toAdd (ExprWithOpsList (a, list)) =
+//    ExprWithOpsList (a, list @ [  toAdd ])
+
+
+//let editLastInExprWithOpsList  toAdd (ExprWithOpsList (a, list): SplitLists<Cst.Expression>) =
+//    ExprWithOpsList (a, updateOrAddIfEmpty (addToExprWithOpsList  toAdd) list)
+
+
+
+//type FoldSuccess<'a> =
+//    { lastOperand : 'a
+//      listsSoFar : SplitLists<'a>
+//      /// This should contain the lowest precedence other than the one we are currently looking at
+//      lowestPrecedence : int option
+//      associativity : S.InfixOpAssociativity option }
+
+
+
+//let rec splitOpList
+//    (precedence : int)
+//    (firstOperand : Cst.Expression)
+//    (opSeq : (Lexer.BuiltInOperator * Cst.Expression) list)
+//    =
+//    let initState : FoldSuccess<Cst.Expression> =
+//        { lastOperand = firstOperand
+//          listsSoFar =
+//            newExprWithOpsList firstOperand
+//            |> newExprWithOpsList
+//          lowestPrecedence = None
+//          associativity = None }
+
+//    opSeq
+//    |> List.fold<_, FoldSuccess<Cst.Expression>>
+//        (fun state (op, expr) ->
+//            let op_ = NameResolution.getBuiltInInfixOp op
+
+//            if op_.precedence <= precedence then
+//                match state.associativity with
+//                | Some assoc ->
+//                    match assoc with
+//                    | S.Non ->
+//                        failwith "@TODO: error! can't have more than one operator with non associativity without parens"
+//                    | S.Left
+//                    | S.Right ->
+//                        if op_.associativity = assoc then
+//                            let newLists = addToExprWithOpsList op (newExprWithOpsList expr) state.listsSoFar
+
+//                            { lastOperand = expr
+//                              listsSoFar = newLists
+//                              lowestPrecedence = state.lowestPrecedence
+//                              associativity = Some assoc }
+
+//                        else
+//                            failwith
+//                                "@TODO: can't have more than one operator at the same level with different associativity. Need to group the expressions in parentheses!"
+
+//                | None ->
+//                    let newLists = addToExprWithOpsList op (newExprWithOpsList expr) state.listsSoFar
+
+//                    { lastOperand = expr
+//                      listsSoFar = newLists
+//                      lowestPrecedence = state.lowestPrecedence
+//                      associativity = Some op_.associativity }
+
+
+//            else
+//                // add to current list + keep track if operator is lower than the current lowest one?
+
+//                let newLists = editLastInExprWithOpsList
+
+//            )
+//        initState
+
+
+
+////let rec processListRecursively firstOperand (opSeq : (Lexer.BuiltInOperator * Cst.Expression) nel)
+////    let splitList = splitOpList 0 opSeq
+
+
+
+/////// Splits the operator list according to precedence and associativity
+////let rec splitOpList currPrecedence (opSeq : (Lexer.BuiltInOperator * Cst.Expression) nel) =
+////    match opSeq with
+////    | NEL ((op, expr), []) -> Last (op, expr)
+////    | NEL ((op, expr), head :: rest) ->
+////        let op_ = NameResolution.getBuiltInInfixOp op
+
+////        let newNel = NEL.new_ head rest
+
+////        if op_.precedence <= currPrecedence then
+////            New ((op, expr), splitOpList currPrecedence newNel)
+////        else
+////            Continue ((op, expr), splitOpList currPrecedence newNel)
+
+
+
+////let rec splitOpSeqs (currPrecedence : int) (opSeq : FlatOpList<Cst.Expression>) : PartialOrFull<Cst.Expression> =
+////    match opSeq with
+////    | LastVal e -> Leaf e
+////    | Op (left, op, right) ->
+////        let op_ = NameResolution.getBuiltInInfixOp op
+
+////        if op_.precedence <= currPrecedence then
+////            LastVal left
+
+
+
+
+
+////let rec normaliseOpSequence (currPrecedence:int)
+////    (leftOperand : Cst.Expression)
+////    (opSequence : (Lexer.BuiltInOperator * Cst.Expression) nel)
+////    : OpBinaryTree =
+////    let (NEL ((firstOp, sndExpr), rest)) = opSequence
+
+////    let op = NameResolution.getBuiltInInfixOp firstOp
+
+////    match rest with
+////    | [] ->
+////        { left = Leaf leftOperand
+////          op = firstOp
+////          right = Leaf sndExpr }
+
+////    | headOfRest :: restOfRest ->
+////        if op.precedence <= currPrecedence then
+////            match op.associativity with
+////            | S.Non ->
+////                { left = normaliseOpSequence
+////                  op = firstOp
+////                  right = normaliseOpSequence
+
+
+////let rec normaliseOpSequence
+////    (leftOperand : BinaryTreeBranch)
+////    (opSequence : (Lexer.BuiltInOperator * Cst.Expression) nel)
+////    : OpBinaryTree =
+////    let (NEL ((firstOp, sndExpr), rest)) = opSequence
+////    let op = NameResolution.getBuiltInInfixOp firstOp
+
+////    match leftOperand, rest with
+////    | Leaf leftExpr, [] ->
+////        { left = Leaf leftExpr
+////          op = firstOp
+////          highestPrecedence = op.precedence
+////          right = Leaf sndExpr }
+
+////    | Leaf leftExpr, headOfRest :: restOfRest ->
+////        { left = Leaf leftExpr
+////          op = firstOp
+////          highestPrecedence = op.precedence
+////          right =
+////            normaliseOpSequence (Leaf sndExpr) (NEL.new_ headOfRest restOfRest)
+////             }
+
+////    | Branch leftTree, [] ->
+////        { left = Branch leftTree
+////          op = firstOp
+////          highestPrecedence = op.precedence
+////          right = Leaf sndExpr }
+
+
+////    | Branch leftTree, headOfRest :: restOfRest ->
+////        let rightTree = normaliseOpSequence (Leaf sndExpr) (NEL.new_ headOfRest restOfRest)
+
+////        if op.precedence > rightTree.precedence
+////           && op.precedence > leftTree.precedence then
+////            { left = Branch leftTree
+////              op = firstOp
+////              highestPrecedence = op.precedence
+////              right = Branch rightTree }
+
+////        else if op.precedence < subTree.highestPrecedence then
+
+
+
+
+
+
+
+
+///// Creates a binary tree of operations, correctly constructed according to associativity and precedence
+////let createOpBinaryTree (firstExpr : S.CstNode<Q.Expression >) (opExprSeq : (S.CstNode<Q.Operator > * S.CstNode<Q.Expression> ) nel ) : OpBinaryTree =
+//// associativity: right is like the (::) operator. I.e. we consider everything to the right to be a single expression before appending the left things to it. Otherwise `a :: b :: []` would be parsed as `(a :: b) :: []`, which is wrong.
+//// associativity: left is the opposite. i.e. `a (op) b (op) c` is equivalent to `(a (op) b) (op) c`
 
 
 
@@ -1041,9 +1269,10 @@ let rec typeCheckExpression (resolvedNames : NameRes.NamesMaps) (expr : Cst.Expr
                 DotAccess (typedExpr, dotSequence.node |> NEL.map unqualValToRecField)
                 |> CompoundExpression }
 
-//| Q.Operator (left, opSequence) ->
-
-
+        | S.Operator (left, opSequence) ->
+            failwith
+                "@TODO: need to break up operator sequence into a binary tree of operators branch nodes and operands leaf nodes"
+    | S.ParensedExpression expr -> innerTypeCheck expr
 
 
 

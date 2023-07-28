@@ -549,29 +549,28 @@ let private convertOp (op : Lexer.BuiltInOperator) =
     | Lexer.ConsOp -> S.ConsOp
 
 
-let private makeBuiltInOp opName associativity precedence : S.InfixOpBuiltIn =
-    { S.InfixOpBuiltIn.name = opName
+let private makeBuiltInOp (op : BuiltInOperator) associativity precedence : S.InfixOpBuiltIn =
+    { S.InfixOpBuiltIn.name = convertOp op
       S.associativity = associativity
       S.precedence = precedence }
 
 let getBuiltInInfixOp (op : Lexer.BuiltInOperator) : S.InfixOpBuiltIn =
-    // @TODO: actually list out the correct associativity and precedence!
     match op with
-    | Lexer.EqualityOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.InequalityOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.AppendOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.PlusOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.MinusOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.MultOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.DivOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.ExpOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.AndOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.OrOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.ForwardComposeOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.BackwardComposeOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.ForwardPipeOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.BackwardPipeOp -> makeBuiltInOp (convertOp op) S.Left 1
-    | Lexer.ConsOp -> makeBuiltInOp (convertOp op) S.Left 1
+    | Lexer.ForwardPipeOp -> makeBuiltInOp op S.Left 0
+    | Lexer.BackwardPipeOp -> makeBuiltInOp op S.Right 0
+    | Lexer.OrOp -> makeBuiltInOp op S.Right 2
+    | Lexer.AndOp -> makeBuiltInOp op S.Right 3
+    | Lexer.EqualityOp -> makeBuiltInOp op S.Non 4
+    | Lexer.InequalityOp -> makeBuiltInOp op S.Non 4
+    | Lexer.AppendOp -> makeBuiltInOp op S.Right 5
+    | Lexer.ConsOp -> makeBuiltInOp op S.Right 5
+    | Lexer.PlusOp -> makeBuiltInOp op S.Left 6
+    | Lexer.MinusOp -> makeBuiltInOp op S.Left 6
+    | Lexer.MultOp -> makeBuiltInOp op S.Left 7
+    | Lexer.DivOp -> makeBuiltInOp op S.Left 7
+    | Lexer.ExpOp -> makeBuiltInOp op S.Right 8
+    | Lexer.ForwardComposeOp -> makeBuiltInOp op S.Right 9
+    | Lexer.BackwardComposeOp -> makeBuiltInOp op S.Left 9
 
 
 
