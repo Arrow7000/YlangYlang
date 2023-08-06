@@ -14,6 +14,7 @@ type TestToken =
     | B
     | C
     | D
+    /// The whitespace token for this "language"
     | W
 
 
@@ -27,6 +28,24 @@ type TestError =
 
 
 type TestParser<'a> = Parser<'a, TestToken, SampleCtx, TestError>
+
+
+
+[<Tests>]
+let testMonadLaws =
+    /// Runs the parser and returns a result so that they can be compared (because functions can't be compared)
+    let run str parser = Parser.run parser str
+
+    testList
+        "Test the monad laws"
+        [ testProperty "Left identity law"
+          <| fun parser f str -> run str (Parser.succeed parser >>= f) = run str (f parser)
+
+          testProperty "Right identity law"
+          <| fun parser str -> run str (parser >>= Parser.succeed) = run str parser
+
+          testProperty "Associativity law"
+          <| fun parser f g str -> run str ((parser >>= f) >>= g) = run str (parser >>= fun x -> f x >>= g) ]
 
 
 
