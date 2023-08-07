@@ -76,7 +76,7 @@ and RecordType<'Upper> =
     { fields : Map<CstNode<Lexer.UnqualValueIdentifier>, CstNode<MentionableType<'Upper>>> }
 
 and ExtendedRecordType<'Upper> =
-    { extendedAlias : CstNode<Lexer.UnqualValueIdentifier> // Because it has to be a type param
+    { extendedTypeParam : CstNode<Lexer.UnqualValueIdentifier> // Because it has to be a type param
       fields : Map<CstNode<Lexer.UnqualValueIdentifier>, CstNode<MentionableType<'Upper>>> }
 
 
@@ -115,26 +115,11 @@ type InfixOpAssociativity =
     | Right
     | Non
 
-type BuiltInOperator =
-    | EqualityOp
-    | InequalityOp
-    | AppendOp
-    | PlusOp
-    | MinusOp
-    | MultOp
-    | DivOp
-    | ExpOp
-    | AndOp
-    | OrOp
-    | ForwardComposeOp
-    | BackwardComposeOp
-    | ForwardPipeOp
-    | BackwardPipeOp
-    | ConsOp
+
 
 
 type InfixOpBuiltIn =
-    { name : BuiltInOperator
+    { name : Lexer.BuiltInOperator
       associativity : InfixOpAssociativity
       precedence : int }
 
@@ -225,7 +210,7 @@ and Expression<'Upper, 'Lower when 'Lower : comparison> =
 type InfixOpDeclaration<'Upper, 'Lower when 'Lower : comparison> =
 
     { /// Need to ensure we don't try to overwrite built-in operators in a new declaration here
-      name : Lexer.Operator
+      name : Lexer.UnqualValueIdentifier
       associativity : InfixOpAssociativity
       precedence : int
       /// The value should be a function taking exactly two parameters

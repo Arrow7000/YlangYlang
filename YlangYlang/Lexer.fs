@@ -147,7 +147,7 @@ type Token =
     | Operator of Operator
 
 
-[<StructuredFormatDisplay("Tkn(\"{charStr}\")")>]
+[<StructuredFormatDisplay("“{charStr}”")>]
 type TokenWithSource =
     { token : Token
       startLine : uint // the line of the starting character. Is 1-indexed.

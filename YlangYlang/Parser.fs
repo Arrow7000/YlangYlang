@@ -152,7 +152,7 @@ let private mapResult
 
 
 
-let map f parser : Parser<'b, 'token, 'ctx, 'err> =
+let map f (parser : Parser<'a, 'token, 'ctx, 'err>) : Parser<'b, 'token, 'ctx, 'err> =
     Parser (fun ctx ->
         let result = runWithCtx parser ctx
         mapResult f result)
@@ -174,6 +174,7 @@ let join : Parser<Parser<'a, 'token, 'ctx, 'err>, 'token, 'ctx, 'err> -> Parser<
 
 let bind f parser = map f parser |> join
 
+let (>>=) parser f = bind f parser
 
 let map2
     (f : 'a -> 'b -> 'c)

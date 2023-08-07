@@ -310,6 +310,13 @@ let parseOperator =
 
 
 
+let parseCustomOperator =
+    parseExpectedToken (ExpectedString "custom operator") (function
+        | Token.Operator (OtherOp op) -> Some op
+        | _ -> None)
+    |> addCtxToStack ParsingCtx.Operator
+
+
 let parseUpperIdentifier : ExpressionParser<CstNode<SingleValueExpression>> =
     parseExpectedToken (ExpectedString "identifier") (function
         | Token.Identifier (ModuleSegmentsOrQualifiedTypeOrVariant ident) ->
@@ -580,10 +587,7 @@ let rec private combineEndParser expr opAndFuncParam : Expression =
     | Some (FunctionApplication (paramExprList, nestedEndExprOpt)) ->
         let combinedTokens =
             expr.source
-            @ (NEL.fold<TokenWithSource list, CstNode<Expression>>
-                (fun state item -> state @ item.source)
-                List.empty
-                paramExprList)
+            @ (NEL.fold (fun state item -> state @ item.source) List.empty paramExprList)
 
         let firstExpr =
             CompoundExpression.FunctionApplication (expr, paramExprList)
@@ -621,7 +625,7 @@ let rec infixOpDeclarationParser =
     |= parseUint
     |. spaces
     |. symbol ParensOpen
-    |= parseOperator
+    |= parseCustomOperator
     |. symbol ParensClose
     |. spaces
     |. symbol AssignmentEquals
@@ -970,7 +974,7 @@ and parseRecordType =
 
 and parseExtendedRecordType =
     succeed (fun alias first others ->
-        { extendedAlias = alias
+        { extendedTypeParam = alias
           fields = Map.ofList (first :: others) })
     |. symbol BracesOpen
     |. spaces

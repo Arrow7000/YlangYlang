@@ -38,15 +38,15 @@ type NonEmptyList<'a> =
 
     (* Simple getters *)
 
-    static member head (NEL (head', _)) = head'
-    static member tail (NEL (_, tail')) = tail'
+    static member head (NEL (head', _)) : 'a = head'
+    static member tail (NEL (_, tail')) : 'a list = tail'
 
     static member split (NEL (head', tail')) = head', tail'
 
 
-    static member map<'a, 'b> (f : 'a -> 'b) (NEL (first, rest) : 'a nel) = NEL (f first, List.map f rest)
+    static member map<'b> (f : 'a -> 'b) (NEL (first, rest) : 'a nel) = NEL (f first, List.map f rest)
 
-    static member mapi<'a, 'b> (f : int -> 'a -> 'b) (NEL (first, rest) : 'a nel) =
+    static member mapi<'b> (f : int -> 'a -> 'b) (NEL (first, rest) : 'a nel) =
         NEL (f 0 first, List.mapi ((+) 1 >> f) rest)
 
     static member fromList (l : 'a list) : NEL<'a> option =
@@ -71,19 +71,19 @@ type NonEmptyList<'a> =
     /// Appends the list to the end of the NEL
     static member appendList (NEL (head, tail)) (list : 'a list) = NEL (head, tail @ list)
 
-    static member fold (f : 'State -> 'Item -> 'State) (state : 'State) (NEL (head, tail) : 'Item nel) : 'State =
+    static member fold (f : 'State -> 'a -> 'State) (state : 'State) (NEL (head, tail) : 'a nel) : 'State =
         tail |> List.fold f (f state head)
 
     static member reduce (f : 'T -> 'T -> 'T) (NEL (head, tail) : 'T nel) : 'T = List.fold f head tail
 
     static member foldBack f state (NEL (head, tail)) = List.foldBack f tail state |> f head
 
-    static member last<'a> (NEL (head, tail)) : 'a =
+    static member last (NEL (head, tail)) : 'a =
         match List.tryLast tail with
         | None -> head
         | Some last -> last
 
-    static member allButLast<'a> (NEL (head, tail) : 'a nel) : 'a nel =
+    static member allButLast (NEL (head, tail) : 'a nel) : 'a nel =
         let rec getAllButLast list =
             match list with
             | [] -> []
@@ -94,7 +94,7 @@ type NonEmptyList<'a> =
 
 
     /// Separate out the last item from the NEL
-    static member peelOffLast<'a> (nel : 'a nel) : 'a nel * 'a = NEL.allButLast nel, NEL.last nel
+    static member peelOffLast (nel : 'a nel) : 'a nel * 'a = NEL.allButLast nel, NEL.last nel
 
 
     static member sequenceResult (results : Result<'a, 'b> nel) : Result<'a nel, 'b nel> =
@@ -129,11 +129,11 @@ type NonEmptyList<'a> =
     static member traverseResult (f : 'a -> Result<'b, 'err>) = NEL.map f >> NEL.sequenceResult
 
 
-    static member reverse<'T> ((NEL (head, tail)) : NEL<'T>) =
+    static member reverse ((NEL (head, tail)) : NEL<'a>) =
         match tail with
         | [] -> NEL (head, [])
         | neck :: [] -> NEL (neck, [ head ])
-        | neck :: rest -> NEL.appendList (NEL.reverse<'T> (NEL (neck, rest))) [ head ]
+        | neck :: rest -> NEL.appendList (NEL.reverse (NEL (neck, rest))) [ head ]
 
 
 
@@ -159,13 +159,13 @@ type TwoOrMore<'a> =
 
     (* Simple getters *)
 
-    static member head<'a> (TOM (head', _, _) : 'a tom) = head'
-    static member neck<'a> (TOM (_, neck', _) : 'a tom) = neck'
-    static member tail<'a> (TOM (_, _, tail') : 'a tom) = tail'
+    static member head (TOM (head', _, _) : 'a tom) = head'
+    static member neck (TOM (_, neck', _) : 'a tom) = neck'
+    static member tail (TOM (_, _, tail') : 'a tom) = tail'
 
-    static member map<'a, 'b> (f : 'a -> 'b) (TOM (head, neck, rest) : 'a tom) = TOM (f head, f neck, List.map f rest)
+    static member map<'b> (f : 'a -> 'b) (TOM (head, neck, rest) : 'a tom) = TOM (f head, f neck, List.map f rest)
 
-    static member mapi<'a, 'b> (f : int -> 'a -> 'b) (TOM (head, neck, rest) : 'a tom) =
+    static member mapi<'b> (f : int -> 'a -> 'b) (TOM (head, neck, rest) : 'a tom) =
         TOM (f 0 head, f 1 neck, List.mapi ((+) 2 >> f) rest)
 
     static member fromList (l : 'a list) : TOM<'a> option =
@@ -186,19 +186,19 @@ type TwoOrMore<'a> =
     /// Append a list to the end of the TOM
     static member appendList (TOM (head, neck, tail)) (list : 'a list) = TOM (head, neck, tail @ list)
 
-    static member fold<'State, 'Item>
-        (f : 'State -> 'Item -> 'State)
+    static member fold<'State>
+        (f : 'State -> 'a -> 'State)
         (state : 'State)
-        (TOM (head, neck, tail) : 'Item tom)
+        (TOM (head, neck, tail) : 'a tom)
         : 'State =
         f state head
         |> fun result -> f result neck
         |> fun result -> List.fold f result tail
 
-    static member foldBack<'State, 'Item>
-        (f : 'Item -> 'State -> 'State)
+    static member foldBack<'State>
+        (f : 'a -> 'State -> 'State)
         (state : 'State)
-        (TOM (head, neck, tail) : 'Item tom)
+        (TOM (head, neck, tail) : 'a tom)
         : 'State =
         f head state
         |> fun result -> f neck result
@@ -426,6 +426,17 @@ module List =
             list
             (List.empty, List.empty, List.empty, List.empty)
 
+    let typedPartition5 f list =
+        List.foldBack
+            (fun item (firsts, seconds, thirds, fourths, fifths) ->
+                match f item with
+                | Choice1Of5 a -> a :: firsts, seconds, thirds, fourths, fifths
+                | Choice2Of5 b -> firsts, b :: seconds, thirds, fourths, fifths
+                | Choice3Of5 c -> firsts, seconds, c :: thirds, fourths, fifths
+                | Choice4Of5 d -> firsts, seconds, thirds, d :: fourths, fifths
+                | Choice5Of5 e -> firsts, seconds, thirds, fourths, e :: fifths)
+            list
+            (List.empty, List.empty, List.empty, List.empty, List.empty)
 
 
 module Map =
@@ -437,15 +448,15 @@ module Map =
             Map.empty
             map
 
-    /// Merge two maps. If there are duplicates they will be overridden
+    /// Merge two maps. If there are duplicate keys they will be overridden
     let merge map1 map2 =
         map1
         |> Map.fold (fun mapToAddTo key value -> Map.add key value mapToAddTo) map2
 
-
+    /// Merge many maps. If there are duplicate keys they will be overridden
     let mergeMany maps = Seq.fold merge Map.empty maps
 
-    /// Merges two maps, but defers to the merging function if there are clashes
+    /// Merges two maps, but defers to the merging function if there are key clashes
     let mergeSafe (merger : 'Key -> 'T -> 'T -> 'T) map1 map2 =
         map1
         |> Map.fold
@@ -456,6 +467,7 @@ module Map =
             map2
 
 
+    /// Merges many maps, but defers to the merging function if there are key clashes
     let mergeSafeMany (merger : 'Key -> 'T -> 'T -> 'T) (maps : seq<Map<'Key, 'T>> when 'Key : comparison) =
         Seq.fold (mergeSafe merger) Map.empty maps
 
@@ -511,6 +523,77 @@ module Map =
                 | Some x -> Map.add key x newMap
                 | None -> newMap)
             Map.empty
+
+
+    /// Gets the value at the given key and returns it along with a map with that key removed. If the key is not in the map returns None.
+    let pop<'Key, 'T when 'Key : comparison> (key : 'Key) (map : Map<'Key, 'T>) =
+        match Map.tryFind key map with
+        | Some value -> Some (value, Map.remove key map)
+        | None -> None
+
+
+    let addBulk keyvals map =
+        keyvals
+        |> Seq.fold (fun combined (key, value) -> Map.add key value combined) map
+
+
+    /// Combines two keys and values in a map by adding a combined keyval pair and removing the old two
+    let combineTwoKeys<'Key, 'T when 'Key : comparison> (key1 : 'Key) key2 combiner (map : Map<'Key, 'T>) =
+        match Map.tryFind key1 map, Map.tryFind key2 map with
+        | Some val1, Some val2 ->
+            let newKey, newVal = combiner (key1, val1) (key2, val2)
+
+            Map.remove key1 map
+            |> Map.remove key2
+            |> Map.add newKey newVal
+
+        | Some _, None
+        | None, Some _
+        | None, None -> map
+
+
+    /// Combine multiple keys and values in a map into a single keyval pair, according to which keys match a predicate. The resulting map will have the keys that were combined removed
+    let combineManyKeys<'Key, 'T when 'Key : comparison>
+        (predicate : 'Key -> bool)
+        (combiner : ('Key * 'T) list -> 'Key * 'T)
+        (map : Map<'Key, 'T>)
+        =
+        let keyvalsToMerge, scouredMap =
+            map
+            |> Map.fold
+                (fun (keyvalsToMerge, newMap) key value ->
+                    if predicate key then
+                        (key, value) :: keyvalsToMerge, newMap
+                    else
+                        keyvalsToMerge, Map.add key value newMap
+
+                    )
+                (List.empty, Map.empty)
+
+        let combinedKey, combinedVal = combiner keyvalsToMerge
+        Map.add combinedKey combinedVal scouredMap
+
+
+
+
+module Set =
+
+    let isNotEmpty<'a when 'a : comparison> : 'a set -> bool = Set.isEmpty >> not
+
+
+    let choose<'a, 'b when 'a : comparison and 'b : comparison> (map : 'a -> 'b option) (set : Set<'a>) =
+        Set.fold
+            (fun combined item ->
+                match map item with
+                | Some v -> Set.add v combined
+                | None -> combined)
+            Set.empty
+            set
+
+
+
+
+
 
 type Either<'a, 'b> =
     | Left of 'a
@@ -568,6 +651,13 @@ type EitherOrBoth<'a, 'b> =
         | OnlyLeft l -> Both (l, right)
         | OnlyRight _ -> OnlyRight right
         | Both (l, _) -> Both (l, right)
+
+    static member getFromBoth (fromLeft : 'a -> 'T) (fromRight : 'b -> 'T) (fromBoth : 'a -> 'b -> 'T) v =
+        match v with
+        | OnlyLeft l -> fromLeft l
+        | OnlyRight r -> fromRight r
+        | Both (l, r) -> fromBoth l r
+
 
 
 /// A list of type 'T but containing exactly one item of type 'U
@@ -658,3 +748,4 @@ module Tuple =
     let makePairWithSnd b a = a, b
     let mapFst f (a, b) = f a, b
     let mapSnd f (a, b) = a, f b
+    let mapBoth f g (a, b) = f a, g b

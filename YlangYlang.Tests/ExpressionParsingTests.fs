@@ -127,21 +127,19 @@ let private makeNumberExpression =
 [<Tests>]
 let testSimpleExpression =
     (fun _ ->
-        (tokeniseString "-4.6")
+        tokeniseString "-4.6"
         |> Result.map (
             run (
                 parseDelimExpressions
                 |> Parser.map stripTokensFromExpr
             )
         )
+        |> flip Expect.wantOk "Should succeed"
         |> fun res ->
-            Expect.wantOk res "Should succeed"
-            |> fun res ->
-                Expect.equal
-                    res.parseResult
-                    (ParsingSuccess
-                     <| makeNumberExpression (FloatLiteral -4.6))
-                    "Parse single value expression")
+            Expect.equal
+                res.parseResult
+                (ParsingSuccess (makeNumberExpression (FloatLiteral -4.6)))
+                "Parse single value expression")
     |> testCase "Parse single value expression"
 
 
