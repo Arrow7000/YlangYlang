@@ -7,7 +7,7 @@
 
   <ItemGroup>
     <None Include="Expression.yl">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include="Test.yl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

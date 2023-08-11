@@ -75,8 +75,10 @@ and DefinitiveType =
 
 
 
-
-and ConstrainType =
+/// A constraint based on a reference to a name
+///
+/// @TODO: maybe we should split out the constraints that can be used in type expressions? That way we never risk including a ByValue constraint in a type expression. But... if we do that then we'd need to have yet another kind of TypeConstraints
+and RefConstr =
     /// I.e. must be the same type as this value
     | ByValue of LowerNameValue
     /// I.e. must be the same type as this type param
@@ -85,12 +87,32 @@ and ConstrainType =
     | ByConstructorType of UpperNameValue
     /// I.e. must be this type name + have this many type params
     | IsOfTypeByName of typeName : UpperNameValue * typeParams : TypeConstraints list
+    /// This represents a bound variable to outside the scope where it is declared
+    | IsBoundVar of System.Guid
 
 
 
 /// Contains the definitive constraints that have been inferred so far, plus any other value or type param constraints that have not been evaluated yet.
 /// If a `ConstrainType` turns out to be incompatible with the existing definitive type, this will be transformed into a `TypeJudgment` with the incompatible definitive types listed in the `Error` case.
-and TypeConstraints = | TypeConstraints of definitive : DefinitiveType option * otherConstraints : ConstrainType set
+and TypeConstraints =
+    | Constrained of definitive : DefinitiveType option * otherConstraints : RefConstr set
+    /// For those paths that are recursive or mutually recursive and so can't be type checked, and so must be pruned away, and if they're not pruned away they indicate that you have an infinite recursion loop, which should be a compile error.
+    /// @TODO: might be better to remove this from here and to only specify recursion at a higher level (e.g. in the TypeJudgment) so that these can be simply about type constraints, and this type doesn't need to do two different jobs.
+    | Recursive
+
+    static member empty = Constrained (None, Set.empty)
+
+    static member fromDefinitive (def : DefinitiveType) : TypeConstraints = Constrained (Some def, Set.empty)
+
+    static member fromConstraint (constr : RefConstr) : TypeConstraints =
+        Constrained (None, Set.singleton constr)
+
+
+
+//static member bind f constraints =
+//    match constraints with
+//    | Recursive -> Recursive
+//    | Constrained (defOpt,  set) ->
 
 
 
@@ -102,9 +124,16 @@ type Param =
       inferredType : TypeJudgment }
 
 
+and TypeError =
+    | IncompatibleTypes of DefinitiveType list
+    | UnprunedRecursion
+
+    static member fromTypes types = IncompatibleTypes types
+
+
 
 /// @TODO: this should really also contain the other `ConstrainType`s, in case some of them also get evaluated to incompatible definitive types
-and TypeJudgment = Result<TypeConstraints, DefinitiveType list>
+and TypeJudgment = Result<TypeConstraints, TypeError>
 
 
 
@@ -121,29 +150,29 @@ and TypeJudgment = Result<TypeConstraints, DefinitiveType list>
 
 
 
-type MentionableType =
-    | UnitType
-    | GenericTypeVar of LowerNameValue
-    | Tuple of TupleType
-    | Record of RecordType
-    | ExtendedRecord of ExtendedRecordType
-    | ReferencedType of typeName : UpperNameValue * typeParams : MentionableType list
-    | Arrow of fromType : MentionableType * toType : NEL<MentionableType>
-    | Parensed of MentionableType
+//type MentionableType =
+//    | UnitType
+//    | GenericTypeVar of LowerNameValue
+//    | Tuple of TupleType
+//    | Record of RecordType
+//    | ExtendedRecord of ExtendedRecordType
+//    | ReferencedType of typeName : UpperNameValue * typeParams : MentionableType list
+//    | Arrow of fromType : MentionableType * toType : NEL<MentionableType>
+//    | Parensed of MentionableType
 
 
 
-/// Because there need to be at least two members for it to be a tuple type. Otherwise it's just a parensed expression.
-and TupleType = { types : MentionableType tom }
+///// Because there need to be at least two members for it to be a tuple type. Otherwise it's just a parensed expression.
+//and TupleType = { types : MentionableType tom }
 
 
-and RecordType =
-    { fields : Map<RecordFieldName, MentionableType> }
+//and RecordType =
+//    { fields : Map<RecordFieldName, MentionableType> }
 
-/// @TODO: as said above at MentionableType, we may need separate versions of this for value type annotations vs for use in type declarations; because in the former free type variables are allowed, but in the latter they are not.
-and ExtendedRecordType =
-    { extendedAlias : LowerIdent // Because it has to be a type param
-      fields : Map<RecordFieldName, MentionableType> }
+///// @TODO: as said above at MentionableType, we may need separate versions of this for value type annotations vs for use in type declarations; because in the former free type variables are allowed, but in the latter they are not.
+//and ExtendedRecordType =
+//    { extendedAlias : LowerIdent // Because it has to be a type param
+//      fields : Map<RecordFieldName, MentionableType> }
 
 
 
@@ -151,14 +180,14 @@ and ExtendedRecordType =
 
 type VariantCase =
     { label : UpperIdent
-      contents : MentionableType list }
+      contents : TypeConstraints list }
 
 
 
 
 type TypeDeclarationContent =
     | Sum of variants : NEL<VariantCase>
-    | Alias of referent : MentionableType
+    | Alias of referent : TypeConstraints
 
 
 
@@ -171,18 +200,28 @@ type TypeDeclarationContent =
 
 type TypeDeclarations = Map<UpperIdent, SOD<TypeDeclaration>>
 
-and TypeConstructors = Map<UpperIdent, SOD<VariantConstructor>>
+and TypeConstructors = Map<UpperNameValue, SOD<VariantConstructor>>
 
-and ValueDeclarations = Map<LowerIdent, SOD<LowerCaseName>>
+and ValueDeclarations = Map<LowerNameValue, SOD<LowerCaseName>>
 
-and ValueTypeDeclarations = Map<LowerIdent, SOD<ValueAnnotation>>
+and ValueTypeDeclarations = Map<LowerNameValue, SOD<TypeConstraints>>
 
 and TypeParams = Map<LowerIdent, SOD<unit>>
 
-and InfixOps = Map<LowerIdent, SOD<C.InfixOp>>
+and InfixOps = Map<LowerIdent, SOD<DeclaredInfixOp>>
 
 
 
+
+
+
+
+
+and DeclaredInfixOp =
+    { associativity : S.InfixOpAssociativity
+      precedence : int
+      /// The value should be a function taking exactly two parameters
+      value : TypedExpr }
 
 
 and VariantConstructor =
@@ -220,6 +259,7 @@ and TypeDeclaration =
 and LetBinding =
     { paramPattern : AssignmentPattern
       namesMap : Map<LowerIdent, SOD<Param>>
+      /// @TODO: hmm not entirely sure what this thing actually describes. Is it the inferred type of the entire binding? Or is it _only_ the inferred shape based on the assignment pattern, which therefore still needs to be unified with the inferred type of the actual assigned expression?
       bindingPatternInferredType : TypeJudgment
 
       (*
@@ -231,7 +271,10 @@ and LetBinding =
         a) we've only got one expression we're evaluating per binding (and so not doing the duplicate work of evaluating the expression once for every named value in the assignment pattern), and
         b) for each named value, what path to take in that expression to get the slice of the expression that should be assigned to it, e.g. a tuple, type destructuring, etc.
       *)
-      assignedExpression : TypedExpr }
+      assignedExpression : TypedExpr
+
+      /// This is the full combined inferred type, combining both the inferred type from the binding pattern of the let binding, and the inferred type of the assigned expression itself
+      combinedInferredType : TypeJudgment }
 
 
 
@@ -287,7 +330,7 @@ and SingleValueExpression =
 
 
 and CompoundExpression =
-    | Operator of left : TypedExpr * op : Operator * right : TypedExpr
+    | Operator of left : TypedExpr * op : OperatorIdent * right : TypedExpr
     | FunctionApplication of funcExpr : TypedExpr * params' : NEL<TypedExpr>
     | DotAccess of expr : TypedExpr * dotSequence : NEL<RecordFieldName>
 
@@ -310,22 +353,17 @@ and TypedExpr =
 
 
 
-and Operator =
+and OperatorIdent =
     | BuiltInOp of Lexer.BuiltInOperator
     | OtherOp of ident : LowerIdent
 
 
 
-//and ValueDeclaration =
-//    { //valueName : LowerIdent
-//      value : TypedExpr }
 
-
-
-and ValueAnnotation =
-    { /// these aren't in the source code, but they're gathered from the type expression implicitly
-      gatheredImplicitParams : TypeParams
-      annotatedType : MentionableType }
+//and ValueAnnotation =
+//    { /// these aren't in the source code, but they're gathered from the type expression implicitly
+//      gatheredImplicitParams : TypeParams
+//      annotatedType : DefinitiveType }
 
 
 
@@ -347,4 +385,4 @@ and YlModule =
       types : TypeDeclarations
       valueTypes : ValueTypeDeclarations
       values : Map<LowerIdent, SOD<TypedExpr>>
-      infixOperators : Map<LowerIdent, SOD<C.InfixOpDeclaration>> }
+      infixOperators : Map<LowerIdent, SOD<DeclaredInfixOp>> }

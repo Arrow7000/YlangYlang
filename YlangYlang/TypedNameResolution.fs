@@ -44,60 +44,80 @@ let empty : NamesMaps =
 
 let findTypeDeclaration (name : UpperIdent) { typeDeclarations = nameMap } = Map.tryFind name nameMap
 
-let findTypeConstructor (name : UpperIdent) { typeConstructors = nameMap } = Map.tryFind name nameMap
+let findTypeConstructor (name : UpperNameValue) { typeConstructors = nameMap } = Map.tryFind name nameMap
 
 let findTypeParam (name : LowerIdent) ({ typeParams = nameMap } : NamesMaps) = Map.tryFind name nameMap
 
 
 (* @TODO: hmm it's actually a bit problematic to make both the value and value type annotation getters be non-nullable, because it's possible that only a value or only a type annotation has been declared, in which case one of these *will* fail... *)
 
-let findValue (name : LowerIdent) ({ values = nameMap } : NamesMaps) = Map.tryFind name nameMap
+let findValue (name : LowerNameValue) ({ values = nameMap } : NamesMaps) = Map.tryFind name nameMap
+let findValueType (name : LowerNameValue) ({ valueTypes = nameMap } : NamesMaps) = Map.tryFind name nameMap
+
+let findValueAndType (name : LowerNameValue) (namesMap : NamesMaps) =
+    let value = findValue name namesMap
+    let valueType = findValueType name namesMap
+
+    match value, valueType with
+    | Some v, Some valType -> Both (valType, v) |> Some
+    | Some v, None -> OnlyRight v |> Some
+    | None, Some valType -> OnlyLeft valType |> Some
+    | None, None -> None
 
 
 
 
 
 
-/// This constructs the base names map for a module - to be used as a foundation for adding any declared names in any sub-scopes on
-let makeNamesMapFromAllModuleTopLevelDeclarations (ylModule : T.YlModule) : NamesMaps =
-    let getConstructorFromType
-        (typeName : UpperIdent)
-        (type_ : T.TypeDeclaration)
-        : (UpperIdent * T.VariantConstructor) list =
-        match type_.typeDeclaration with
-        | T.Sum variants ->
-            variants
-            |> NEL.map (fun variant ->
-                variant.label,
-                { T.VariantConstructor.variantCase = variant
-                  T.VariantConstructor.typeParamsMap = type_.typeParamsMap
-                  T.VariantConstructor.typeParamsList = type_.typeParamsList
-                  T.VariantConstructor.allVariants = variants
-                  T.VariantConstructor.typeName = typeName })
-            |> NEL.toList
-        | T.Alias _ -> List.empty
 
 
-    let constructors : T.TypeConstructors =
-        ylModule.types
-        |> Map.toList
-        |> List.collect (fun (typeName, types) ->
-            SOD.map (getConstructorFromType typeName) types
-            |> SOD.toList
-            |> List.collect id)
-        |> SOD.makeMapFromList
+let getInferredTypeOfLowercaseName (lowerCaseName : T.LowerCaseName) : T.TypeJudgment =
+    match lowerCaseName with
+    | T.LocalName binding -> binding.bindingPatternInferredType
+    | T.Param p -> p.inferredType
+    | T.TopLevelName value -> value.inferredType
 
 
-    { typeDeclarations = ylModule.types
-      typeConstructors = constructors
-      typeParams = Map.empty
-      values =
-        ylModule.values
-        |> Map.map (fun _ values -> SOD.map T.TopLevelName values)
-      valueTypes = ylModule.valueTypes
-      infixOperators =
-        ylModule.infixOperators
-        |> Map.map (fun _ infixOps -> SOD.map S.UserDefined infixOps) }
+///// This constructs the base names map for a module - to be used as a foundation for adding any declared names in any sub-scopes on
+//let makeNamesMapFromAllModuleTopLevelDeclarations (ylModule : T.YlModule) : NamesMaps =
+//    let getConstructorFromType
+//        (typeName : UpperIdent)
+//        (type_ : T.TypeDeclaration)
+//        : (UpperIdent * T.VariantConstructor) list =
+//        match type_.typeDeclaration with
+//        | T.Sum variants ->
+//            variants
+//            |> NEL.map (fun variant ->
+//                variant.label,
+//                { T.VariantConstructor.variantCase = variant
+//                  T.VariantConstructor.typeParamsMap = type_.typeParamsMap
+//                  T.VariantConstructor.typeParamsList = type_.typeParamsList
+//                  T.VariantConstructor.allVariants = variants
+//                  T.VariantConstructor.typeName = typeName })
+//            |> NEL.toList
+//        | T.Alias _ -> List.empty
+
+
+//    let constructors : T.TypeConstructors =
+//        ylModule.types
+//        |> Map.toList
+//        |> List.collect (fun (typeName, types) ->
+//            SOD.map (getConstructorFromType typeName) types
+//            |> SOD.toList
+//            |> List.collect id)
+//        |> SOD.makeMapFromList
+
+
+//    { typeDeclarations = ylModule.types
+//      typeConstructors = constructors
+//      typeParams = Map.empty
+//      values =
+//        ylModule.values
+//        |> Map.map (fun _ values -> SOD.map T.TopLevelName values)
+//      valueTypes = ylModule.valueTypes
+//      infixOperators =
+//        ylModule.infixOperators
+//        |> Map.map (fun _ infixOps -> SOD.map S.UserDefined infixOps) }
 
 
 
@@ -110,12 +130,12 @@ let makeNamesMapFromAllModuleTopLevelDeclarations (ylModule : T.YlModule) : Name
 //            |> Map.map (fun _ values -> SOD.map T.TopLevelName values)
 //            |> NameResolution.combineTwoReferenceMaps names.values }
 
-let addLetBindings (bindings : T.LetDeclarationNames) (names : NamesMaps) =
-    { names with
-        values =
-            bindings
-            |> Map.map (fun _ values -> SOD.map T.LocalName values)
-            |> NameResolution.combineTwoReferenceMaps names.values }
+//let addLetBindings (bindings : T.LetBindings) (names : NamesMaps) =
+//    { names with
+//        values =
+//            bindings
+//            |> Map.map (fun _ values -> SOD.map T.LocalName values)
+//            |> NameResolution.combineTwoReferenceMaps names.values }
 
 
 
@@ -127,17 +147,17 @@ let addLetBindings (bindings : T.LetDeclarationNames) (names : NamesMaps) =
 //            |> NameResolution.combineTwoReferenceMaps names.infixOperators }
 
 
-let addTypeParams (typeParams : T.TypeParams) (names : NamesMaps) =
-    { names with typeParams = NameResolution.combineTwoReferenceMaps typeParams names.typeParams }
+//let addTypeParams (typeParams : T.TypeParams) (names : NamesMaps) =
+//    { names with typeParams = NameResolution.combineTwoReferenceMaps typeParams names.typeParams }
 
 
-/// Also suitable for pattern match branches
-let addFunctionParams (params_ : T.FunctionOrCaseMatchParam) (names : NamesMaps) =
-    { names with
-        values =
-            params_.namesMap
-            |> Map.map (fun _ param_ -> SOD.map T.Param param_)
-            |> NameResolution.combineTwoReferenceMaps names.values }
+///// Also suitable for pattern match branches
+//let addFunctionParams (params_ : T.FunctionOrCaseMatchParam) (names : NamesMaps) =
+//    { names with
+//        values =
+//            params_.namesMap
+//            |> Map.map (fun _ param_ -> SOD.map T.Param param_)
+//            |> NameResolution.combineTwoReferenceMaps names.values }
 
 
 
@@ -195,19 +215,3 @@ let addFunctionParams (params_ : T.FunctionOrCaseMatchParam) (names : NamesMaps)
 //                let ident = ann.valueName.node
 //                { namesMap with valueTypes = Map.add resolved (ident, ann) namesMap.valueTypes })
 //        names
-
-
-
-
-
-
-
-
-
-
-
-let getInferredTypeFromLowercaseName (lowerCaseName : T.LowerCaseName) : T.TypeJudgment =
-    match lowerCaseName with
-    | T.Param param_ -> Ok param_.inferredType
-    | T.LocalName local -> local.assignedExpression.inferredType
-    | T.TopLevelName top -> top.inferredType
