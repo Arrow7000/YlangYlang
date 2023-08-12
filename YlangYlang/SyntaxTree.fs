@@ -35,7 +35,7 @@ type DestructuredPattern<'Upper> =
 
 
 
-/// Named - or ignored - variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
+/// Named – or ignored – variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
 and AssignmentPattern<'Upper> =
     | Named of Lexer.UnqualValueIdentifier
     | Ignored // i.e. the underscore

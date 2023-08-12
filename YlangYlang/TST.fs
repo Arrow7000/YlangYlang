@@ -1,4 +1,4 @@
-﻿module TypedSyntaxTree
+module TypedSyntaxTree
 
 
 
@@ -18,7 +18,7 @@ type DestructuredPattern =
     | DestructuredCons of AssignmentPattern tom
     | DestructuredTypeVariant of constructor : UpperNameValue * params' : AssignmentPattern list
 
-/// Named - or ignored - variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
+/// Named – or ignored – variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
 and AssignmentPattern =
     | Named of ident : LowerIdent
     | Ignored // i.e. the underscore

@@ -1,4 +1,4 @@
-﻿module TypeChecker
+module TypeChecker
 
 
 open Lexer
@@ -386,7 +386,7 @@ and addConstraint (newConstraint : RefConstr) (constraints : TypeConstraints) : 
         // - The fact that an expression calls itself with no base case
         // - The fact that an expression calls itself with no parameters in the middle to halt the immediate expansion
         //
-        // But actually these two things are one and the same: the fact that an expression references itself without changing any of the parameters it feeds to itself! This is true not just for functions that do not have a base case at all, but even for functions that call themselves without changing any of their parameters - which would also result in an infinite loop - and also values that reference themselves without being functions with parameters in the middle - because those also technically have "no changed parameters" because a non-function value can still be thought of as a function, just with a list of parameters 0 items in length. And referencing itself therefore qualifies as "not changing the parameters it feeds itself" because every empty list is the same as any other!
+        // But actually these two things are one and the same: the fact that an expression references itself without changing any of the parameters it feeds to itself! This is true not just for functions that do not have a base case at all, but even for functions that call themselves without changing any of their parameters – which would also result in an infinite loop – and also values that reference themselves without being functions with parameters in the middle – because those also technically have "no changed parameters" because a non-function value can still be thought of as a function, just with a list of parameters 0 items in length. And referencing itself therefore qualifies as "not changing the parameters it feeds itself" because every empty list is the same as any other!
 
         TypeConstraints.fromConstraint newConstraint
 
@@ -410,7 +410,7 @@ This should:
 - based on the intersections of which referenced values are colocated with which other referenced values and definitive types, build up a set of groups of all the inferred types for the referenced values
 - unify the definitive types in each group
 - from each group, construct a map for all the referenced value names as keys, the values of which is the same combined type for each of them
-- we can do this for a list of values and keep accumulating the same referenced value names with their usages in the other type constraints; that will allow us to construct a map where for each referenced value name we have a much specified TypeConstraints - which is effectively equal to having an inferred type for the value by that name!
+- we can do this for a list of values and keep accumulating the same referenced value names with their usages in the other type constraints; that will allow us to construct a map where for each referenced value name we have a much specified TypeConstraints – which is effectively equal to having an inferred type for the value by that name!
 
 And it's only after doing all of that that it maybe makes sense to go back in and resolve all the referenced value types in an expression? Although tbh maybe even then not. Maybe internally where those values are referenced we just keep them as is, and it's only from the outside that we glean which types those things _must_ be, which we can then view from the outside
 
@@ -692,7 +692,7 @@ type GatheredInferredNames = Map<LowerIdent, SOD<TypeJudgment>>
 ///
 /// We infer the types of the parameters based only on
 /// a) any structure implicit in a destructuring pattern
-/// b) their usage - not the usage from the param name
+/// b) their usage – not the usage from the param name
 let rec getInferredTypeFromAssignmentPattern (pattern : AssignmentPattern) : TypeJudgment * GatheredInferredNames =
     match pattern with
     | Named ident ->

@@ -26,7 +26,7 @@ open System
 
 
 /// This stores a new declared type/value/param/etc in its map...
-/// @TODO: but question is... currently it stores it solely in the unqualified form (I think), but it should also store it in its fully qualified, and locally findable form - i.e. if it's been explicitly imported,referenced under a module alias, namespace opened, etc.
+/// @TODO: but question is... currently it stores it solely in the unqualified form (I think), but it should also store it in its fully qualified, and locally findable form – i.e. if it's been explicitly imported,referenced under a module alias, namespace opened, etc.
 /// So hmmm..... maybe we should instead store it under its full namespace *only*, and have separate mappings for the locally accessible versions
 //let addNewReference (declaredIdent : S.CstNode<'name>) (value : 'v) (map : Map<'name, SingleOrDuplicate<'v>>) =
 let addNewReference (declaredIdent : 'name) (value : 'v) (map : Map<'name, SingleOrDuplicate<'v>>) =
@@ -162,7 +162,7 @@ type LowerCaseName =
 
 //let private getFromMap name =
 //    Map.tryFind name
-//    // @TODO: might need to bubble up that there are duplicates here, to prevent shadowing - but only for things in the same module, top-level declarations are allowed to be duplicated, even if the namespaces are imported wholesale.
+//    // @TODO: might need to bubble up that there are duplicates here, to prevent shadowing – but only for things in the same module, top-level declarations are allowed to be duplicated, even if the namespaces are imported wholesale.
 //    // @TODO: need to look into if explicit imports are allowed if that leads to a name clash.
 //    >> Option.map SingleOrDuplicate.getFirst
 

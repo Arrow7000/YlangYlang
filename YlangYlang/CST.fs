@@ -40,7 +40,7 @@ type DestructuredPattern = S.DestructuredPattern<TypeOrModuleIdentifier>
 
 
 
-/// Named - or ignored - variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
+/// Named – or ignored – variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
 and AssignmentPattern = S.AssignmentPattern<TypeOrModuleIdentifier>
 //| Named of UnqualValueIdentifier
 //| Ignored // i.e. the underscore

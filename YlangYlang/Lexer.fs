@@ -45,7 +45,7 @@ type QualifiedValueIdentifier =
 
 /// SomeModule.Segment.Thing
 ///
-/// Could signify either a module, or a qualified type reference - either fully qualified or qualified by alias
+/// Could signify either a module, or a qualified type reference – either fully qualified or qualified by alias
 type QualifiedModuleOrTypeIdentifier = | QualifiedModuleOrTypeIdentifier of NEL<UnqualTypeOrModuleIdentifier>
 
 
@@ -557,7 +557,7 @@ module Matchers =
         | _ -> NoMatch
 
 
-    /// This parses both dot field name sequences of record expressions, but also first class record getters - depending on context and if there are more than one field path in the sequence
+    /// This parses both dot field name sequences of record expressions, but also first class record getters – depending on context and if there are more than one field path in the sequence
     let dotFieldPath cursor =
         function
         | MultiCharRegex "(?:\.[a-z]\w*)+" str ->

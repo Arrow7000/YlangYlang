@@ -112,7 +112,7 @@ let whitespaceToken =
         | _ -> None)
     |> addCtxToStack PCtx.Whitespace
 
-/// Chomps through any - or no - whitespace
+/// Chomps through any – or no – whitespace
 let spaces : ExpressionParser<unit> = repeat whitespaceToken |> ignore
 
 /// Chomps through at least one whitespace token

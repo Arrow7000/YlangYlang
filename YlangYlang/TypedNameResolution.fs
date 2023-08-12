@@ -78,7 +78,7 @@ let getInferredTypeOfLowercaseName (lowerCaseName : T.LowerCaseName) : T.TypeJud
     | T.TopLevelName value -> value.inferredType
 
 
-///// This constructs the base names map for a module - to be used as a foundation for adding any declared names in any sub-scopes on
+///// This constructs the base names map for a module – to be used as a foundation for adding any declared names in any sub-scopes on
 //let makeNamesMapFromAllModuleTopLevelDeclarations (ylModule : T.YlModule) : NamesMaps =
 //    let getConstructorFromType
 //        (typeName : UpperIdent)

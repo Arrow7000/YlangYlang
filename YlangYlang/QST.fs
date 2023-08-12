@@ -1,4 +1,4 @@
-﻿/// The CST with canonical, fully qualified names - where applicable
+﻿/// The CST with canonical, fully qualified names – where applicable
 module QualifiedSyntaxTree
 
 open Lexer
@@ -141,7 +141,7 @@ type Param =
 //    | DestructuredCons of S.CstNode<AssignmentPattern> tom
 //    | DestructuredTypeVariant of constructor : ResolvedTypeConstructor * params' : S.CstNode<AssignmentPattern> list
 
-///// Named - or ignored - variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
+///// Named – or ignored – variables to be declared, like an identifier name, function parameter, destructured field, pattern match case, etc.
 //and AssignmentPattern =
 //    | Named of resolved : ResolvedValue * ident : LowerIdent
 //    | Ignored // i.e. the underscore
