@@ -1,4 +1,4 @@
-module TypeChecker
+﻿module TypeChecker
 
 
 open Lexer
@@ -41,10 +41,6 @@ module NameRes = TypedNameResolution
 *)
 
 
-
-let emptyConstraint = TypeConstraints.empty
-let makeConstraintsFromDef = TypeConstraints.fromDefinitive
-let makeCnstrntsFromConstr = TypeConstraints.fromConstraint
 
 
 
@@ -140,7 +136,13 @@ let typeOrModuleIdentToUpperNameVal : Lexer.TypeOrModuleIdentifier -> UpperNameV
     | Lexer.UnqualType (UnqualTypeOrModuleIdentifier ident) -> UpperIdent ident |> LocalUpper
 
 
-
+/// Lil helper function for converting to arrow type
+let rec makeDestType (NEL (first, rest)) =
+    match rest with
+    | [] -> first
+    | head :: tail ->
+        DtArrow (first, makeDestType (NEL.new_ head tail))
+        |> TypeConstraints.fromDefinitive
 
 
 let unifyTypeErrors (errA : TypeError) (errB : TypeError) : TypeError =
@@ -196,73 +198,6 @@ let makeTypedExpr (judgment : TypeJudgment) (expr : SingleOrCompoundExpr) : Type
 
 
 
-//type private Accumulator =
-//    { /// Each set in this list represents the fact that all the names in each group need to have the same type. And that all the values referenced in each group have that same inferred type
-//      groups : LowerNameValue set list
-
-//     }
-
-//    static member getGroup (name : LowerNameValue) (acc : Accumulator) =
-//        List.tryFind (Set.contains name) acc.groups
-
-//    /// This adds a set of names to the contained sets, and regroups the sets to account for the newly added names
-//    static member addNames (newNames : LowerNameValue set) (acc : Accumulator) =
-//        let (withName, withoutName) =
-//            List.partition (Set.intersect newNames >> Set.isEmpty >> not) acc.groups
-
-//        { acc with
-//            groups =
-//                Set.unionMany (newNames :: withName)
-//                :: withoutName }
-
-
-
-
-
-type private Accumulator = Map<LowerNameValue set, Result<DefinitiveType option, TypeError>>
-//{ /// Each set in this map represents the fact that all the names in each group need to have the same type. And that all the values referenced in each group have that same inferred type
-//  groups : Map<LowerNameValue set, DefinitiveType option>
-
-// }
-
-//static member addConstraints
-//    (defTypeOpt : DefinitiveType option)
-//    (namesSet : LowerNameValue set)
-//    (acc : Accumulator)
-//    =
-//    let predicate keySet =
-//        Set.intersect namesSet keySet |> Set.isNotEmpty
-
-//    let combiner
-//        (keyvalList : (LowerNameValue set * DefinitiveType option) list)
-//        : LowerNameValue set * DefinitiveType option =
-//            let keySets, defTypes = List.unzip keyvalList |> Tuple.mapSnd (List.choose id)
-
-//            let newKey = Set.unionMany keySets
-//            let newVal =
-//                defTypes
-//                |> List.fold (fun state item ->
-//                                match state with
-//                                | None -> None
-//                                | Some def -> unifyDefinitiveTypes def item
-//                                      ) defTypeOpt
-
-
-//    Map.combineManyKeys predicate combiner acc.groups
-
-
-
-///// This adds a set of names to the contained sets, and regroups the sets to account for the newly added names
-//static member addNames (newNames : LowerNameValue set) (acc : Accumulator) =
-//    let (withName, withoutName) =
-//        List.partition (Set.intersect newNames >> Set.isEmpty >> not) acc.groups
-
-//    { acc with
-//        groups =
-//            Set.unionMany (newNames :: withName)
-//            :: withoutName }
-
-
 
 
 
@@ -304,19 +239,25 @@ and unifyDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveType) : Res
     | DtList a, DtList b -> unifyTypeConstraints a b |> Result.map DtList
 
     | DtArrow (fromA, toA), DtArrow (fromB, toB) ->
-        let unifiedToTypes =
-            unifyTypesNel toA toB
-            |> Result.mapError (fun _ ->
-                TypeError.fromTypes [ DtArrow (fromA, toA)
-                                      DtArrow (fromB, toB) ])
-            |> Result.bind (NEL.sequenceResult >> concatResultErrListNel)
-
-        (unifyTypeConstraints fromA fromB, unifiedToTypes)
+        (unifyTypeConstraints fromA fromB, unifyTypeConstraints toA toB)
         ||> Result.map2
-                (fun fromType toTypes_ -> DtArrow (fromType, toTypes_))
+                (fun fromType toType -> DtArrow (fromType, toType))
                 (fun _ _ ->
                     TypeError.fromTypes [ DtArrow (fromA, toA)
                                           DtArrow (fromB, toB) ])
+    //let unifiedToTypes =
+    //    unifyTypesNel toA toB
+    //    |> Result.mapError (fun _ ->
+    //        TypeError.fromTypes [ DtArrow (fromA, toA)
+    //                              DtArrow (fromB, toB) ])
+    //    |> Result.bind (NEL.sequenceResult >> concatResultErrListNel)
+
+    //(unifyTypeConstraints fromA fromB, unifiedToTypes)
+    //||> Result.map2
+    //        (fun fromType toTypes_ -> DtArrow (fromType, toTypes_))
+    //        (fun _ _ ->
+    //            TypeError.fromTypes [ DtArrow (fromA, toA)
+    //                                  DtArrow (fromB, toB) ])
 
     | DtNewType (typeRefA, typeParamsA), DtNewType (typeRefB, typeParamsB) ->
         if typeRefA = typeRefB then
@@ -404,96 +345,6 @@ and addDefinitiveType (newDef : DefinitiveType) (constraints : TypeConstraints) 
 
     | Recursive -> TypeConstraints.fromDefinitive newDef |> Ok
 
-
-(*
-This should:
-- based on the intersections of which referenced values are colocated with which other referenced values and definitive types, build up a set of groups of all the inferred types for the referenced values
-- unify the definitive types in each group
-- from each group, construct a map for all the referenced value names as keys, the values of which is the same combined type for each of them
-- we can do this for a list of values and keep accumulating the same referenced value names with their usages in the other type constraints; that will allow us to construct a map where for each referenced value name we have a much specified TypeConstraints – which is effectively equal to having an inferred type for the value by that name!
-
-And it's only after doing all of that that it maybe makes sense to go back in and resolve all the referenced value types in an expression? Although tbh maybe even then not. Maybe internally where those values are referenced we just keep them as is, and it's only from the outside that we glean which types those things _must_ be, which we can then view from the outside
-
-So then there's the separate question of how we can then use that to figure out if there is some recursion anywhere? Because we need to know whether a value references itself inside its own definition so that we know not to try to resolve the type of that thing completely... but then tbh are we even attempting to do that anymore with this new approach?
-
-*)
-
-and private addSingleConstrainedValue
-    (defTypeOpt : DefinitiveType option)
-    (namesSet : LowerNameValue set)
-    (acc : Accumulator)
-    =
-    let predicate = Set.intersect namesSet >> Set.isNotEmpty
-
-    let combiner
-        (keyvalList : (LowerNameValue set * Result<DefinitiveType option, TypeError>) list)
-        : LowerNameValue set * Result<DefinitiveType option, TypeError> =
-
-        let combineTwoDefOptResults
-            (a : Result<DefinitiveType option, TypeError>)
-            (b : Result<DefinitiveType option, TypeError>)
-            : Result<DefinitiveType option, TypeError> =
-            match a, b with
-            | Ok (Some a_), Ok (Some b_) -> unifyDefinitiveTypes a_ b_ |> Result.map Some
-
-            | Ok (Some def), Ok None
-            | Ok None, Ok (Some def) -> Ok (Some def)
-
-            | Ok None, Ok None -> Ok None
-
-            | Error err1, Error err2 -> unifyTypeErrors err1 err2 |> Error
-
-            | Ok None, Error e
-            | Error e, Ok None -> Error e
-
-            | Ok (Some def), Error e
-            | Error e, Ok (Some def) -> addDefToTypeError def e |> Error
-
-        let keySets, defTypes = List.unzip keyvalList
-
-        let newKey = Set.unionMany keySets
-
-        let newVal =
-            defTypes
-            |> List.fold combineTwoDefOptResults (Ok defTypeOpt)
-
-        newKey, newVal
-
-    Map.combineManyKeys predicate combiner acc
-
-
-/// This is the function that infers all the types for all referenced values based on a list of TypeConstraints!
-and getConstrainedValues (constraintsList : TypeConstraints list) : Map<LowerNameValue, TypeJudgment> =
-    let convertSingleAccEntryBack (nameSet : LowerNameValue set) (defOpt : DefinitiveType option) : TypeConstraints =
-        Constrained (defOpt, Set.map ByValue nameSet)
-
-    let intermediate : Accumulator =
-        constraintsList
-        |> List.fold
-            (fun state cnstrnt ->
-                match cnstrnt with
-                | Constrained (defOpt, others) ->
-                    let valueConstraints =
-                        others
-                        |> Set.choose (function
-                            | ByValue name -> Some name
-                            | _ -> None)
-
-                    addSingleConstrainedValue defOpt valueConstraints state
-
-                | Recursive -> state)
-            Map.empty
-
-    intermediate
-    // Convert it back to a map of names with their inferred types
-    |> Map.toList
-    |> List.collect (fun (nameSet, defOptResult) ->
-        let constraintsForNameGroup =
-            Result.map (convertSingleAccEntryBack nameSet) defOptResult
-
-        Set.toList nameSet
-        |> List.map (Tuple.makePairWithSnd constraintsForNameGroup))
-    |> Map.ofList
 
 
 //and getConstrainedValues (constraintsList : TypeConstraints list) : Map<LowerNameValue, TypeJudgment> =
@@ -641,23 +492,23 @@ and unifyDefinitiveJudgments
 /// It has to be a type constraint and not a definitive type because we need to take into consideration type params (which may not be declared) and references to type names (which may not exist)
 let rec mentionableTypeToDefinite (mentionable : Cst.MentionableType) : TypeConstraints =
     match mentionable with
-    | S.UnitType -> makeConstraintsFromDef DtUnitType
+    | S.UnitType -> TypeConstraints.fromDefinitive DtUnitType
     | S.GenericTypeVar unqual ->
         unqualValToLowerIdent unqual
         |> ByTypeParam
-        |> makeCnstrntsFromConstr
+        |> TypeConstraints.fromConstraint
 
     | S.Tuple { types = types } ->
         types
         |> TOM.map (S.getNode >> mentionableTypeToDefinite)
         |> DtTuple
-        |> makeConstraintsFromDef
+        |> TypeConstraints.fromDefinitive
 
     | S.Record { fields = fields } ->
         fields
         |> Map.mapKeyVal (fun key value -> unqualValToRecField key.node, mentionableTypeToDefinite value.node)
         |> DtRecordExact
-        |> makeConstraintsFromDef
+        |> TypeConstraints.fromDefinitive
 
     | S.ExtendedRecord { extendedTypeParam = extendedParam
                          fields = fields } ->
@@ -666,21 +517,36 @@ let rec mentionableTypeToDefinite (mentionable : Cst.MentionableType) : TypeCons
         fields
         |> Map.mapKeyVal (fun key value -> unqualValToRecField key.node, mentionableTypeToDefinite value.node)
         |> DtRecordWith
-        |> makeConstraintsFromDef
+        |> TypeConstraints.fromDefinitive
 
     | S.ReferencedType (typeName, typeParams) ->
         let definiteTypeParams =
             List.map (S.getNode >> mentionableTypeToDefinite) typeParams
 
         IsOfTypeByName (typeOrModuleIdentToUpperNameVal typeName.node, definiteTypeParams)
-        |> makeCnstrntsFromConstr
+        |> TypeConstraints.fromConstraint
 
     | S.Arrow (fromType, toTypes) ->
-        DtArrow (mentionableTypeToDefinite fromType.node, NEL.map (S.getNode >> mentionableTypeToDefinite) toTypes)
-        |> makeConstraintsFromDef
+        DtArrow (
+            mentionableTypeToDefinite fromType.node,
+            NEL.map S.getNode toTypes
+            |> mentionableArrowToDefinite
+        )
+        |> TypeConstraints.fromDefinitive
 
     | S.Parensed parensed -> mentionableTypeToDefinite parensed.node
 
+
+/// Converts an NEL representing one or more destination types in an arrow type to a single type
+and private mentionableArrowToDefinite (toTypes : Cst.MentionableType nel) : TypeConstraints =
+    let (NEL (first, rest)) = toTypes
+    let convertedFirst = mentionableTypeToDefinite first
+
+    match rest with
+    | [] -> convertedFirst
+    | head :: tail ->
+        DtArrow (convertedFirst, mentionableArrowToDefinite (NEL (head, tail)))
+        |> TypeConstraints.fromDefinitive
 
 
 
@@ -696,7 +562,7 @@ type GatheredInferredNames = Map<LowerIdent, SOD<TypeJudgment>>
 let rec getInferredTypeFromAssignmentPattern (pattern : AssignmentPattern) : TypeJudgment * GatheredInferredNames =
     match pattern with
     | Named ident ->
-        let inferredType = Ok TypeConstraints.empty
+        let inferredType = Ok TypeConstraints.unspecific
 
         inferredType,
         Map.empty
@@ -704,7 +570,7 @@ let rec getInferredTypeFromAssignmentPattern (pattern : AssignmentPattern) : Typ
 
     | Ignored -> Ok TypeConstraints.empty, Map.empty
 
-    | Unit -> makeConstraintsFromDef DtUnitType |> Ok, Map.empty
+    | Unit -> TypeConstraints.fromDefinitive DtUnitType |> Ok, Map.empty
 
     | DestructuredPattern destructured -> getInferredTypeFromDestructuredPattern destructured
 
@@ -721,16 +587,16 @@ and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : Typ
     | DestructuredRecord fieldNames ->
         let inferredType =
             fieldNames
-            |> NEL.map (fun recFieldName -> recFieldName, TypeConstraints.empty)
+            |> NEL.map (fun recFieldName -> recFieldName, TypeConstraints.unspecific)
             |> NEL.toList
             |> Map.ofList
             |> DtRecordWith
-            |> makeConstraintsFromDef
+            |> TypeConstraints.fromDefinitive
             |> Ok
 
         let names : GatheredInferredNames =
             fieldNames
-            |> NEL.map (fun ident -> recFieldToLowerIdent ident, Ok TypeConstraints.empty)
+            |> NEL.map (fun ident -> recFieldToLowerIdent ident, Ok TypeConstraints.unspecific)
             |> NEL.toList
             |> SOD.makeMapFromList
 
@@ -742,7 +608,7 @@ and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : Typ
         let typeConstraints =
             gatheredItems
             |> TOM.map fst
-            |> TOM.fold unifyJudgments (Ok emptyConstraint)
+            |> TOM.fold unifyJudgments (Ok TypeConstraints.empty)
 
         let namesMap =
             gatheredItems
@@ -767,7 +633,7 @@ and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : Typ
             gatheredItems
             |> TOM.map fst
             |> TOM.sequenceResult
-            |> Result.map (DtTuple >> makeConstraintsFromDef)
+            |> Result.map (DtTuple >> TypeConstraints.fromDefinitive)
             |> concatResultErrListNel
 
         typeConstraints, namesMap
@@ -786,7 +652,7 @@ and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : Typ
         let typeConstraints =
             // @TODO: Need to also add in the fact that this constructor is of type Arrow with as many params as there are params in this destructured expression!
             ByConstructorType ctor
-            |> makeCnstrntsFromConstr
+            |> TypeConstraints.fromConstraint
             |> Ok
 
         typeConstraints, namesMap
@@ -810,7 +676,7 @@ let addTypeConstraints (constr : TypeConstraints) (expr : TypedExpr) : TypedExpr
             |> Result.bind (unifyTypeConstraints constr) }
 
 let addConstrainType (constr : RefConstr) (expr : TypedExpr) : TypedExpr =
-    addTypeConstraints (makeCnstrntsFromConstr constr) expr
+    addTypeConstraints (TypeConstraints.fromConstraint constr) expr
 
 let addTypeJudgment (judgment : TypeJudgment) (expr : TypedExpr) : TypedExpr =
     { expr with inferredType = unifyJudgments expr.inferredType judgment }
@@ -1117,21 +983,21 @@ let rec gatherParams (pattern : AssignmentPattern) : FunctionOrCaseMatchParam =
     | Named ident ->
         let param_ : Param =
             { destructurePath = SimpleName
-              inferredType = Ok emptyConstraint }
+              inferredType = Ok TypeConstraints.unspecific }
 
         { paramPattern = pattern
           namesMap = Map.add ident (SOD.new_ param_) Map.empty
-          inferredType = Ok emptyConstraint }
+          inferredType = Ok TypeConstraints.unspecific }
 
     | Ignored ->
         { paramPattern = pattern
           namesMap = Map.empty
-          inferredType = Ok emptyConstraint }
+          inferredType = Ok TypeConstraints.empty }
 
     | Unit ->
         { paramPattern = pattern
           namesMap = Map.empty
-          inferredType = makeConstraintsFromDef DtUnitType |> Ok }
+          inferredType = TypeConstraints.fromDefinitive DtUnitType |> Ok }
 
     | DestructuredPattern destructured ->
         let (inferredType, _) = getInferredTypeFromDestructuredPattern destructured
@@ -1175,7 +1041,7 @@ and gatherDestructuredPattern (pattern : DestructuredPattern) : Map<LowerIdent, 
               inferredType =
                 LocalLower ident
                 |> ByValue
-                |> makeCnstrntsFromConstr
+                |> TypeConstraints.fromConstraint
                 |> Ok })
         |> NEL.toList
         |> SOD.makeMapFromList
@@ -1221,8 +1087,6 @@ let typeFuncOrCaseMatchParam : Cst.AssignmentPattern -> FunctionOrCaseMatchParam
 
 
 
-
-
 let typeOfPrimitiveLiteralValue (primitive : S.PrimitiveLiteralValue) : DefinitiveType =
     match primitive with
     | S.NumberPrimitive num ->
@@ -1236,20 +1100,18 @@ let typeOfPrimitiveLiteralValue (primitive : S.PrimitiveLiteralValue) : Definiti
 
 
 
-
-let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expression) : TypedExpr =
-    let typeCheckWithName name =
-        typeCheckExpression (name :: resolutionChain)
+/// The purpose of this function is to rerun the type inference for a (potentially modified) expression
+let rec typeCheckExpression (expr : SingleOrCompoundExpr) : TypedExpr =
 
     match expr with
-    | S.SingleValueExpression singleVal ->
+    | T.SingleValueExpression singleVal ->
         match singleVal with
-        | S.ExplicitValue explicit ->
+        | T.ExplicitValue explicit ->
             match explicit with
-            | S.Primitive primitive ->
+            | T.Primitive primitive ->
                 let type_ =
                     typeOfPrimitiveLiteralValue primitive
-                    |> makeConstraintsFromDef
+                    |> TypeConstraints.fromDefinitive
                     |> Ok
 
                 { inferredType = type_
@@ -1259,26 +1121,24 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
                     |> SingleValueExpression }
 
 
-            | S.DotGetter dotGetter ->
-                let recFieldName = unqualValToRecField dotGetter
-
+            | T.DotGetter dotGetter ->
                 let type_ =
                     Map.empty
-                    |> Map.add recFieldName emptyConstraint
+                    |> Map.add dotGetter TypeConstraints.empty
                     |> DtRecordWith
-                    |> makeConstraintsFromDef
+                    |> TypeConstraints.fromDefinitive
                     |> Ok
 
                 { inferredType = type_
                   expr =
-                    DotGetter recFieldName
+                    DotGetter dotGetter
                     |> ExplicitValue
                     |> SingleValueExpression }
 
-            | S.Compound compound ->
+            | T.Compound compound ->
                 match compound with
-                | S.List list ->
-                    let typedList = List.map (S.getNode >> typeCheckExpression resolutionChain) list
+                | T.List list ->
+                    let typedList = List.map (S.getNode >> typeCheckExpression) list
 
                     let combinedType =
                         typedList
@@ -1286,7 +1146,7 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
                             (fun state expr ->
                                 (state, expr.inferredType)
                                 ||> Result.bind2 unifyTypeConstraints unifyTypeErrors)
-                            (Ok emptyConstraint)
+                            (Ok TypeConstraints.empty)
                         |> Result.map (DtList >> TypeConstraints.fromDefinitive)
 
                     { inferredType = combinedType
@@ -1297,15 +1157,19 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
                         |> ExplicitValue
                         |> SingleValueExpression }
 
-                | S.CompoundValues.Tuple tuple ->
-                    let typedList = TOM.map (S.getNode >> typeCheckExpression resolutionChain) tuple
+                | T.CompoundValues.Tuple tuple ->
+                    let typedList =
+                        TOM.map
+                            (S.getNode
+                             >> typeCheckCstExpression resolutionChain)
+                            tuple
 
                     let combinedType =
                         typedList
                         |> TOM.map (fun expr -> expr.inferredType)
                         |> TOM.sequenceResult
                         |> concatResultErrListNel
-                        |> Result.map (DtTuple >> makeConstraintsFromDef)
+                        |> Result.map (DtTuple >> TypeConstraints.fromDefinitive)
 
                     { inferredType = combinedType
                       expr =
@@ -1315,11 +1179,11 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
                         |> ExplicitValue
                         |> SingleValueExpression }
 
-                | S.CompoundValues.Record record ->
+                | T.CompoundValues.Record record ->
                     let typedList =
                         record
                         |> List.map (fun (key, value) ->
-                            unqualValToRecField key.node, typeCheckExpression resolutionChain value.node)
+                            unqualValToRecField key.node, typeCheckCstExpression resolutionChain value.node)
 
                     let combinedType =
                         typedList
@@ -1329,7 +1193,7 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
                         |> Result.sequenceList
                         |> Result.map Map.ofList
                         |> concatResultErrListNel
-                        |> Result.map (DtRecordExact >> makeConstraintsFromDef)
+                        |> Result.map (DtRecordExact >> TypeConstraints.fromDefinitive)
 
                     { inferredType = combinedType
                       expr =
@@ -1344,12 +1208,12 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
                     let typedList =
                         additions
                         |> NEL.map (fun (key, value) ->
-                            unqualValToRecField key.node, typeCheckExpression resolutionChain value.node)
+                            unqualValToRecField key.node, typeCheckCstExpression resolutionChain value.node)
 
                     let typeOfEditedRecord =
                         unqualValToLowerName extended.node
                         |> ByValue
-                        |> makeCnstrntsFromConstr
+                        |> TypeConstraints.fromConstraint
 
                     let derivedFromFieldsType : TypeJudgment =
                         typedList
@@ -1359,7 +1223,7 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
                         |> NEL.sequenceResult
                         |> Result.map (NEL.toList >> Map.ofList)
                         |> concatResultErrListNel
-                        |> Result.map (DtRecordWith >> makeConstraintsFromDef)
+                        |> Result.map (DtRecordWith >> TypeConstraints.fromDefinitive)
 
                     let combinedType : TypeJudgment =
                         Result.bind (unifyTypeConstraints typeOfEditedRecord) derivedFromFieldsType
@@ -1371,15 +1235,14 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
                         |> ExplicitValue
                         |> SingleValueExpression }
 
-            | S.Function funcVal ->
+            | T.Function funcVal ->
                 // @TODO: we need to actually add the params to namesMaps before we can type check the expression
-                let typeOfBody = typeCheckExpression resolutionChain funcVal.body.node
+                let typeOfBody = typeCheckCstExpression resolutionChain funcVal.body.node
 
                 let funcParams : FunctionOrCaseMatchParam nel =
                     funcVal.params_
                     |> NEL.map (S.getNode >> typeFuncOrCaseMatchParam)
 
-                //let (NEL (firstParamType, restParamTypes)) =
                 let funcParamTypes =
                     funcParams
                     |> NEL.traverseResult (fun param_ -> param_.inferredType)
@@ -1393,8 +1256,388 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
                                     NEL.new_ typeOfBody_ (List.rev restParamTypes)
                                     |> NEL.reverse
 
-                                DtArrow (firstParamType, toTypes)
-                                |> makeConstraintsFromDef)
+                                DtArrow (firstParamType, makeDestType toTypes)
+                                |> TypeConstraints.fromDefinitive)
+                            unifyTypeErrors
+
+
+                let funcVal : FunctionValue =
+                    { params_ = funcParams
+                      body = typeOfBody }
+
+                { expr =
+                    Function funcVal
+                    |> ExplicitValue
+                    |> SingleValueExpression
+                  inferredType = arrowType }
+
+
+        | T.UpperIdentifier name ->
+            let ctorName = typeOrModuleIdentToUpperNameVal name
+            let defType = ByConstructorType ctorName
+
+            { expr = UpperIdentifier ctorName |> SingleValueExpression
+              inferredType = TypeConstraints.fromConstraint defType |> Ok }
+
+        | T.LowerIdentifier name ->
+            let lowerNameVal = convertValueIdentifierToLowerName name
+
+            let inferredType =
+                match lowerNameVal with
+                | FullyQualifiedLower _ ->
+                    ByValue lowerNameVal
+                    |> TypeConstraints.fromConstraint
+                    |> Ok
+
+                | LocalLower local ->
+                    if List.contains local resolutionChain then
+                        Ok Recursive
+                    else
+                        ByValue lowerNameVal
+                        |> TypeConstraints.fromConstraint
+                        |> Ok
+
+            { expr =
+                LowerIdentifier lowerNameVal
+                |> SingleValueExpression
+              inferredType = inferredType }
+
+        | T.LetExpression (declarations, expr) ->
+
+            let bodyExpr = typeCheckExpression resolutionChain expr.node
+
+
+            let typedDeclarations : LetBindings =
+                declarations
+                |> NEL.map (fun binding -> binding.node.bindPattern.node, binding.node.value.node)
+                |> NEL.map (fun (bindPattern, bindValue) ->
+                    let param = typeFuncOrCaseMatchParam bindPattern
+                    let boundNames = param.namesMap |> Map.keys |> Seq.toList
+                    let assignedExpr = typeCheckExpression (boundNames @ resolutionChain) bindValue
+
+                    { paramPattern = param.paramPattern
+                      namesMap = param.namesMap
+                      bindingPatternInferredType = param.inferredType
+                      assignedExpression = assignedExpr
+                      combinedInferredType = unifyJudgments assignedExpr.inferredType param.inferredType })
+
+            let combinedNamesMap =
+                typedDeclarations
+                |> NEL.toList
+                |> List.map (fun decl -> decl.namesMap)
+                |> SOD.combineReferenceMaps
+
+            { inferredType = bodyExpr.inferredType
+              expr =
+                LetExpression (typedDeclarations, bodyExpr)
+                |> SingleValueExpression }
+
+
+        | T.ControlFlowExpression controlFlow ->
+            match controlFlow with
+            | T.IfExpression (cond, ifTrue, ifFalse) ->
+                let conditionalWithBoolConstraint =
+                    typeCheckCstExpression resolutionChain cond.node
+                    |> addDefinitiveConstraint (DtPrimitiveType Bool) // because conditions need to be booleans
+
+                // This is aiming to express the type constraint that both branches of the if expression should have the same type
+
+                let typedIfTrueBranch = typeCheckCstExpression resolutionChain ifTrue.node
+                let typedIfFalseBranch = typeCheckCstExpression resolutionChain ifFalse.node
+
+                let expressionType : TypeJudgment =
+                    match typedIfTrueBranch.inferredType with
+                    | Ok typedIfTrue -> Ok typedIfTrue
+                    | Error _ -> typedIfFalseBranch.inferredType
+
+                // This should leave whichever one had the original definitive type unchanged, and only add a definitive constraint to the other one
+                let unifiedTrue = addTypeJudgment expressionType typedIfTrueBranch
+                let unifiedFalse = addTypeJudgment expressionType typedIfFalseBranch
+
+
+                { inferredType = expressionType
+                  expr =
+                    IfExpression (conditionalWithBoolConstraint, unifiedTrue, unifiedFalse)
+                    |> ControlFlowExpression
+                    |> SingleValueExpression }
+
+
+            | T.CaseMatch (exprToMatch, branches) ->
+                let typedExprToMatch = typeCheckCstExpression resolutionChain exprToMatch.node
+
+                let typedBranches =
+                    branches
+                    |> NEL.map (fun (pattern, branchExpr) ->
+                        { matchPattern = typeFuncOrCaseMatchParam pattern.node
+                          body = typeCheckCstExpression resolutionChain branchExpr.node })
+
+
+                let (matchExprType, branchReturnTypeConstraints) =
+                    typedBranches
+                    |> NEL.fold
+                        (fun (patternConstraints, branchConstraints) branch ->
+                            unifyJudgments patternConstraints branch.matchPattern.inferredType,
+                            unifyJudgments branchConstraints branch.body.inferredType)
+                        (typedExprToMatch.inferredType, Ok TypeConstraints.empty)
+
+                { inferredType = branchReturnTypeConstraints
+                  expr =
+                    CaseMatch (addTypeJudgment matchExprType typedExprToMatch, typedBranches)
+                    |> ControlFlowExpression
+                    |> SingleValueExpression }
+
+    | T.CompoundExpression compExpr ->
+        match compExpr with
+        | T.FunctionApplication (funcExpr, params_) ->
+            let typedFunc = typeCheckCstExpression resolutionChain funcExpr.node
+
+            let typedParams =
+                params_
+                |> NEL.map (
+                    S.getNode
+                    >> typeCheckCstExpression resolutionChain
+                )
+
+            /// @TODO: I _think_ this might be wrong, because this means letting type inference flow upstream, thus resulting in destroying let polymorphism
+            let paramRequirementsFromDeFactoParams =
+                typedParams
+                |> NEL.map (fun e -> e.inferredType)
+                |> NEL.sequenceResult
+                |> concatResultErrListNel
+
+            let unified =
+                paramRequirementsFromDeFactoParams
+                |> Result.bind (fun paramRequirements ->
+                    let (NEL (firstParam, restParams)) = paramRequirements
+
+                    let restParamsAndReturnType =
+                        NEL.fromListAndLast restParams TypeConstraints.unspecific
+
+                    let funcTypeRequirement = DtArrow (firstParam, makeDestType restParamsAndReturnType)
+
+                    unifyJudgments
+                        typedFunc.inferredType
+                        (TypeConstraints.fromDefinitive funcTypeRequirement
+                         |> Ok))
+
+            { inferredType = unified
+              expr =
+                FunctionApplication (typedFunc, typedParams)
+                |> CompoundExpression }
+
+        | T.DotAccess (dottedExpr, dotSequence) ->
+            let rec makeNestedMap (fieldSeq : RecordFieldName list) =
+                match fieldSeq with
+                | [] -> TypeConstraints.empty
+                | head :: rest ->
+                    Map.empty
+                    |> Map.add head (makeNestedMap rest)
+                    |> DtRecordWith
+                    |> TypeConstraints.fromDefinitive
+
+            let typedExpr = typeCheckCstExpression resolutionChain dottedExpr.node
+
+            let exprTypeConstraint =
+                dotSequence.node
+                |> NEL.map unqualValToRecField
+                |> NEL.toList
+                |> makeNestedMap
+
+            let fullyTypedExpr = addTypeConstraints exprTypeConstraint typedExpr
+
+            { inferredType = fullyTypedExpr.inferredType
+              expr =
+                DotAccess (typedExpr, dotSequence.node |> NEL.map unqualValToRecField)
+                |> CompoundExpression }
+
+        | T.Operator (left, opSequence) ->
+            failwith
+                "@TODO: need to break up operator sequence into a binary tree of operators branch nodes and operands leaf nodes"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.Expression) : TypedExpr =
+    let typeCheckWithName name =
+        typeCheckCstExpression (name :: resolutionChain)
+
+    match expr with
+    | S.SingleValueExpression singleVal ->
+        match singleVal with
+        | S.ExplicitValue explicit ->
+            match explicit with
+            | S.Primitive primitive ->
+                let type_ =
+                    typeOfPrimitiveLiteralValue primitive
+                    |> TypeConstraints.fromDefinitive
+                    |> Ok
+
+                { inferredType = type_
+                  expr =
+                    Primitive primitive
+                    |> ExplicitValue
+                    |> SingleValueExpression }
+
+
+            | S.DotGetter dotGetter ->
+                let recFieldName = unqualValToRecField dotGetter
+
+                let type_ =
+                    Map.empty
+                    |> Map.add recFieldName TypeConstraints.empty
+                    |> DtRecordWith
+                    |> TypeConstraints.fromDefinitive
+                    |> Ok
+
+                { inferredType = type_
+                  expr =
+                    DotGetter recFieldName
+                    |> ExplicitValue
+                    |> SingleValueExpression }
+
+            | S.Compound compound ->
+                match compound with
+                | S.List list ->
+                    let typedList =
+                        List.map
+                            (S.getNode
+                             >> typeCheckCstExpression resolutionChain)
+                            list
+
+                    let combinedType =
+                        typedList
+                        |> List.fold
+                            (fun state expr ->
+                                (state, expr.inferredType)
+                                ||> Result.bind2 unifyTypeConstraints unifyTypeErrors)
+                            (Ok TypeConstraints.empty)
+                        |> Result.map (DtList >> TypeConstraints.fromDefinitive)
+
+                    { inferredType = combinedType
+                      expr =
+                        typedList
+                        |> T.List
+                        |> Compound
+                        |> ExplicitValue
+                        |> SingleValueExpression }
+
+                | S.CompoundValues.Tuple tuple ->
+                    let typedList =
+                        TOM.map
+                            (S.getNode
+                             >> typeCheckCstExpression resolutionChain)
+                            tuple
+
+                    let combinedType =
+                        typedList
+                        |> TOM.map (fun expr -> expr.inferredType)
+                        |> TOM.sequenceResult
+                        |> concatResultErrListNel
+                        |> Result.map (DtTuple >> TypeConstraints.fromDefinitive)
+
+                    { inferredType = combinedType
+                      expr =
+                        typedList
+                        |> CompoundValues.Tuple
+                        |> Compound
+                        |> ExplicitValue
+                        |> SingleValueExpression }
+
+                | S.CompoundValues.Record record ->
+                    let typedList =
+                        record
+                        |> List.map (fun (key, value) ->
+                            unqualValToRecField key.node, typeCheckCstExpression resolutionChain value.node)
+
+                    let combinedType =
+                        typedList
+                        |> List.map (fun (key, expr) ->
+                            expr.inferredType
+                            |> Result.map (fun inferred -> key, inferred))
+                        |> Result.sequenceList
+                        |> Result.map Map.ofList
+                        |> concatResultErrListNel
+                        |> Result.map (DtRecordExact >> TypeConstraints.fromDefinitive)
+
+                    { inferredType = combinedType
+                      expr =
+                        typedList
+                        |> CompoundValues.Record
+                        |> Compound
+                        |> ExplicitValue
+                        |> SingleValueExpression }
+
+                | S.CompoundValues.RecordExtension (extended, additions) ->
+
+                    let typedList =
+                        additions
+                        |> NEL.map (fun (key, value) ->
+                            unqualValToRecField key.node, typeCheckCstExpression resolutionChain value.node)
+
+                    let typeOfEditedRecord =
+                        unqualValToLowerName extended.node
+                        |> ByValue
+                        |> TypeConstraints.fromConstraint
+
+                    let derivedFromFieldsType : TypeJudgment =
+                        typedList
+                        |> NEL.map (fun (key, expr) ->
+                            expr.inferredType
+                            |> Result.map (fun inferred -> key, inferred))
+                        |> NEL.sequenceResult
+                        |> Result.map (NEL.toList >> Map.ofList)
+                        |> concatResultErrListNel
+                        |> Result.map (DtRecordWith >> TypeConstraints.fromDefinitive)
+
+                    let combinedType : TypeJudgment =
+                        Result.bind (unifyTypeConstraints typeOfEditedRecord) derivedFromFieldsType
+
+                    { inferredType = combinedType
+                      expr =
+                        CompoundValues.RecordExtension (unqualValToLowerIdent extended.node, typedList)
+                        |> Compound
+                        |> ExplicitValue
+                        |> SingleValueExpression }
+
+            | S.Function funcVal ->
+                // @TODO: we need to actually add the params to namesMaps before we can type check the expression
+                let typeOfBody = typeCheckCstExpression resolutionChain funcVal.body.node
+
+                let funcParams : FunctionOrCaseMatchParam nel =
+                    funcVal.params_
+                    |> NEL.map (S.getNode >> typeFuncOrCaseMatchParam)
+
+                let funcParamTypes =
+                    funcParams
+                    |> NEL.traverseResult (fun param_ -> param_.inferredType)
+                    |> concatResultErrListNel
+
+                let arrowType : TypeJudgment =
+                    (typeOfBody.inferredType, funcParamTypes)
+                    ||> Result.map2
+                            (fun typeOfBody_ (NEL (firstParamType, restParamTypes)) ->
+                                let toTypes =
+                                    NEL.new_ typeOfBody_ (List.rev restParamTypes)
+                                    |> NEL.reverse
+
+                                DtArrow (firstParamType, makeDestType toTypes)
+                                |> TypeConstraints.fromDefinitive)
                             unifyTypeErrors
 
 
@@ -1441,7 +1684,7 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
 
         | S.LetExpression (declarations, expr) ->
 
-            let bodyExpr = typeCheckExpression resolutionChain expr.node
+            let bodyExpr = typeCheckCstExpression resolutionChain expr.node
 
 
             let typedDeclarations : LetBindings =
@@ -1450,7 +1693,7 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
                 |> NEL.map (fun (bindPattern, bindValue) ->
                     let param = typeFuncOrCaseMatchParam bindPattern
                     let boundNames = param.namesMap |> Map.keys |> Seq.toList
-                    let assignedExpr = typeCheckExpression (boundNames @ resolutionChain) bindValue
+                    let assignedExpr = typeCheckCstExpression (boundNames @ resolutionChain) bindValue
 
                     { paramPattern = param.paramPattern
                       namesMap = param.namesMap
@@ -1474,13 +1717,13 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
             match controlFlow with
             | S.IfExpression (cond, ifTrue, ifFalse) ->
                 let conditionalWithBoolConstraint =
-                    typeCheckExpression resolutionChain cond.node
+                    typeCheckCstExpression resolutionChain cond.node
                     |> addDefinitiveConstraint (DtPrimitiveType Bool) // because conditions need to be booleans
 
                 // This is aiming to express the type constraint that both branches of the if expression should have the same type
 
-                let typedIfTrueBranch = typeCheckExpression resolutionChain ifTrue.node
-                let typedIfFalseBranch = typeCheckExpression resolutionChain ifFalse.node
+                let typedIfTrueBranch = typeCheckCstExpression resolutionChain ifTrue.node
+                let typedIfFalseBranch = typeCheckCstExpression resolutionChain ifFalse.node
 
                 let expressionType : TypeJudgment =
                     match typedIfTrueBranch.inferredType with
@@ -1500,13 +1743,13 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
 
 
             | S.CaseMatch (exprToMatch, branches) ->
-                let typedExprToMatch = typeCheckExpression resolutionChain exprToMatch.node
+                let typedExprToMatch = typeCheckCstExpression resolutionChain exprToMatch.node
 
                 let typedBranches =
                     branches
                     |> NEL.map (fun (pattern, branchExpr) ->
                         { matchPattern = typeFuncOrCaseMatchParam pattern.node
-                          body = typeCheckExpression resolutionChain branchExpr.node })
+                          body = typeCheckCstExpression resolutionChain branchExpr.node })
 
 
                 let (matchExprType, branchReturnTypeConstraints) =
@@ -1515,7 +1758,7 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
                         (fun (patternConstraints, branchConstraints) branch ->
                             unifyJudgments patternConstraints branch.matchPattern.inferredType,
                             unifyJudgments branchConstraints branch.body.inferredType)
-                        (typedExprToMatch.inferredType, Ok emptyConstraint)
+                        (typedExprToMatch.inferredType, Ok TypeConstraints.empty)
 
                 { inferredType = branchReturnTypeConstraints
                   expr =
@@ -1526,12 +1769,16 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
     | S.CompoundExpression compExpr ->
         match compExpr with
         | S.FunctionApplication (funcExpr, params_) ->
-            let typedFunc = typeCheckExpression resolutionChain funcExpr.node
+            let typedFunc = typeCheckCstExpression resolutionChain funcExpr.node
 
             let typedParams =
                 params_
-                |> NEL.map (S.getNode >> typeCheckExpression resolutionChain)
+                |> NEL.map (
+                    S.getNode
+                    >> typeCheckCstExpression resolutionChain
+                )
 
+            /// @TODO: I _think_ this might be wrong, because this means letting type inference flow upstream, thus resulting in destroying let polymorphism
             let paramRequirementsFromDeFactoParams =
                 typedParams
                 |> NEL.map (fun e -> e.inferredType)
@@ -1542,11 +1789,16 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
                 paramRequirementsFromDeFactoParams
                 |> Result.bind (fun paramRequirements ->
                     let (NEL (firstParam, restParams)) = paramRequirements
-                    let restParamsAndReturnType = NEL.fromListAndLast restParams emptyConstraint
 
-                    let funcTypeRequirement = DtArrow (firstParam, restParamsAndReturnType)
+                    let restParamsAndReturnType =
+                        NEL.fromListAndLast restParams TypeConstraints.unspecific
 
-                    unifyJudgments typedFunc.inferredType (makeConstraintsFromDef funcTypeRequirement |> Ok))
+                    let funcTypeRequirement = DtArrow (firstParam, makeDestType restParamsAndReturnType)
+
+                    unifyJudgments
+                        typedFunc.inferredType
+                        (TypeConstraints.fromDefinitive funcTypeRequirement
+                         |> Ok))
 
             { inferredType = unified
               expr =
@@ -1556,14 +1808,14 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
         | S.DotAccess (dottedExpr, dotSequence) ->
             let rec makeNestedMap (fieldSeq : RecordFieldName list) =
                 match fieldSeq with
-                | [] -> emptyConstraint
+                | [] -> TypeConstraints.empty
                 | head :: rest ->
                     Map.empty
                     |> Map.add head (makeNestedMap rest)
                     |> DtRecordWith
-                    |> makeConstraintsFromDef
+                    |> TypeConstraints.fromDefinitive
 
-            let typedExpr = typeCheckExpression resolutionChain dottedExpr.node
+            let typedExpr = typeCheckCstExpression resolutionChain dottedExpr.node
 
             let exprTypeConstraint =
                 dotSequence.node
@@ -1582,7 +1834,7 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
             failwith
                 "@TODO: need to break up operator sequence into a binary tree of operators branch nodes and operands leaf nodes"
 
-    | S.ParensedExpression expr -> typeCheckExpression resolutionChain expr
+    | S.ParensedExpression expr -> typeCheckCstExpression resolutionChain expr
 
 
 
@@ -1590,7 +1842,7 @@ let rec typeCheckExpression (resolutionChain : LowerIdent list) (expr : Cst.Expr
 /// This looks into a typed expression and resolves any named values at this level with the provided dictionary, and propagates any changed type signatures accordingly
 and resolveValues
     //(resolutionChain : LowerNameValue list)
-    (namesMaps : NameRes.NamesMaps)
+    (constraintAccumulator : Accumulator)
     (typedExpr : TypedExpr)
     : TypedExpr =
     //let resolveRecursive (name : LowerNameValue) =
@@ -1614,9 +1866,10 @@ and resolveValues
                 let ctor = SOD.getFirst sod
 
                 makeTypedExpr
-                    ((LocalUpper ctor.typeName, List.map (Tuple.makePairWithSnd emptyConstraint) ctor.typeParamsList)
+                    ((LocalUpper ctor.typeName,
+                      List.map (Tuple.makePairWithSnd TypeConstraints.unspecific) ctor.typeParamsList)
                      |> DtNewType
-                     |> makeConstraintsFromDef
+                     |> TypeConstraints.fromDefinitive
                      |> Ok)
                     (T.UpperIdentifier upperIdent
                      |> T.SingleValueExpression)
@@ -1651,9 +1904,693 @@ and resolveValues
 
             | None -> typedExpr
 
+///// This looks into a typed expression and resolves any named values at this level with the provided dictionary, and propagates any changed type signatures accordingly
+//and resolveValues
+//    //(resolutionChain : LowerNameValue list)
+//    (namesMaps : NameRes.NamesMaps)
+//    (typedExpr : TypedExpr)
+//    : TypedExpr =
+//    //let resolveRecursive (name : LowerNameValue) =
+//    //    resolveValues (name :: resolutionChain) namesMaps
+
+//    match typedExpr.expr with
+//    | T.SingleValueExpression singleVal ->
+//        match singleVal with
+//        | T.ExplicitValue explicit ->
+//            match explicit with
+//            | T.Primitive prim ->
+//                makeTypedExpr
+//                    typedExpr.inferredType
+//                    (T.Primitive prim
+//                     |> T.ExplicitValue
+//                     |> T.SingleValueExpression)
+
+//        | T.UpperIdentifier upperIdent ->
+//            match NameRes.findTypeConstructor upperIdent namesMaps with
+//            | Some sod ->
+//                let ctor = SOD.getFirst sod
+
+//                makeTypedExpr
+//                    ((LocalUpper ctor.typeName, List.map (Tuple.makePairWithSnd TypeConstraints.empty) ctor.typeParamsList)
+//                     |> DtNewType
+//                     |> TypeConstraints.fromDefinitive
+//                     |> Ok)
+//                    (T.UpperIdentifier upperIdent
+//                     |> T.SingleValueExpression)
+
+//            | None -> typedExpr
+
+//        | T.LowerIdentifier lowerIdent ->
+//            let value = NameRes.findValue lowerIdent namesMaps
+//            let valType = NameRes.findValueType lowerIdent namesMaps
+
+//            let inferredOrDeclaredType =
+//                match value, valType with
+//                | _, Some t ->
+//                    let valueType = SOD.getFirst t
+//                    Some (Ok valueType)
+
+//                | Some v, None ->
+//                    let value : T.LowerCaseName = SOD.getFirst v
+
+//                    NameRes.getInferredTypeOfLowercaseName value
+//                    |> Some
+
+//                | None, None -> None
+
+//            match inferredOrDeclaredType with
+//            | Some type_ ->
+//                makeTypedExpr
+//                    type_
+//                    (T.LowerIdentifier lowerIdent
+//                     |> T.SingleValueExpression)
 
 
+//            | None -> typedExpr
 //| T.LetExpression (bindings,body)->
+
+
+
+
+
+
+
+
+
+
+(*
+This should:
+- based on the intersections of which referenced values are colocated with which other referenced values and definitive types, build up a set of groups of all the inferred types for the referenced values
+- unify the definitive types in each group
+- from each group, construct a map for all the referenced value names as keys, the values of which is the same combined type for each of them
+- we can do this for a list of values and keep accumulating the same referenced value names with their usages in the other type constraints; that will allow us to construct a map where for each referenced value name we have a much specified TypeConstraints – which is effectively equal to having an inferred type for the value by that name!
+
+And it's only after doing all of that that it maybe makes sense to go back in and resolve all the referenced value types in an expression? Although tbh maybe even then not. Maybe internally where those values are referenced we just keep them as is, and it's only from the outside that we glean which types those things _must_ be, which we can then view from the outside
+
+So then there's the separate question of how we can then use that to figure out if there is some recursion anywhere? Because we need to know whether a value references itself inside its own definition so that we know not to try to resolve the type of that thing completely... but then tbh are we even attempting to do that anymore with this new approach?
+
+*)
+
+and private addSingleConstrainedValueResult
+    (defTypeOpt : Result<DefinitiveType option, TypeError>)
+    (namesSet : RefConstr set)
+    (acc : Accumulator)
+    =
+    let predicate = Set.intersect namesSet >> Set.isNotEmpty
+
+    let combiner
+        (keyvalList : (RefConstr set * Result<DefinitiveType option, TypeError>) list)
+        : RefConstr set * Result<DefinitiveType option, TypeError> =
+
+        let combineTwoDefOptResults
+            (a : Result<DefinitiveType option, TypeError>)
+            (b : Result<DefinitiveType option, TypeError>)
+            : Result<DefinitiveType option, TypeError> =
+            match a, b with
+            | Ok (Some a_), Ok (Some b_) -> unifyDefinitiveTypes a_ b_ |> Result.map Some
+
+            | Ok (Some def), Ok None
+            | Ok None, Ok (Some def) -> Ok (Some def)
+
+            | Ok None, Ok None -> Ok None
+
+            | Error err1, Error err2 -> unifyTypeErrors err1 err2 |> Error
+
+            | Ok None, Error e
+            | Error e, Ok None -> Error e
+
+            | Ok (Some def), Error e
+            | Error e, Ok (Some def) -> addDefToTypeError def e |> Error
+
+        let keySets, defTypes = List.unzip keyvalList
+
+        let newKey = Set.unionMany keySets
+
+        let newVal =
+            defTypes
+            |> List.fold combineTwoDefOptResults defTypeOpt
+
+        newKey, newVal
+
+    Map.combineManyKeys predicate combiner acc
+
+/// Adds a single new constrained value to an Accumulator
+and private addSingleConstrainedValue
+    (defTypeOpt : DefinitiveType option)
+    (namesSet : RefConstr set)
+    (acc : Accumulator)
+    =
+    addSingleConstrainedValueResult (Ok defTypeOpt) namesSet acc
+
+
+and private makeAccumFromConstraints (constraintsList : TypeConstraints list) : Accumulator =
+    constraintsList
+    |> List.fold
+        (fun state cnstrnt ->
+            match cnstrnt with
+            | Constrained (defOpt, others) -> addSingleConstrainedValue defOpt others state
+
+            | Recursive -> state)
+        Map.empty
+
+
+
+and addConstraintToAccum (cnstrnt : TypeConstraints) (acc : Accumulator) =
+    match cnstrnt with
+    | Constrained (defOpt, others) -> addSingleConstrainedValue defOpt others acc
+
+    | Recursive -> failwith "@TODO: need to think of how to combine this with the ones in the accumulator"
+
+
+
+
+
+
+and private makeMapFromAccum (accum : Accumulator) : Map<RefConstr, TypeJudgment> =
+    let convertSingleAccEntryBack (nameSet : RefConstr set) (defOpt : DefinitiveType option) : TypeConstraints =
+        Constrained (defOpt, nameSet)
+
+    accum
+    // Convert it back to a map of names with their inferred types
+    |> Map.toList
+    |> List.collect (fun (nameSet, defOptResult) ->
+        let constraintsForNameGroup =
+            Result.map (convertSingleAccEntryBack nameSet) defOptResult
+
+        Set.toList nameSet
+        |> List.map (Tuple.makePairWithSnd constraintsForNameGroup))
+    |> Map.ofList
+
+
+/// This is the function that infers all the types for all referenced values based on a list of TypeConstraints!
+and getConstrainedValues (constraintsList : TypeConstraints list) : Map<RefConstr, TypeJudgment> =
+    makeAccumFromConstraints constraintsList
+    |> makeMapFromAccum
+
+
+
+
+/// In other words allow for merging constrained value constraints from two different maps
+let combineAccumulators (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
+    acc1
+    |> Map.fold (fun acc key value -> addSingleConstrainedValueResult value key acc) acc2
+
+let addManyAccs newAccs acc =
+    Seq.fold combineAccumulators acc newAccs
+
+let combineManyAccs (accs : Accumulator seq) : Accumulator = addManyAccs accs Map.empty
+
+
+
+
+type AccumulatorAndSelfValue =
+    { acc : Accumulator
+      ownType : TypeJudgment }
+
+
+let makeAccAndSelf ownType acc = { acc = acc; ownType = ownType }
+let getAcc { acc = acc } = acc
+let getSelf { ownType = ownType } = ownType
+
+/// Combine two `AccumulatorAndSelfValue`s into a single accumulator and unified type judgment
+let combineAccAndSelves (aas1 : AccumulatorAndSelfValue) (aas2 : AccumulatorAndSelfValue) : AccumulatorAndSelfValue =
+    { acc = combineAccumulators aas1.acc aas2.acc
+      ownType = unifyJudgments aas1.ownType aas2.ownType }
+
+
+/// Combine multiple `AccumulatorAndSelfValue`s into a single accumulator and unified type judgment
+let combineManyAccAndSelves list =
+    Seq.fold
+        combineAccAndSelves
+        { acc = Map.empty
+          ownType = Ok TypeConstraints.empty }
+        list
+
+
+let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccumulatorAndSelfValue =
+    match expr with
+    | T.SingleValueExpression singleVal ->
+        match singleVal with
+        | T.ExplicitValue explicit ->
+            match explicit with
+            | T.Primitive primitive ->
+                makeAccAndSelf
+                    (typeOfPrimitiveLiteralValue primitive
+                     |> TypeConstraints.fromDefinitive
+                     |> Ok)
+                    Map.empty
+
+            | T.DotGetter dotGetter ->
+                makeAccAndSelf
+                    (Map.empty
+                     |> Map.add dotGetter TypeConstraints.empty
+                     |> DtRecordWith
+                     |> TypeConstraints.fromDefinitive
+                     |> Ok)
+                    Map.empty
+
+            | T.Compound compound ->
+                match compound with
+                | T.List list ->
+                    let typedList = List.map getAccumulatorFromExpr list
+                    let combinedAcc = typedList |> List.map getAcc |> combineManyAccs
+
+                    let combinedSelf =
+                        (typedList
+                         |> List.fold
+                             (fun state expr ->
+                                 (state, getSelf expr)
+                                 ||> Result.bind2 unifyTypeConstraints unifyTypeErrors)
+                             (Ok TypeConstraints.empty)
+                         |> Result.map (DtList >> TypeConstraints.fromDefinitive))
+
+
+                    makeAccAndSelf combinedSelf combinedAcc
+
+
+                | T.CompoundValues.Tuple tuple ->
+                    let typedList = TOM.map getAccumulatorFromExpr tuple
+
+                    let combinedAcc =
+                        typedList
+                        |> TOM.map getAcc
+                        |> TOM.toList
+                        |> combineManyAccs
+
+                    let combinedSelf =
+                        typedList
+                        |> TOM.map getSelf
+                        |> TOM.sequenceResult
+                        |> concatResultErrListNel
+                        |> Result.map (DtTuple >> TypeConstraints.fromDefinitive)
+
+                    makeAccAndSelf combinedSelf combinedAcc
+
+
+
+                | T.CompoundValues.Record record ->
+                    let typedList =
+                        record
+                        |> List.map (fun (key, value) -> key, getAccumulatorFromExpr value)
+
+                    let combinedAcc =
+                        typedList
+                        |> List.map (snd >> getAcc)
+                        |> combineManyAccs
+
+                    let combinedType =
+                        typedList
+                        |> List.map (fun (key, expr) ->
+                            getSelf expr
+                            |> Result.map (fun inferred -> key, inferred))
+                        |> Result.sequenceList
+                        |> Result.map Map.ofList
+                        |> concatResultErrListNel
+                        |> Result.map (DtRecordExact >> TypeConstraints.fromDefinitive)
+
+                    makeAccAndSelf combinedType combinedAcc
+
+
+                | T.CompoundValues.RecordExtension (extended, additions) ->
+
+                    let typedList =
+                        additions
+                        |> NEL.map (fun (key, value) -> key, getAccumulatorFromExpr value)
+
+                    let combinedAcc =
+                        typedList
+                        |> NEL.map (snd >> getAcc)
+                        |> NEL.toList
+                        |> combineManyAccs
+
+                    let typeOfEditedRecord =
+                        LocalLower extended
+                        |> ByValue
+                        |> TypeConstraints.fromConstraint
+
+                    let derivedFromFieldsType : TypeJudgment =
+                        typedList
+                        |> NEL.map (fun (key, expr) ->
+                            getSelf expr
+                            |> Result.map (fun inferred -> key, inferred))
+                        |> NEL.sequenceResult
+                        |> Result.map (NEL.toList >> Map.ofList)
+                        |> concatResultErrListNel
+                        |> Result.map (DtRecordWith >> TypeConstraints.fromDefinitive)
+
+                    let combinedType : TypeJudgment =
+                        Result.bind (unifyTypeConstraints typeOfEditedRecord) derivedFromFieldsType
+
+                    makeAccAndSelf combinedType combinedAcc
+
+            | T.Function funcVal ->
+                let typeOfBody = getAccumulatorFromExpr funcVal.body
+
+                let funcParamsAccumulatorsAndSelfTypes =
+                    NEL.map getAccumulatorFromParam funcVal.params_
+
+                let funcParamsAccumulators =
+                    funcParamsAccumulatorsAndSelfTypes
+                    |> NEL.map getAcc
+
+
+                let funcParamTypes =
+                    funcParamsAccumulatorsAndSelfTypes
+                    |> NEL.map getSelf
+                    |> NEL.sequenceResult
+                    |> concatResultErrListNel
+
+
+                let arrowType : TypeJudgment =
+                    (funcParamTypes, typeOfBody.ownType)
+                    ||> Result.map2
+                            (fun (NEL (firstParamType, restParamTypes)) typeOfBody_ ->
+                                let toTypes =
+                                    NEL.new_ typeOfBody_ (List.rev restParamTypes)
+                                    |> NEL.reverse
+
+                                DtArrow (firstParamType, makeDestType toTypes)
+                                |> TypeConstraints.fromDefinitive)
+                            unifyTypeErrors
+
+
+                let combinedAcc =
+                    funcParamsAccumulators
+                    |> NEL.fold combineAccumulators Map.empty
+                    |> combineAccumulators typeOfBody.acc
+
+
+                /// This contains all the names defined from each param
+                let combinedNamesDefinedHere =
+                    funcParamsAccumulators
+                    |> NEL.map getValueNames
+                    |> NEL.fold Set.union Set.empty
+
+                let guidMap = makeGuidMapForNames combinedNamesDefinedHere
+
+
+                makeAccAndSelf
+                    (replaceValueNamesWithGuidsInTypeJudgment guidMap arrowType)
+                    (replaceValueNamesWithGuidsInAcc guidMap combinedAcc)
+
+
+        | T.UpperIdentifier name ->
+            makeAccAndSelf
+                (TypeConstraints.fromConstraint (ByConstructorType name)
+                 |> Ok)
+                Map.empty
+
+        | T.LowerIdentifier name ->
+            let inferredType =
+                ByValue name
+                |> TypeConstraints.fromConstraint
+                |> Ok
+
+            makeAccAndSelf inferredType Map.empty
+
+
+        | T.LetExpression (declarations, expr) ->
+            let bodyExpr = getAccumulatorFromExpr expr
+
+            let typedDeclarations =
+                declarations
+                |> NEL.map (fun binding ->
+                    let bindingAccAndSelf = getAccumulatorFromBinding binding
+                    let assignedExprAccAndSelf = getAccumulatorFromExpr binding.assignedExpression
+
+                    let unifiedOwnType =
+                        unifyJudgments assignedExprAccAndSelf.ownType bindingAccAndSelf.ownType
+
+                    let unifiedAcc =
+                        combineAccumulators assignedExprAccAndSelf.acc bindingAccAndSelf.acc
+
+                    makeAccAndSelf unifiedOwnType unifiedAcc)
+
+            let bindingAccs = typedDeclarations |> NEL.map getAcc
+
+            let combinedAcc =
+                bindingAccs
+                |> NEL.fold combineAccumulators bodyExpr.acc
+
+            /// This contains all the names defined from each param
+            let combinedNamesDefinedHere =
+                bindingAccs
+                |> NEL.map getValueNames
+                |> NEL.fold Set.union Set.empty
+
+            let guidMap = makeGuidMapForNames combinedNamesDefinedHere
+
+            makeAccAndSelf
+                (replaceValueNamesWithGuidsInTypeJudgment guidMap bodyExpr.ownType)
+                (deleteGuidsFromAcc guidMap combinedAcc)
+
+
+
+        | T.ControlFlowExpression controlFlow ->
+            match controlFlow with
+            | T.IfExpression (cond, ifTrue, ifFalse) ->
+                let condAccAndOwn = getAccumulatorFromExpr cond
+
+                let condAccAndOwnWithBoolConstr =
+                    // @TODO: I feel like there's gotta be a better abstraction for doing this, instead of tacking it on so manually. But I do also think that this kind of thing is fairly rare: a constraint imposed from the outside which *isn't* it being passed to a function as a parameter.
+                    { condAccAndOwn with
+                        ownType =
+                            unifyJudgments
+                                condAccAndOwn.ownType
+                                (Ok (TypeConstraints.fromDefinitive (DtPrimitiveType Bool))) }
+
+                let ifTrueAccAndOwn = getAccumulatorFromExpr ifTrue
+                let ifFalseAccAndOwn = getAccumulatorFromExpr ifFalse
+
+                let combinedAcc =
+                    combineManyAccs [ condAccAndOwnWithBoolConstr.acc
+                                      ifTrueAccAndOwn.acc
+                                      ifFalseAccAndOwn.acc ]
+
+                let combinedType = unifyJudgments ifTrueAccAndOwn.ownType ifFalseAccAndOwn.ownType
+
+                makeAccAndSelf combinedType combinedAcc
+
+
+
+
+            | T.CaseMatch (exprToMatch, branches) ->
+                let accsAndSelvesOfPatterns =
+                    branches
+                    |> NEL.map (fun branch ->
+                        let branchAccAndSelf = getAccumulatorFromParam branch.matchPattern
+
+                        /// This contains all the names defined for this pattern
+                        let combinedNamesDefinedHere = getValueNames branchAccAndSelf.acc
+
+                        let guidMap = makeGuidMapForNames combinedNamesDefinedHere
+
+                        makeAccAndSelf
+                            (replaceValueNamesWithGuidsInTypeJudgment guidMap branchAccAndSelf.ownType)
+                            (replaceValueNamesWithGuidsInAcc guidMap branchAccAndSelf.acc))
+                    |> NEL.toList
+                    |> combineManyAccAndSelves
+
+                let matchExprAccAndSelf = getAccumulatorFromExpr exprToMatch
+
+                // The combined accumulator and type from the matched expression and the patterns
+                let combinedMatchExprAndPatterns =
+                    combineAccAndSelves accsAndSelvesOfPatterns matchExprAccAndSelf
+
+                // The combined accumulator and type from the branches
+                let combinedBranches =
+                    branches
+                    |> NEL.map (fun branch -> getAccumulatorFromExpr branch.body)
+                    |> NEL.toList
+                    |> combineManyAccAndSelves
+
+                let combinedAcc =
+                    combineAccumulators combinedMatchExprAndPatterns.acc combinedBranches.acc
+
+
+                makeAccAndSelf combinedBranches.ownType combinedAcc
+
+
+
+
+    | T.CompoundExpression compExpr ->
+        match compExpr with
+        | T.FunctionApplication (funcExpr, params_) ->
+
+            let funcAccAndSelf = getAccumulatorFromExpr funcExpr
+            let paramsAccAndSelves = params_ |> NEL.map getAccumulatorFromExpr
+
+
+
+            (*
+
+
+            @TODO: implement the logic here for recursing down the params and unifying the func with an arrow whose input param type can be unified with the type of the param. And keep going (recursively) until we've processed all the params. So that e.g. `f a b c d ` implies that f is a function that takes 4 params, each of which is compatible with a, b, c, and d respectively.
+
+
+            *)
+
+
+
+
+
+
+
+
+            let typedFunc = typeCheckCstExpression resolutionChain funcExpr.node
+
+            let typedParams =
+                params_
+                |> NEL.map (
+                    S.getNode
+                    >> typeCheckCstExpression resolutionChain
+                )
+
+            /// @TODO: I _think_ this might be wrong, because this means letting type inference flow upstream, thus resulting in destroying let polymorphism
+            let paramRequirementsFromDeFactoParams =
+                typedParams
+                |> NEL.map (fun e -> e.inferredType)
+                |> NEL.sequenceResult
+                |> concatResultErrListNel
+
+            let unified =
+                paramRequirementsFromDeFactoParams
+                |> Result.bind (fun paramRequirements ->
+                    let (NEL (firstParam, restParams)) = paramRequirements
+
+                    let restParamsAndReturnType =
+                        NEL.fromListAndLast restParams TypeConstraints.unspecific
+
+                    let funcTypeRequirement = DtArrow (firstParam, makeDestType restParamsAndReturnType)
+
+                    unifyJudgments
+                        typedFunc.inferredType
+                        (TypeConstraints.fromDefinitive funcTypeRequirement
+                         |> Ok))
+
+            { inferredType = unified
+              expr =
+                FunctionApplication (typedFunc, typedParams)
+                |> CompoundExpression }
+
+        | T.DotAccess (dottedExpr, dotSequence) ->
+            let rec makeNestedMap (fieldSeq : RecordFieldName list) =
+                match fieldSeq with
+                | [] -> TypeConstraints.empty
+                | head :: rest ->
+                    Map.empty
+                    |> Map.add head (makeNestedMap rest)
+                    |> DtRecordWith
+                    |> TypeConstraints.fromDefinitive
+
+            let typedExpr = typeCheckCstExpression resolutionChain dottedExpr.node
+
+            let exprTypeConstraint =
+                dotSequence.node
+                |> NEL.map unqualValToRecField
+                |> NEL.toList
+                |> makeNestedMap
+
+            let fullyTypedExpr = addTypeConstraints exprTypeConstraint typedExpr
+
+            { inferredType = fullyTypedExpr.inferredType
+              expr =
+                DotAccess (typedExpr, dotSequence.node |> NEL.map unqualValToRecField)
+                |> CompoundExpression }
+
+        | T.Operator (left, opSequence) ->
+            failwith
+                "@TODO: need to break up operator sequence into a binary tree of operators branch nodes and operands leaf nodes"
+
+
+
+and getAccumulatorFromExpr (expr : TypedExpr) : AccumulatorAndSelfValue =
+    getAccumulatorFromSingleOrCompExpr expr.expr
+
+
+/// @TODO: need to implement this still. Basically just infer the type of the param as a whole, and also the relationship of that type to each of its deconstructed constituents.
+and getAccumulatorFromParam (p : FunctionOrCaseMatchParam) : AccumulatorAndSelfValue = failwith "@TODO: implement"
+
+and getAccumulatorFromBinding (binding : LetBinding) : AccumulatorAndSelfValue = failwith "@TODO: implement"
+
+
+/// This takes a map of names defined in this scope and the full combined Accumulator, and replaces the named values defined at this scope with GUIDs, so that they no longer reference named values (which are not in scope and therefore meaningless outside of this scope!) and replace them with simple GUIDs which therefore act as simple type variables
+/// --This takes a map of names defined in this scope and the full combined Accumulator, and returns the map of names in this scope along with their definitive types and generics (exposed as guids) along with a new Accumulator with those names removed - since those names are no longer exposed to parent scopes and so constraints are no longer relevant to higher scopes
+and replaceParamsFromAcc (names : Map<LowerIdent, TypeJudgment>) (acc : Accumulator) : Accumulator =
+    failwith "@TODO: implement"
+
+and getValueNames (acc : Accumulator) : LowerIdent set =
+    failwith
+        "@TODO: this should get all the value names in the Accumulator. So that we get all the names defined in a param or let binding, and replace it with type variable GUIDs. So this tells us which names we should be replacing."
+
+
+
+and makeGuidMapForNames (names : LowerIdent set) : Map<LowerIdent, System.Guid> =
+    failwith "@TODO: generates a GUID for each name given"
+
+
+and replaceValueNamesWithGuidsInAcc (names : Map<LowerIdent, System.Guid>) (acc : Accumulator) : Accumulator =
+    failwith "@TODO: replaces all the names in the given accumulator with GUIDs"
+
+and replaceValueNamesWithGuidsInTypeJudgment
+    (names : Map<LowerIdent, System.Guid>)
+    (typeJudgment : TypeJudgment)
+    : TypeJudgment =
+    failwith "@TODO: replaces all the names in the given type judgment with GUIDs"
+
+/// @TODO: removes all the listed GUIDs from the Accumulator, for a let expression so that we don't expose the names or type variables and shit to higher scopes when they're no longer needed.
+and deleteGuidsFromAcc (names : Map<LowerIdent, System.Guid>) (acc : Accumulator) : Accumulator =
+    failwith "@TODO: removes all the listed GUIDs from the Accumulator"
+
+
+
+
+let rec getBoundVarsFromType (type_ : DefinitiveType) : TypeConstraints set =
+    match type_ with
+    | DtUnitType -> Set.empty
+    | DtPrimitiveType _ -> Set.empty
+    | DtArrow (fromType, toType) ->
+        Set.union (getBoundVarsFromTypeConstraint fromType) (getBoundVarsFromTypeConstraint toType)
+    | DtTuple tom ->
+        TOM.map getBoundVarsFromTypeConstraint tom
+        |> TOM.toList
+        |> Set.unionMany
+    | DtList list -> getBoundVarsFromTypeConstraint list
+    | DtRecordWith map ->
+        Map.values map
+        |> Seq.map getBoundVarsFromTypeConstraint
+        |> Set.unionMany
+    | DtRecordExact map ->
+        Map.values map
+        |> Seq.map getBoundVarsFromTypeConstraint
+        |> Set.unionMany
+    | DtNewType (_, typeParams) ->
+        List.map (snd >> getBoundVarsFromTypeConstraint) typeParams
+        |> Set.unionMany
+
+and getBoundVarsFromTypeConstraint (typeConstraint : TypeConstraints) =
+    match typeConstraint with
+    | Recursive -> Set.empty
+    | Constrained (defOpt, others) ->
+        let boundVarsFromOthers =
+            Set.choose getBoundVarsFromRefConstr others
+            |> Set.toList
+
+        match defOpt with
+        | Some def ->
+            Set.ofList boundVarsFromOthers
+            |> Set.union (getBoundVarsFromType def)
+
+        | None -> Set.ofList boundVarsFromOthers
+
+
+and private getBoundVarsFromRefConstr (refConstr : RefConstr) =
+    match refConstr with
+    | IsBoundVar var -> Some var
+    | _ -> None
+
+
+
 
 
 
@@ -1768,7 +2705,7 @@ let typeCheckModule (ylModule : Cst.YlModule) : T.YlModule =
                         unqualValToLowerIdent infixOp.name,
                         { associativity = infixOp.associativity
                           precedence = infixOp.precedence
-                          value = typeCheckExpression List.empty infixOp.value.node }
+                          value = typeCheckCstExpression List.empty infixOp.value.node }
                     )
                 | _ -> None
         )
@@ -1795,7 +2732,7 @@ let typeCheckModule (ylModule : Cst.YlModule) : T.YlModule =
                     Some (
                         ident,
                         // @TODO: make sure we're actually passing in the names required for resolution here
-                        typeCheckExpression [ ident ] valDecl.value.node
+                        typeCheckCstExpression [ ident ] valDecl.value.node
                     )
                 | _ -> None
         )

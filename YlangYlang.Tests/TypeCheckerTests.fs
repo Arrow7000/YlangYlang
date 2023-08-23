@@ -35,7 +35,7 @@ let private getTypeFromElmStr text : Result<TypeConstraints, Errors> =
         >> Result.mapError ParsingError
     )
     |> Result.bind (
-        typeCheckExpression List.empty
+        typeCheckCstExpression List.empty
         >> getType
         >> Result.mapError TypeError
     )

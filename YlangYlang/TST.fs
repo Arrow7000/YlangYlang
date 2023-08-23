@@ -1,4 +1,4 @@
-module TypedSyntaxTree
+﻿module TypedSyntaxTree
 
 
 
@@ -28,6 +28,17 @@ and AssignmentPattern =
 
 
 
+
+
+
+
+
+/// Represents a generic, undeclared type variable. Used to create type constraints; e.g. between the input type and the output type of `let id x = x`.
+type TypeConstraintId = | TypeConstraintId of System.Guid
+
+
+let newGuid () =
+    System.Guid.NewGuid () |> TypeConstraintId
 
 
 
@@ -69,7 +80,8 @@ and DefinitiveType =
     | DtNewType of name : UpperNameValue * typeParams : (LowerIdent * TypeConstraints) list
     //| DtNewType of NewType
     //| DtReferencedType of typeName : UpperNameValue * typeParams : TypeConstraints list
-    | DtArrow of fromType : TypeConstraints * toTypes : TypeConstraints nel
+    | DtArrow of fromType : TypeConstraints * toType : TypeConstraints
+
 
 
 
@@ -81,15 +93,22 @@ and DefinitiveType =
 and RefConstr =
     /// I.e. must be the same type as this value
     | ByValue of LowerNameValue
+    /// This represents a bound variable to outside the scope where it is declared – works both for value and type expressions
+    | IsBoundVar of TypeConstraintId
+
     /// I.e. must be the same type as this type param
     | ByTypeParam of LowerIdent
     /// I.e. must be the type that this constructor is a variant of
+
     | ByConstructorType of UpperNameValue
     /// I.e. must be this type name + have this many type params
     | IsOfTypeByName of typeName : UpperNameValue * typeParams : TypeConstraints list
-    /// This represents a bound variable to outside the scope where it is declared
-    | IsBoundVar of System.Guid
 
+
+/// A more limited reference constraint, only for value expressions
+and ValRefConstr =
+    | RefByVal of LowerNameValue
+    | BoundRef of TypeConstraintId
 
 
 /// Contains the definitive constraints that have been inferred so far, plus any other value or type param constraints that have not been evaluated yet.
@@ -100,12 +119,21 @@ and TypeConstraints =
     /// @TODO: might be better to remove this from here and to only specify recursion at a higher level (e.g. in the TypeJudgment) so that these can be simply about type constraints, and this type doesn't need to do two different jobs.
     | Recursive
 
-    static member empty = Constrained (None, Set.empty)
+    /// Makes a new TypeConstraints which is truly empty, e.g. to ensure let polymorphism
+    static member empty = Constrained (None, Set.singleton (IsBoundVar (newGuid ())))
 
-    static member fromDefinitive (def : DefinitiveType) : TypeConstraints = Constrained (Some def, Set.empty)
+    /// Makes a new TypeConstraints which is empty of specific, but still has a Guid so as not to lose links required between the thing that is assigned this constraint and anything else it is linked to
+    static member unspecific = Constrained (None, Set.singleton (IsBoundVar (newGuid ())))
+
+    static member fromDefinitive (def : DefinitiveType) : TypeConstraints =
+        Constrained (Some def, Set.singleton (IsBoundVar (newGuid ())))
 
     static member fromConstraint (constr : RefConstr) : TypeConstraints =
-        Constrained (None, Set.singleton constr)
+        Constrained (
+            None,
+            Set.ofList [ constr
+                         IsBoundVar (newGuid ()) ]
+        )
 
 
 
@@ -136,6 +164,10 @@ and TypeError =
 and TypeJudgment = Result<TypeConstraints, TypeError>
 
 
+
+
+/// Helper type for accumulating type constraints
+type Accumulator = Map<RefConstr set, Result<DefinitiveType option, TypeError>>
 
 
 
