@@ -1839,70 +1839,70 @@ let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.E
 
 
 
-/// This looks into a typed expression and resolves any named values at this level with the provided dictionary, and propagates any changed type signatures accordingly
-and resolveValues
-    //(resolutionChain : LowerNameValue list)
-    (constraintAccumulator : Accumulator)
-    (typedExpr : TypedExpr)
-    : TypedExpr =
-    //let resolveRecursive (name : LowerNameValue) =
-    //    resolveValues (name :: resolutionChain) namesMaps
+///// This looks into a typed expression and resolves any named values at this level with the provided dictionary, and propagates any changed type signatures accordingly
+//and resolveValues
+//    //(resolutionChain : LowerNameValue list)
+//    (constraintAccumulator : Accumulator)
+//    (typedExpr : TypedExpr)
+//    : TypedExpr =
+//    //let resolveRecursive (name : LowerNameValue) =
+//    //    resolveValues (name :: resolutionChain) namesMaps
 
-    match typedExpr.expr with
-    | T.SingleValueExpression singleVal ->
-        match singleVal with
-        | T.ExplicitValue explicit ->
-            match explicit with
-            | T.Primitive prim ->
-                makeTypedExpr
-                    typedExpr.inferredType
-                    (T.Primitive prim
-                     |> T.ExplicitValue
-                     |> T.SingleValueExpression)
+//    match typedExpr.expr with
+//    | T.SingleValueExpression singleVal ->
+//        match singleVal with
+//        | T.ExplicitValue explicit ->
+//            match explicit with
+//            | T.Primitive prim ->
+//                makeTypedExpr
+//                    typedExpr.inferredType
+//                    (T.Primitive prim
+//                     |> T.ExplicitValue
+//                     |> T.SingleValueExpression)
 
-        | T.UpperIdentifier upperIdent ->
-            match NameRes.findTypeConstructor upperIdent namesMaps with
-            | Some sod ->
-                let ctor = SOD.getFirst sod
+//        | T.UpperIdentifier upperIdent ->
+//            match NameRes.findTypeConstructor upperIdent namesMaps with
+//            | Some sod ->
+//                let ctor = SOD.getFirst sod
 
-                makeTypedExpr
-                    ((LocalUpper ctor.typeName,
-                      List.map (Tuple.makePairWithSnd TypeConstraints.unspecific) ctor.typeParamsList)
-                     |> DtNewType
-                     |> TypeConstraints.fromDefinitive
-                     |> Ok)
-                    (T.UpperIdentifier upperIdent
-                     |> T.SingleValueExpression)
+//                makeTypedExpr
+//                    ((LocalUpper ctor.typeName,
+//                      List.map (Tuple.makePairWithSnd TypeConstraints.unspecific) ctor.typeParamsList)
+//                     |> DtNewType
+//                     |> TypeConstraints.fromDefinitive
+//                     |> Ok)
+//                    (T.UpperIdentifier upperIdent
+//                     |> T.SingleValueExpression)
 
-            | None -> typedExpr
+//            | None -> typedExpr
 
-        | T.LowerIdentifier lowerIdent ->
-            let value = NameRes.findValue lowerIdent namesMaps
-            let valType = NameRes.findValueType lowerIdent namesMaps
+//        | T.LowerIdentifier lowerIdent ->
+//            let value = NameRes.findValue lowerIdent namesMaps
+//            let valType = NameRes.findValueType lowerIdent namesMaps
 
-            let inferredOrDeclaredType =
-                match value, valType with
-                | _, Some t ->
-                    let valueType = SOD.getFirst t
-                    Some (Ok valueType)
+//            let inferredOrDeclaredType =
+//                match value, valType with
+//                | _, Some t ->
+//                    let valueType = SOD.getFirst t
+//                    Some (Ok valueType)
 
-                | Some v, None ->
-                    let value : T.LowerCaseName = SOD.getFirst v
+//                | Some v, None ->
+//                    let value : T.LowerCaseName = SOD.getFirst v
 
-                    NameRes.getInferredTypeOfLowercaseName value
-                    |> Some
+//                    NameRes.getInferredTypeOfLowercaseName value
+//                    |> Some
 
-                | None, None -> None
+//                | None, None -> None
 
-            match inferredOrDeclaredType with
-            | Some type_ ->
-                makeTypedExpr
-                    type_
-                    (T.LowerIdentifier lowerIdent
-                     |> T.SingleValueExpression)
+//            match inferredOrDeclaredType with
+//            | Some type_ ->
+//                makeTypedExpr
+//                    type_
+//                    (T.LowerIdentifier lowerIdent
+//                     |> T.SingleValueExpression)
 
 
-            | None -> typedExpr
+//            | None -> typedExpr
 
 ///// This looks into a typed expression and resolves any named values at this level with the provided dictionary, and propagates any changed type signatures accordingly
 //and resolveValues
@@ -2103,7 +2103,7 @@ let combineManyAccs (accs : Accumulator seq) : Accumulator = addManyAccs accs Ma
 
 
 
-type AccumulatorAndSelfValue =
+type AccumulatorAndOwnType =
     { acc : Accumulator
       ownType : TypeJudgment }
 
@@ -2113,7 +2113,7 @@ let getAcc { acc = acc } = acc
 let getSelf { ownType = ownType } = ownType
 
 /// Combine two `AccumulatorAndSelfValue`s into a single accumulator and unified type judgment
-let combineAccAndSelves (aas1 : AccumulatorAndSelfValue) (aas2 : AccumulatorAndSelfValue) : AccumulatorAndSelfValue =
+let combineAccAndSelves (aas1 : AccumulatorAndOwnType) (aas2 : AccumulatorAndOwnType) : AccumulatorAndOwnType =
     { acc = combineAccumulators aas1.acc aas2.acc
       ownType = unifyJudgments aas1.ownType aas2.ownType }
 
@@ -2127,7 +2127,7 @@ let combineManyAccAndSelves list =
         list
 
 
-let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccumulatorAndSelfValue =
+let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccumulatorAndOwnType =
     match expr with
     | T.SingleValueExpression singleVal ->
         match singleVal with
@@ -2420,98 +2420,133 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
             let funcAccAndSelf = getAccumulatorFromExpr funcExpr
             let paramsAccAndSelves = params_ |> NEL.map getAccumulatorFromExpr
 
+            let rec makeParamsArrowTypeAndGetReturnType
+                (funcType : TypeConstraints)
+                (paramsApplied : TypeConstraints nel)
+                : AccumulatorAndOwnType =
+                let (NEL (firstParam, tail)) = paramsApplied
+
+                let defFuncRequirement = DtArrow (firstParam, TypeConstraints.unspecific)
+                let funcRequirementConstraint = TypeConstraints.fromDefinitive defFuncRequirement
+
+                let unifiedFuncConstraints = unifyTypeConstraints funcType funcRequirementConstraint
+                let acc = addConstraintToJudgment funcRequirementConstraint unifiedFuncConstraints
+
+                let returnType : TypeJudgment =
+                    unifiedFuncConstraints
+                    |> Result.bind (fun unifiedFuncConstr ->
+                        match unifiedFuncConstr with
+                        | Constrained (Some (DtArrow (_, toType)), _) -> Ok toType
+
+                        | _ ->
+                            // @TODO: this is technically not correct because this should be a list of multiple mutually irreconcilable definitive types, one on its own makes no sense. Need to actually implement what the correct type error logic would be.
+                            Error (IncompatibleTypes [ defFuncRequirement ]))
+
+                match returnType with
+                | Ok returnType_ ->
+                    match tail with
+                    | [] -> makeAccAndSelf (Ok returnType_) acc
+                    | nextParam :: restParams ->
+                        let recursiveAccAndSelf =
+                            makeParamsArrowTypeAndGetReturnType returnType_ (NEL (nextParam, restParams))
+
+                        makeAccAndSelf recursiveAccAndSelf.ownType (combineAccumulators acc recursiveAccAndSelf.acc)
+
+                | Error e -> makeAccAndSelf (Error e) acc
 
 
-            (*
-
-
-            @TODO: implement the logic here for recursing down the params and unifying the func with an arrow whose input param type can be unified with the type of the param. And keep going (recursively) until we've processed all the params. So that e.g. `f a b c d ` implies that f is a function that takes 4 params, each of which is compatible with a, b, c, and d respectively.
-
-
-            *)
-
-
-
-
-
-
-
-
-            let typedFunc = typeCheckCstExpression resolutionChain funcExpr.node
-
-            let typedParams =
-                params_
-                |> NEL.map (
-                    S.getNode
-                    >> typeCheckCstExpression resolutionChain
-                )
-
-            /// @TODO: I _think_ this might be wrong, because this means letting type inference flow upstream, thus resulting in destroying let polymorphism
-            let paramRequirementsFromDeFactoParams =
-                typedParams
-                |> NEL.map (fun e -> e.inferredType)
+            let paramsTypes =
+                paramsAccAndSelves
+                |> NEL.map getSelf
                 |> NEL.sequenceResult
                 |> concatResultErrListNel
 
-            let unified =
-                paramRequirementsFromDeFactoParams
-                |> Result.bind (fun paramRequirements ->
-                    let (NEL (firstParam, restParams)) = paramRequirements
+            /// Contains the return type + the accumulator containing the type constraints of what the function's type needs to be based on its applied params
+            let inferredReturnTypeWithAccs =
+                (funcAccAndSelf.ownType, paramsTypes)
+                ||> Result.map2 makeParamsArrowTypeAndGetReturnType unifyTypeErrors
+                |> function
+                    | Error e -> makeAccAndSelf (Error e) Map.empty
+                    | Ok accAndSelf -> accAndSelf
 
-                    let restParamsAndReturnType =
-                        NEL.fromListAndLast restParams TypeConstraints.unspecific
+            let combinedAccs =
+                combineManyAccs (
+                    inferredReturnTypeWithAccs.acc
+                    :: funcAccAndSelf.acc
+                       :: (NEL.map getAcc paramsAccAndSelves |> NEL.toList)
+                )
 
-                    let funcTypeRequirement = DtArrow (firstParam, makeDestType restParamsAndReturnType)
+            makeAccAndSelf inferredReturnTypeWithAccs.ownType combinedAccs
 
-                    unifyJudgments
-                        typedFunc.inferredType
-                        (TypeConstraints.fromDefinitive funcTypeRequirement
-                         |> Ok))
 
-            { inferredType = unified
-              expr =
-                FunctionApplication (typedFunc, typedParams)
-                |> CompoundExpression }
 
         | T.DotAccess (dottedExpr, dotSequence) ->
-            let rec makeNestedMap (fieldSeq : RecordFieldName list) =
-                match fieldSeq with
-                | [] -> TypeConstraints.empty
-                | head :: rest ->
-                    Map.empty
-                    |> Map.add head (makeNestedMap rest)
-                    |> DtRecordWith
-                    |> TypeConstraints.fromDefinitive
 
-            let typedExpr = typeCheckCstExpression resolutionChain dottedExpr.node
+            let rec makeImpliedRecStructure exprType dotSeqsLeft =
+                match dotSeqsLeft with
+                | [] -> makeAccAndSelf (Ok exprType) Map.empty
+                | firstDotter :: rest ->
+                    let defRequirement =
+                        DtRecordWith (
+                            [ firstDotter, TypeConstraints.unspecific ]
+                            |> Map.ofList
+                        )
 
-            let exprTypeConstraint =
-                dotSequence.node
-                |> NEL.map unqualValToRecField
-                |> NEL.toList
-                |> makeNestedMap
+                    let requiredConstraint = TypeConstraints.fromDefinitive defRequirement
 
-            let fullyTypedExpr = addTypeConstraints exprTypeConstraint typedExpr
+                    let unifiedTypeConstraints = unifyTypeConstraints exprType requiredConstraint
+                    let acc = addConstraintToJudgment requiredConstraint unifiedTypeConstraints
 
-            { inferredType = fullyTypedExpr.inferredType
-              expr =
-                DotAccess (typedExpr, dotSequence.node |> NEL.map unqualValToRecField)
-                |> CompoundExpression }
+                    let returnType : TypeJudgment =
+                        unifiedTypeConstraints
+                        |> Result.bind (function
+                            | Constrained (Some (DtRecordWith fieldsMap), _)
+                            | Constrained (Some (DtRecordExact fieldsMap), _) ->
+                                match Map.tryFind firstDotter fieldsMap with
+                                | Some valType -> Ok valType
+                                | None -> Error (IncompatibleTypes [ defRequirement ])
 
-        | T.Operator (left, opSequence) ->
+                            | _ ->
+                                // @TODO: this is technically not correct because this should be a list of multiple mutually irreconcilable definitive types, one on its own makes no sense. Need to actually implement what the correct type error logic would be.
+                                Error (IncompatibleTypes [ defRequirement ]))
+
+                    match returnType with
+                    | Ok returnType_ ->
+                        let recursiveAccAndSelf = makeImpliedRecStructure returnType_ rest
+
+                        makeAccAndSelf recursiveAccAndSelf.ownType (combineAccumulators acc recursiveAccAndSelf.acc)
+
+                    | Error e -> makeAccAndSelf (Error e) acc
+
+            let exprAccAndSelf = getAccumulatorFromExpr dottedExpr
+
+            let dottedExprAccAndSelf =
+                exprAccAndSelf.ownType
+                |> Result.map (fun constr -> makeImpliedRecStructure constr (NEL.toList dotSequence))
+                |> function
+                    | Ok accAndSelf -> accAndSelf
+                    | Error e -> makeAccAndSelf (Error e) Map.empty
+
+            let combinedAcc = combineAccumulators exprAccAndSelf.acc dottedExprAccAndSelf.acc
+
+            makeAccAndSelf dottedExprAccAndSelf.ownType combinedAcc
+
+
+
+        | T.Operator (left, op, right) ->
             failwith
                 "@TODO: need to break up operator sequence into a binary tree of operators branch nodes and operands leaf nodes"
 
 
 
-and getAccumulatorFromExpr (expr : TypedExpr) : AccumulatorAndSelfValue =
+and getAccumulatorFromExpr (expr : TypedExpr) : AccumulatorAndOwnType =
     getAccumulatorFromSingleOrCompExpr expr.expr
 
 
 /// @TODO: need to implement this still. Basically just infer the type of the param as a whole, and also the relationship of that type to each of its deconstructed constituents.
-and getAccumulatorFromParam (p : FunctionOrCaseMatchParam) : AccumulatorAndSelfValue = failwith "@TODO: implement"
+and getAccumulatorFromParam (p : FunctionOrCaseMatchParam) : AccumulatorAndOwnType = failwith "@TODO: implement"
 
-and getAccumulatorFromBinding (binding : LetBinding) : AccumulatorAndSelfValue = failwith "@TODO: implement"
+and getAccumulatorFromBinding (binding : LetBinding) : AccumulatorAndOwnType = failwith "@TODO: implement"
 
 
 /// This takes a map of names defined in this scope and the full combined Accumulator, and replaces the named values defined at this scope with GUIDs, so that they no longer reference named values (which are not in scope and therefore meaningless outside of this scope!) and replace them with simple GUIDs which therefore act as simple type variables
@@ -2541,6 +2576,25 @@ and replaceValueNamesWithGuidsInTypeJudgment
 /// @TODO: removes all the listed GUIDs from the Accumulator, for a let expression so that we don't expose the names or type variables and shit to higher scopes when they're no longer needed.
 and deleteGuidsFromAcc (names : Map<LowerIdent, System.Guid>) (acc : Accumulator) : Accumulator =
     failwith "@TODO: removes all the listed GUIDs from the Accumulator"
+
+
+/// Denotes that a type judgment has another constraint upon it
+and addConstraintToJudgment (constr : TypeConstraints) (judgment : TypeJudgment) : Accumulator =
+    failwith "@TODO: implement"
+
+
+and addJudgmentConstraintToAccumulator
+    (constr : TypeConstraints)
+    (judgment : TypeJudgment)
+    (acc : Accumulator)
+    : Accumulator =
+    addConstraintToJudgment constr judgment
+    |> combineAccumulators acc
+
+
+
+
+
 
 
 
