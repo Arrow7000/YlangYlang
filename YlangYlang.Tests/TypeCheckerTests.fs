@@ -14,14 +14,13 @@ open Errors
 open Expecto
 
 
-
 let private makeNumberExpression : S.NumberLiteralValue -> Cst.Expression =
     S.NumberPrimitive
     >> S.Primitive
     >> S.ExplicitValue
     >> S.SingleValueExpression
 
-let private getType (expr : T.TypedExpr) = expr.inferredType
+let private getType (expr : T.TypedExpr) : TypeJudgment = getAccumulatorFromExpr expr |> getSelf
 
 
 
@@ -138,16 +137,18 @@ module TypeDsl =
     let recWith keyvals = DtRecordWith (map keyvals)
     let recExact keyvals = DtRecordExact (map keyvals)
     //let newType = DtNewType()
-    let arrow a b = DtArrow (a, NEL.make b)
+    let arrow a b = DtArrow (a, b)
 
-    /// Needs to have at least two items, to represent the input param type and result type
-    let arrowChain list =
+    let rec arrowChain (list : TypeConstraints list) : DefinitiveType =
         match list with
         | []
         | _ :: [] -> failwith "Needs to have at least two items to represent the domain and range"
-        | h :: n :: t -> DtArrow (h, NEL.new_ n t)
-
-
+        | h :: n :: t ->
+            arrow
+                h
+                (match t with
+                 | [] -> n
+                 | first :: rest -> defCstrs (arrowChain (n :: first :: rest)) [])
 
 
 

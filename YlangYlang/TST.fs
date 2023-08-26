@@ -147,9 +147,7 @@ and TypeConstraints =
 
 type Param =
     { //tokens : TokenWithSource list
-      destructurePath : PathToDestructuredName
-      /// Inferred through usage. If the param has a type annotation that will be a separate field.
-      inferredType : TypeJudgment }
+      destructurePath : PathToDestructuredName }
 
 
 and TypeError =
@@ -292,7 +290,7 @@ and LetBinding =
     { paramPattern : AssignmentPattern
       namesMap : Map<LowerIdent, SOD<Param>>
       /// @TODO: hmm not entirely sure what this thing actually describes. Is it the inferred type of the entire binding? Or is it _only_ the inferred shape based on the assignment pattern, which therefore still needs to be unified with the inferred type of the actual assigned expression?
-      bindingPatternInferredType : TypeJudgment
+      //bindingPatternInferredType : TypeJudgment
 
       (*
       @TODO: we need to take into account the assignment pattern here so that we can:
@@ -305,8 +303,8 @@ and LetBinding =
       *)
       assignedExpression : TypedExpr
 
-      /// This is the full combined inferred type, combining both the inferred type from the binding pattern of the let binding, and the inferred type of the assigned expression itself
-      combinedInferredType : TypeJudgment }
+    //combinedInferredType : TypeJudgment
+     }
 
 
 
@@ -318,7 +316,8 @@ and LetBindings = LetBinding nel
 and FunctionOrCaseMatchParam =
     { paramPattern : AssignmentPattern
       namesMap : Map<LowerIdent, SOD<Param>>
-      inferredType : TypeJudgment }
+    //inferredType : TypeJudgment
+     }
 
 
 
@@ -378,10 +377,7 @@ and SingleOrCompoundExpr =
 
 
 /// A typed expression
-and TypedExpr =
-    { inferredType : TypeJudgment
-      //freeVariables :
-      expr : SingleOrCompoundExpr }
+and TypedExpr = { expr : SingleOrCompoundExpr }
 
 
 

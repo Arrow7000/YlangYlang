@@ -71,11 +71,11 @@ let findValueAndType (name : LowerNameValue) (namesMap : NamesMaps) =
 
 
 
-let getInferredTypeOfLowercaseName (lowerCaseName : T.LowerCaseName) : T.TypeJudgment =
-    match lowerCaseName with
-    | T.LocalName binding -> binding.bindingPatternInferredType
-    | T.Param p -> p.inferredType
-    | T.TopLevelName value -> value.inferredType
+//let getInferredTypeOfLowercaseName (lowerCaseName : T.LowerCaseName) : T.TypeJudgment =
+//    match lowerCaseName with
+//    | T.LocalName binding -> binding.bindingPatternInferredType
+//    | T.Param p -> p.inferredType
+//    | T.TopLevelName value -> value.inferredType
 
 
 ///// This constructs the base names map for a module – to be used as a foundation for adding any declared names in any sub-scopes on
