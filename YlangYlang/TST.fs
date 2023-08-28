@@ -96,6 +96,9 @@ and RefConstr =
     /// This represents a bound variable to outside the scope where it is declared – works both for value and type expressions
     | IsBoundVar of TypeConstraintId
 
+    /// Is the return type of
+    | IsReturnTypeOf of func : TypeConstraints * calledWith : TypeConstraints
+
     /// I.e. must be the same type as this type param
     | ByTypeParam of LowerIdent
     /// I.e. must be the type that this constructor is a variant of
@@ -105,35 +108,29 @@ and RefConstr =
     | IsOfTypeByName of typeName : UpperNameValue * typeParams : TypeConstraints list
 
 
-/// A more limited reference constraint, only for value expressions
-and ValRefConstr =
-    | RefByVal of LowerNameValue
-    | BoundRef of TypeConstraintId
+///// A more limited reference constraint, only for value expressions
+//and ValRefConstr =
+//    | RefByVal of LowerNameValue
+//    | BoundRef of TypeConstraintId
 
 
 /// Contains the definitive constraints that have been inferred so far, plus any other value or type param constraints that have not been evaluated yet.
-/// If a `ConstrainType` turns out to be incompatible with the existing definitive type, this will be transformed into a `TypeJudgment` with the incompatible definitive types listed in the `Error` case.
+/// If a `RefConstr` turns out to be incompatible with the existing definitive type, this will be transformed into a `TypeJudgment` with the incompatible definitive types listed in the `Error` case.
 and TypeConstraints =
     | Constrained of definitive : DefinitiveType option * otherConstraints : RefConstr set
-    /// For those paths that are recursive or mutually recursive and so can't be type checked, and so must be pruned away, and if they're not pruned away they indicate that you have an infinite recursion loop, which should be a compile error.
-    /// @TODO: might be better to remove this from here and to only specify recursion at a higher level (e.g. in the TypeJudgment) so that these can be simply about type constraints, and this type doesn't need to do two different jobs.
-    | Recursive
 
-    /// Makes a new TypeConstraints which is truly empty, e.g. to ensure let polymorphism
-    static member empty = Constrained (None, Set.singleton (IsBoundVar (newGuid ())))
+
+    /// Makes a new TypeConstraints which is truly empty
+    static member empty = Constrained (None, Set.empty)
 
     /// Makes a new TypeConstraints which is empty of specific, but still has a Guid so as not to lose links required between the thing that is assigned this constraint and anything else it is linked to
-    static member unspecific = Constrained (None, Set.singleton (IsBoundVar (newGuid ())))
+    static member makeUnspecific () =
+        Constrained (None, Set.singleton (IsBoundVar (newGuid ())))
 
-    static member fromDefinitive (def : DefinitiveType) : TypeConstraints =
-        Constrained (Some def, Set.singleton (IsBoundVar (newGuid ())))
+    static member fromDefinitive (def : DefinitiveType) : TypeConstraints = Constrained (Some def, Set.empty)
 
     static member fromConstraint (constr : RefConstr) : TypeConstraints =
-        Constrained (
-            None,
-            Set.ofList [ constr
-                         IsBoundVar (newGuid ()) ]
-        )
+        Constrained (None, Set.singleton constr)
 
 
 

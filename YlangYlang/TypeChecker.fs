@@ -215,8 +215,6 @@ let rec unifyTypeConstraints (typeA : TypeConstraints) (typeB : TypeConstraints)
         Constrained (None, Set.union cnstrntsA cnstrntsB)
         |> Ok
 
-    | Recursive, other
-    | other, Recursive -> Ok other
 
 
 
@@ -311,35 +309,7 @@ and unifyDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveType) : Res
 
 
 
-
-and addConstraint (newConstraint : RefConstr) (constraints : TypeConstraints) : TypeConstraints =
-    match constraints with
-    | Constrained (def, cnstrnts) -> Constrained (def, Set.add newConstraint cnstrnts)
-    | Recursive ->
-        // This tries to represent the logic for a recursive function that contains a base case: i.e. if one branch calls the function recursively but the other branch returns a non-recursive value with a type that can be inferred concretely, then the inferred type is that of the base case and the recursive branch is irrelevant to the type of the expression.
-        //
-        // @TODO: However this probably does not work for non-function *values*, which unlike functions cannot be referenced recursively in their own definitions (unless it is referenced inside a function) because otherwise evaluating itself will instantly cause an infinite expansion and a stack overflow. So we probably need a different way to express recursiveness in a non-function value so that we do return an error, and don't just throw away the recursiveness information.
-        // We actually need to be able to represent 2 things:
-        // - The fact that an expression calls itself with no base case
-        // - The fact that an expression calls itself with no parameters in the middle to halt the immediate expansion
-        //
-        // But actually these two things are one and the same: the fact that an expression references itself without changing any of the parameters it feeds to itself! This is true not just for functions that do not have a base case at all, but even for functions that call themselves without changing any of their parameters – which would also result in an infinite loop – and also values that reference themselves without being functions with parameters in the middle – because those also technically have "no changed parameters" because a non-function value can still be thought of as a function, just with a list of parameters 0 items in length. And referencing itself therefore qualifies as "not changing the parameters it feeds itself" because every empty list is the same as any other!
-
-        TypeConstraints.fromConstraint newConstraint
-
-
-and addDefinitiveType (newDef : DefinitiveType) (constraints : TypeConstraints) : TypeJudgment =
-    match constraints with
-    | Constrained (def, cnstrnts) ->
-        match def with
-        | None -> Constrained (Some newDef, cnstrnts) |> Ok
-        | Some def_ ->
-            let unifiedResult = unifyDefinitiveTypes def_ newDef
-
-            unifiedResult
-            |> Result.map (fun unified -> Constrained (Some unified, cnstrnts))
-
-    | Recursive -> TypeConstraints.fromDefinitive newDef |> Ok
+//| Recursive -> TypeConstraints.fromDefinitive newDef |> Ok
 
 
 
@@ -461,8 +431,8 @@ and unifyJudgments (judgmentA : TypeJudgment) (judgmentB : TypeJudgment) =
 
     | Error a, Error b -> unifyTypeErrors a b |> Error
 
-    | Error e, Ok Recursive
-    | Ok Recursive, Error e -> Error e
+//| Error e, Ok Recursive
+//| Ok Recursive, Error e -> Error e
 
 
 
@@ -479,6 +449,50 @@ and unifyDefinitiveJudgments
     | Error e, Ok a -> addDefToTypeError a e |> Error
 
     | Error a, Error b -> unifyTypeErrors a b |> Error
+
+
+
+
+
+
+
+module TypeConstraints =
+
+    let addConstraint (newConstraint : RefConstr) (constraints : TypeConstraints) : TypeConstraints =
+        match constraints with
+        | Constrained (def, cnstrnts) -> Constrained (def, Set.add newConstraint cnstrnts)
+    //| Recursive ->
+    //    // This tries to represent the logic for a recursive function that contains a base case: i.e. if one branch calls the function recursively but the other branch returns a non-recursive value with a type that can be inferred concretely, then the inferred type is that of the base case and the recursive branch is irrelevant to the type of the expression.
+    //    //
+    //    // @TODO: However this probably does not work for non-function *values*, which unlike functions cannot be referenced recursively in their own definitions (unless it is referenced inside a function) because otherwise evaluating itself will instantly cause an infinite expansion and a stack overflow. So we probably need a different way to express recursiveness in a non-function value so that we do return an error, and don't just throw away the recursiveness information.
+    //    // We actually need to be able to represent 2 things:
+    //    // - The fact that an expression calls itself with no base case
+    //    // - The fact that an expression calls itself with no parameters in the middle to halt the immediate expansion
+    //    //
+    //    // But actually these two things are one and the same: the fact that an expression references itself without changing any of the parameters it feeds to itself! This is true not just for functions that do not have a base case at all, but even for functions that call themselves without changing any of their parameters – which would also result in an infinite loop – and also values that reference themselves without being functions with parameters in the middle – because those also technically have "no changed parameters" because a non-function value can still be thought of as a function, just with a list of parameters 0 items in length. And referencing itself therefore qualifies as "not changing the parameters it feeds itself" because every empty list is the same as any other!
+
+    //    TypeConstraints.fromConstraint newConstraint
+
+
+    let addDefinitiveType (newDef : DefinitiveType) (constraints : TypeConstraints) : TypeJudgment =
+        match constraints with
+        | Constrained (def, cnstrnts) ->
+            match def with
+            | None -> Constrained (Some newDef, cnstrnts) |> Ok
+            | Some def_ ->
+                let unifiedResult = unifyDefinitiveTypes def_ newDef
+
+                unifiedResult
+                |> Result.map (fun unified -> Constrained (Some unified, cnstrnts))
+
+
+
+
+
+
+
+
+
 
 
 
@@ -546,7 +560,7 @@ and private mentionableArrowToDefinite (toTypes : Cst.MentionableType nel) : Typ
 
 
 
-
+/// @TODO: replace this with an `AccumulatorAndOwnType`!
 type GatheredInferredNames = Map<LowerIdent, SOD<TypeJudgment>>
 
 
@@ -555,10 +569,12 @@ type GatheredInferredNames = Map<LowerIdent, SOD<TypeJudgment>>
 /// We infer the types of the parameters based only on
 /// a) any structure implicit in a destructuring pattern
 /// b) their usage – not the usage from the param name
+///
+/// @TODO: make this return an `AccumulatorAndOwnType`!
 let rec getInferredTypeFromAssignmentPattern (pattern : AssignmentPattern) : TypeJudgment * GatheredInferredNames =
     match pattern with
     | Named ident ->
-        let inferredType = Ok TypeConstraints.unspecific
+        let inferredType = Ok (TypeConstraints.makeUnspecific ())
 
         inferredType,
         Map.empty
@@ -583,7 +599,7 @@ and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : Typ
     | DestructuredRecord fieldNames ->
         let inferredType =
             fieldNames
-            |> NEL.map (fun recFieldName -> recFieldName, TypeConstraints.unspecific)
+            |> NEL.map (fun recFieldName -> recFieldName, TypeConstraints.makeUnspecific ())
             |> NEL.toList
             |> Map.ofList
             |> DtRecordWith
@@ -592,7 +608,7 @@ and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : Typ
 
         let names : GatheredInferredNames =
             fieldNames
-            |> NEL.map (fun ident -> recFieldToLowerIdent ident, Ok TypeConstraints.unspecific)
+            |> NEL.map (fun ident -> recFieldToLowerIdent ident, Ok (TypeConstraints.makeUnspecific ()))
             |> NEL.toList
             |> SOD.makeMapFromList
 
@@ -1853,9 +1869,7 @@ and private makeAccumFromConstraints (constraintsList : TypeConstraints list) : 
     |> List.fold
         (fun state cnstrnt ->
             match cnstrnt with
-            | Constrained (defOpt, others) -> addSingleConstrainedValue defOpt others state
-
-            | Recursive -> state)
+            | Constrained (defOpt, others) -> addSingleConstrainedValue defOpt others state)
         Map.empty
 
 
@@ -1864,7 +1878,6 @@ and addConstraintToAccum (cnstrnt : TypeConstraints) (acc : Accumulator) =
     match cnstrnt with
     | Constrained (defOpt, others) -> addSingleConstrainedValue defOpt others acc
 
-    | Recursive -> failwith "@TODO: need to think of how to combine this with the ones in the accumulator"
 
 
 
@@ -2231,7 +2244,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
                 : AccumulatorAndOwnType =
                 let (NEL (firstParam, tail)) = paramsApplied
 
-                let defFuncRequirement = DtArrow (firstParam, TypeConstraints.unspecific)
+                let defFuncRequirement = DtArrow (firstParam, TypeConstraints.makeUnspecific ())
                 let funcRequirementConstraint = TypeConstraints.fromDefinitive defFuncRequirement
 
                 let unifiedFuncConstraints = unifyTypeConstraints funcType funcRequirementConstraint
@@ -2293,7 +2306,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
                 | firstDotter :: rest ->
                     let defRequirement =
                         DtRecordWith (
-                            [ firstDotter, TypeConstraints.unspecific ]
+                            [ firstDotter, TypeConstraints.makeUnspecific () ]
                             |> Map.ofList
                         )
 
@@ -2349,15 +2362,17 @@ and getAccumulatorFromExpr (expr : TypedExpr) : AccumulatorAndOwnType =
 
 
 /// @TODO: need to implement this still. Basically just infer the type of the param as a whole, and also the relationship of that type to each of its deconstructed constituents.
-and getAccumulatorFromParam (p : FunctionOrCaseMatchParam) : AccumulatorAndOwnType = failwith "@TODO: implement"
+and getAccumulatorFromParam (p : FunctionOrCaseMatchParam) : AccumulatorAndOwnType =
+    failwith "@TODO: implement getAccumulatorFromParam"
 
-and getAccumulatorFromBinding (binding : LetBinding) : AccumulatorAndOwnType = failwith "@TODO: implement"
+and getAccumulatorFromBinding (binding : LetBinding) : AccumulatorAndOwnType =
+    failwith "@TODO: implement getAccumulatorFromBinding"
 
 
 /// This takes a map of names defined in this scope and the full combined Accumulator, and replaces the named values defined at this scope with GUIDs, so that they no longer reference named values (which are not in scope and therefore meaningless outside of this scope!) and replace them with simple GUIDs which therefore act as simple type variables
 /// --This takes a map of names defined in this scope and the full combined Accumulator, and returns the map of names in this scope along with their definitive types and generics (exposed as guids) along with a new Accumulator with those names removed - since those names are no longer exposed to parent scopes and so constraints are no longer relevant to higher scopes
 and replaceParamsFromAcc (names : Map<LowerIdent, TypeJudgment>) (acc : Accumulator) : Accumulator =
-    failwith "@TODO: implement"
+    failwith "@TODO: implement replaceParamsFromAcc"
 
 and getValueNames (acc : Accumulator) : LowerIdent set =
     failwith
@@ -2376,16 +2391,17 @@ and replaceValueNamesWithGuidsInTypeJudgment
     (names : Map<LowerIdent, System.Guid>)
     (typeJudgment : TypeJudgment)
     : TypeJudgment =
-    failwith "@TODO: replaces all the names in the given type judgment with GUIDs"
+    failwith
+        "@TODO: implement replaceValueNamesWithGuidsInTypeJudgment. Replaces all the names in the given type judgment with GUIDs"
 
 /// @TODO: removes all the listed GUIDs from the Accumulator, for a let expression so that we don't expose the names or type variables and shit to higher scopes when they're no longer needed.
 and deleteGuidsFromAcc (names : Map<LowerIdent, System.Guid>) (acc : Accumulator) : Accumulator =
-    failwith "@TODO: removes all the listed GUIDs from the Accumulator"
+    failwith "@TODO: implement deleteGuidsFromAcc. Removes all the listed GUIDs from the Accumulator"
 
 
 /// Denotes that a type judgment has another constraint upon it
 and addConstraintToJudgment (constr : TypeConstraints) (judgment : TypeJudgment) : Accumulator =
-    failwith "@TODO: implement"
+    failwith "@TODO: implement addConstraintToJudgment"
 
 
 and addJudgmentConstraintToAccumulator

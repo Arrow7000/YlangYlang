@@ -35,9 +35,27 @@ let private getTypeFromElmStr text : Result<TypeConstraints, Errors> =
     )
     |> Result.bind (
         typeCheckCstExpression List.empty
-        >> getType
+        >> getAccumulatorFromExpr
+        >> getSelf
         >> Result.mapError TypeError
     )
+
+
+let getAccFromElmStr text : Result<Accumulator, Errors> =
+    Lexer.tokeniseString text
+    |> Result.mapError LexingError
+    |> Result.bind (
+        ExpressionParsing.run ExpressionParsing.parseExpression
+        >> Parser.toResult
+        >> Result.mapError ParsingError
+    )
+    |> Result.map (
+        typeCheckCstExpression List.empty
+        >> getAccumulatorFromExpr
+        >> getAcc
+    )
+
+
 
 
 
@@ -87,6 +105,8 @@ module TypeDsl =
     /// Make empty type constraints
     let none = TypeConstraints.empty
 
+    let any = TypeConstraints.makeUnspecific
+
 
     /// Make a key/value pair for a record
     let kv k v = RecordFieldName k, v
@@ -111,6 +131,8 @@ module TypeDsl =
         IsOfTypeByName (LocalUpper name, typeParams)
 
 
+
+    let (=>) a b = a, b
 
 
 
@@ -259,19 +281,24 @@ let typeCheckThings =
               "Unify types and type judgments"
               [
 
-                //testList
-                //    "Unify definitive types"
-                //    [ testCase ""
-                //      <| fun () ->
-                //          let expr =
-                //              """
-                //                let
-                //                    g = f a
-                //                in
-                //                g b
-                //                """
+                testList
+                    "Unify definitive types"
+                    [ testCase ""
+                      <| fun () ->
+                          let expr =
+                              """
+                                let
+                                    g = f a
+                                in
+                                g b
+                                """
 
-                //          Expect.equal (getTypeFromElmStr expr) () "" ]
+                          let acc =
+                              [ set [ v "f" ]
+                                => Ok (Some (arrow (cstr (v "a")) any)) ]
+                              |> Map.ofList
+
+                          Expect.equal (getAccFromElmStr expr) (Ok acc) "" ]
 
                 testList "Unify type constraints" []
 
