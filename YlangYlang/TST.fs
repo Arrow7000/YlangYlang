@@ -52,19 +52,6 @@ type BuiltInPrimitiveTypes =
     | Bool
 
 
-type TypeParamOrDefType =
-    | DefType of DefinitiveType
-    | TypeParam of LowerIdent
-
-///// A representation of a newtype, rather than a representation of a declaration of one.
-//and NewType =
-//    { name : UpperNameValue
-//      /// This is the list of type params along with any type constraints imposed on the current instance of it thus far
-//      typeParams : (LowerIdent * TypeConstraints) list
-//    //variants : {| ctorLabel : UpperIdent
-//    //              params_ : TypeParamOrDefType list |} nel
-//     }
-
 
 
 /// Represents a correct type without clashes
@@ -77,9 +64,7 @@ and DefinitiveType =
     | DtRecordWith of referencedFields : Map<RecordFieldName, TypeConstraints>
     | DtRecordExact of Map<RecordFieldName, TypeConstraints>
     /// This guy will only be able to be assigned at the root of a file once we have the types on hand to resolve them and assign
-    | DtNewType of name : UpperNameValue * typeParams : (LowerIdent * TypeConstraints) list
-    //| DtNewType of NewType
-    //| DtReferencedType of typeName : UpperNameValue * typeParams : TypeConstraints list
+    | DtNewType of typeName : UpperNameValue * typeParams : (LowerIdent * TypeConstraints) list
     | DtArrow of fromType : TypeConstraints * toType : TypeConstraints
 
 
@@ -93,17 +78,26 @@ and DefinitiveType =
 and RefConstr =
     /// I.e. must be the same type as this value
     | ByValue of LowerNameValue
-    /// This represents a bound variable to outside the scope where it is declared – works both for value and type expressions
+
+    /// This represents a bound variable to outside the scope where it is declared – works both for value and type expressions.
+    /// I.e. these can represent invariants between params that a function or type constructor takes.
     | IsBoundVar of TypeConstraintId
 
-    /// Is the return type of
+    /// Is the return type of calling a function f with type t.
+    /// If we are in a context with an Accumulator, we should ensure that we stick into the accumulator the fact that f is a function that can be given type t. Buttttt, we still can't remove this returntypeness from this type constraint... I think if we find out that f is not actually a function type, we leave this typeconstraints as it is (because *this* type constraint itself doesn't necessarily get ruined because of that... I think just stick it in the accumulator, and the accumulator will chapp that that leads to f's TypeJudgment will become an Error, but that's fine, it will become a problem when we resolve f, so no need to update the ref constraints list otherwise I don't think.
+    /// If the current value is passed to a func with multiple params, f will look like... a `IsReturnTypeOf` of its own with a `calledWith` of its own? I *think* that can represent what we're trying to do here
     | IsReturnTypeOf of func : TypeConstraints * calledWith : TypeConstraints
+
+    /// I.e. must be the type that this constructor is a variant of; when given constructor params this will look like a `DtArrow`.
+    /// Technically if this is present in a TypeConstraints it implies that either the definitive type is a NewType (or still an incomplete Arrow), but that can be merged at the module level once we have names and constructors to resolve.
+    | ByConstructorType of ctor : UpperNameValue
+
+
+    // From here onwards are the constraints that are derived from a type expressions. The ones above are derived from value expressions.
 
     /// I.e. must be the same type as this type param
     | ByTypeParam of LowerIdent
-    /// I.e. must be the type that this constructor is a variant of
 
-    | ByConstructorType of UpperNameValue
     /// I.e. must be this type name + have this many type params
     | IsOfTypeByName of typeName : UpperNameValue * typeParams : TypeConstraints list
 

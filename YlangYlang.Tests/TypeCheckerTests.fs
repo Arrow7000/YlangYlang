@@ -105,7 +105,7 @@ module TypeDsl =
     /// Make empty type constraints
     let none = TypeConstraints.empty
 
-    let any = TypeConstraints.makeUnspecific
+    let any () = TypeConstraints.makeUnspecific ()
 
 
     /// Make a key/value pair for a record
@@ -295,7 +295,7 @@ let typeCheckThings =
 
                           let acc =
                               [ set [ v "f" ]
-                                => Ok (Some (arrow (cstr (v "a")) any)) ]
+                                => Ok (Some (arrow (cstr (v "a")) (any ()))) ]
                               |> Map.ofList
 
                           Expect.equal (getAccFromElmStr expr) (Ok acc) "" ]
