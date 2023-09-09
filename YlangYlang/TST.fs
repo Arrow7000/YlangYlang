@@ -83,10 +83,9 @@ and RefConstr =
     /// I.e. these can represent invariants between params that a function or type constructor takes.
     | IsBoundVar of TypeConstraintId
 
-    /// Is the return type of calling a function f with type t.
-    /// If we are in a context with an Accumulator, we should ensure that we stick into the accumulator the fact that f is a function that can be given type t. Buttttt, we still can't remove this returntypeness from this type constraint... I think if we find out that f is not actually a function type, we leave this typeconstraints as it is (because *this* type constraint itself doesn't necessarily get ruined because of that... I think just stick it in the accumulator, and the accumulator will chapp that that leads to f's TypeJudgment will become an Error, but that's fine, it will become a problem when we resolve f, so no need to update the ref constraints list otherwise I don't think.
-    /// If the current value is passed to a func with multiple params, f will look like... a `IsReturnTypeOf` of its own with a `calledWith` of its own? I *think* that can represent what we're trying to do here
-    | IsReturnTypeOf of func : TypeConstraints * calledWith : TypeConstraints
+    /// This means that the thing has to adhere to the type of the first parameter of the referenced thing. And if that referenced thing is not a function then that's a type error.
+    | HasTypeOfFirstParamOf of RefConstr
+
 
     /// I.e. must be the type that this constructor is a variant of; when given constructor params this will look like a `DtArrow`.
     /// Technically if this is present in a TypeConstraints it implies that either the definitive type is a NewType (or still an incomplete Arrow), but that can be merged at the module level once we have names and constructors to resolve.

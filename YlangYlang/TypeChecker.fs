@@ -137,6 +137,11 @@ let typeOrModuleIdentToUpperNameVal : Lexer.TypeOrModuleIdentifier -> UpperNameV
     | Lexer.UnqualType (UnqualTypeOrModuleIdentifier ident) -> UpperIdent ident |> LocalUpper
 
 
+
+
+
+let getParamFromPattern (pattern : FunctionOrCaseMatchParam) = pattern.paramPattern
+
 /// Lil helper function for converting to arrow type
 let rec makeDestType (NEL (first, rest)) =
     match rest with
@@ -195,10 +200,6 @@ let concatResultErrListNel (result : Result<'a, TypeError nel>) : Result<'a, Typ
 
 
 
-
-
-
-
 /// @TODO: this needs to be fixed now that `Constrained` types no longer just refer to generically typed params, but also to references to concrete values defined elsewhere!
 /// Not entirely sure yet how to do this without having to pass in names maps to this function, which I don't want to do, because of the circular definition problem (i.e. in a let bindings list all values can reference all others, even ones defined after itself, so we can't type check each value in isolation but have to "convert" them to type checked values all at once, and the only way we can do that is by allowing a type of an expression to be a reference to "whatever the type of value X is")
 let rec unifyTypeConstraints (typeA : TypeConstraints) (typeB : TypeConstraints) : TypeJudgment =
@@ -213,7 +214,11 @@ let rec unifyTypeConstraints (typeA : TypeConstraints) (typeB : TypeConstraints)
         |> Ok
 
     | Constrained (None, cnstrntsA), Constrained (None, cnstrntsB) ->
-        Constrained (None, Set.union cnstrntsA cnstrntsB)
+        Constrained (
+            None,
+            // @TODO: this may not be a simple union of reference constraints, they need to be unified with their own unifier function!
+            Set.union cnstrntsA cnstrntsB
+        )
         |> Ok
 
 
@@ -309,8 +314,6 @@ and unifyDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveType) : Res
     | _, _ -> Error <| TypeError.fromTypes [ typeA; typeB ]
 
 
-
-//| Recursive -> TypeConstraints.fromDefinitive newDef |> Ok
 
 
 
@@ -558,119 +561,6 @@ and private mentionableArrowToDefinite (toTypes : Cst.MentionableType nel) : Typ
     | head :: tail ->
         DtArrow (convertedFirst, mentionableArrowToDefinite (NEL (head, tail)))
         |> TypeConstraints.fromDefinitive
-
-
-
-/// @TODO: replace this with an `AccumulatorAndOwnType`!
-type GatheredInferredNames = Map<LowerIdent, SOD<TypeJudgment>>
-
-
-/// This *only* gets the inferred type based on the destructuring pattern, not based on usage or anything else.
-///
-/// We infer the types of the parameters based only on
-/// a) any structure implicit in a destructuring pattern
-/// b) their usage – not the usage from the param name
-///
-/// @TODO: make this return an `AccumulatorAndOwnType`!
-let rec getInferredTypeFromAssignmentPattern (pattern : AssignmentPattern) : TypeJudgment * GatheredInferredNames =
-    match pattern with
-    | Named ident ->
-        let inferredType = Ok (TypeConstraints.makeUnspecific ())
-
-        inferredType,
-        Map.empty
-        |> NameResolution.addNewReference ident inferredType
-
-    | Ignored -> Ok TypeConstraints.empty, Map.empty
-
-    | Unit -> TypeConstraints.fromDefinitive DtUnitType |> Ok, Map.empty
-
-    | DestructuredPattern destructured -> getInferredTypeFromDestructuredPattern destructured
-
-    | Aliased (pattern_, alias) ->
-        let (inferredType, inferredNames) = getInferredTypeFromAssignmentPattern pattern_
-
-        inferredType,
-        inferredNames
-        |> NameResolution.addNewReference alias inferredType
-
-
-and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : TypeJudgment * GatheredInferredNames =
-    match pattern with
-    | DestructuredRecord fieldNames ->
-        let inferredType =
-            fieldNames
-            |> NEL.map (fun recFieldName -> recFieldName, TypeConstraints.makeUnspecific ())
-            |> NEL.toList
-            |> Map.ofList
-            |> DtRecordWith
-            |> TypeConstraints.fromDefinitive
-            |> Ok
-
-        let names : GatheredInferredNames =
-            fieldNames
-            |> NEL.map (fun ident -> recFieldToLowerIdent ident, Ok (TypeConstraints.makeUnspecific ()))
-            |> NEL.toList
-            |> SOD.makeMapFromList
-
-        inferredType, names
-
-    | DestructuredCons consItems ->
-        let gatheredItems = TOM.map getInferredTypeFromAssignmentPattern consItems
-
-        let typeConstraints =
-            gatheredItems
-            |> TOM.map fst
-            |> TOM.fold unifyJudgments (Ok TypeConstraints.empty)
-
-        let namesMap =
-            gatheredItems
-            |> TOM.map snd
-            |> TOM.toList
-            |> SOD.combineReferenceMaps
-
-        typeConstraints, namesMap
-
-    | DestructuredTuple tupleItems ->
-        let gatheredItems =
-            tupleItems
-            |> TOM.map getInferredTypeFromAssignmentPattern
-
-        let namesMap =
-            gatheredItems
-            |> TOM.map snd
-            |> TOM.toList
-            |> SOD.combineReferenceMaps
-
-        let typeConstraints =
-            gatheredItems
-            |> TOM.map fst
-            |> TOM.sequenceResult
-            |> Result.map (DtTuple >> TypeConstraints.fromDefinitive)
-            |> concatResultErrListNel
-
-        typeConstraints, namesMap
-
-    | DestructuredTypeVariant (ctor, params_) ->
-        let gatheredItems =
-            params_
-            |> List.map getInferredTypeFromAssignmentPattern
-
-        let namesMap =
-            gatheredItems
-            // @TODO: not sure if it's ok to just discard the fst of gatheredItems or not
-            |> List.map snd
-            |> SOD.combineReferenceMaps
-
-        let typeConstraints =
-            // @TODO: Need to also add in the fact that this constructor is of type Arrow with as many params as there are params in this destructured expression!
-            ByConstructorType ctor
-            |> TypeConstraints.fromConstraint
-            |> Ok
-
-        typeConstraints, namesMap
-
-
 
 
 
@@ -987,8 +877,6 @@ let rec gatherParams (pattern : AssignmentPattern) : FunctionOrCaseMatchParam =
           namesMap = Map.empty }
 
     | DestructuredPattern destructured ->
-        let (inferredType, _) = getInferredTypeFromDestructuredPattern destructured
-
         { paramPattern = pattern
           namesMap = gatherDestructuredPattern destructured }
 
@@ -1813,11 +1701,20 @@ module Accumulator =
 
     *)
 
+
+    (*
+        Create and add/combine
+    *)
+
+    let empty = Map.empty
+
+
+    /// This contains the core logic for adding a new constraint to the Acc
     let rec addSingleConstrainedValueResult
         (defTypeOptResult : Result<DefinitiveType option, TypeError>)
         (namesSet : RefConstr set)
         (acc : Accumulator)
-        =
+        : Accumulator =
         let predicate = Set.intersect namesSet >> Set.isNotEmpty
 
         let combiner
@@ -1856,7 +1753,10 @@ module Accumulator =
 
         Map.combineManyKeys predicate combiner acc
 
-    /// Adds a single new constrained value to an Accumulator
+
+
+
+    /// Adds a single new (non-error) constrained value to an Accumulator
     let private addSingleConstrainedValue
         (defTypeOpt : DefinitiveType option)
         (namesSet : RefConstr set)
@@ -1865,19 +1765,25 @@ module Accumulator =
         addSingleConstrainedValueResult (Ok defTypeOpt) namesSet acc
 
 
+    let addSingleTypeConstraint (constr : TypeConstraints) (acc : Accumulator) : Accumulator =
+        let (Constrained (defOpt, others)) = constr
+
+        addSingleConstrainedValue defOpt others acc
+
+
+    let addSingleTypeJudgment (judgment : TypeJudgment) (acc : Accumulator) : Accumulator =
+        match judgment with
+        | Ok tc -> addSingleTypeConstraint tc acc
+        | Error _ -> acc
+
+
     let private makeAccumFromConstraints (constraintsList : TypeConstraints list) : Accumulator =
         constraintsList
-        |> List.fold
-            (fun state cnstrnt ->
-                match cnstrnt with
-                | Constrained (defOpt, others) -> addSingleConstrainedValue defOpt others state)
-            Map.empty
+        |> List.fold (fun state cnstrnt -> addSingleTypeConstraint cnstrnt state) Map.empty
 
 
 
-    let addConstraintToAccum (cnstrnt : TypeConstraints) (acc : Accumulator) : Accumulator =
-        match cnstrnt with
-        | Constrained (defOpt, others) -> addSingleConstrainedValue defOpt others acc
+
 
 
     let addJudgmentToAccum (ident : LowerIdent) (judgment : TypeJudgment) (acc : Accumulator) : Accumulator =
@@ -1891,8 +1797,48 @@ module Accumulator =
         addSingleConstrainedValueResult defOptResult namesToAdd acc
 
 
+    let makeAccFromTypeConstraints (tc : TypeConstraints) : Accumulator = addSingleTypeConstraint tc Map.empty
 
 
+
+
+
+    /// Add information about a named TypeConstraints into the Acc
+    let makeAccFromNamedTypeConstraints (ident : LowerNameValue) (tc : TypeConstraints) : Accumulator =
+        TypeConstraints.addConstraint (ByValue ident) tc
+        |> makeAccFromTypeConstraints
+
+
+    /// Add information about a named TypeConstraints for a value into the Acc
+    let makeAccFromLocalIdentAndTypeConstraints (ident : LowerIdent) (tc : TypeConstraints) : Accumulator =
+        makeAccFromNamedTypeConstraints (LocalLower ident) tc
+
+
+
+
+
+    (*
+        Combine Accs together
+    *)
+
+    /// In other words allow for merging constrained value constraints from two different maps
+    let combineAccumulators (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
+        acc1
+        |> Map.fold (fun acc key value -> addSingleConstrainedValueResult value key acc) acc2
+
+    let addManyAccs (newAccs : Accumulator seq) (acc : Accumulator) : Accumulator =
+        Seq.fold combineAccumulators acc newAccs
+
+    let combineManyAccs (accs : Accumulator seq) : Accumulator = addManyAccs accs Map.empty
+
+
+
+
+
+
+    (*
+        Get information out of the Acc
+    *)
 
 
     let private makeMapFromAccum (accum : Accumulator) : Map<RefConstr, TypeJudgment> =
@@ -1912,37 +1858,27 @@ module Accumulator =
 
 
     /// This is the function that infers all the types for all referenced values based on a list of TypeConstraints!
-    let getConstrainedValues (constraintsList : TypeConstraints list) : Map<RefConstr, TypeJudgment> =
+    let getConstrainedRefs (constraintsList : TypeConstraints list) : Map<RefConstr, TypeJudgment> =
         makeAccumFromConstraints constraintsList
         |> makeMapFromAccum
 
 
-
-    let makeAccFromTypeConstraints (tc : TypeConstraints) : Accumulator = addConstraintToAccum tc Map.empty
-
-    let makeAccFromNamedTypeConstraints (ident : LowerNameValue) (tc : TypeConstraints) : Accumulator =
-        TypeConstraints.addConstraint (ByValue ident) tc
-        |> makeAccFromTypeConstraints
-
-
-    let makeAccFromLocalIdentAndTypeConstraints (ident : LowerIdent) (tc : TypeConstraints) : Accumulator =
-        makeAccFromNamedTypeConstraints (LocalLower ident) tc
-
-
-    //let makeAccFromLocalIdentAndTypeJudgment (ident : LowerIdent) (judgment : TypeJudgment) : Accumulator =
-    //    makeAccFromNamedTypeConstraints (LocalLower ident) judgment
+    let getConstrainedValues =
+        getConstrainedRefs
+        >> Map.chooseKeyVals (fun constr judgment ->
+            match constr with
+            | ByValue name -> Some (name, judgment)
+            | _ -> None)
 
 
 
-    /// In other words allow for merging constrained value constraints from two different maps
-    let combineAccumulators (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
-        acc1
-        |> Map.fold (fun acc key value -> addSingleConstrainedValueResult value key acc) acc2
+    let getConstrainedLocalValues =
+        getConstrainedRefs
+        >> Map.chooseKeyVals (fun constr judgment ->
+            match constr with
+            | ByValue (LocalLower name) -> Some (name, judgment)
+            | _ -> None)
 
-    let addManyAccs newAccs acc =
-        Seq.fold combineAccumulators acc newAccs
-
-    let combineManyAccs (accs : Accumulator seq) : Accumulator = addManyAccs accs Map.empty
 
 
 
@@ -1960,23 +1896,40 @@ type AccumulatorAndOwnType =
       ownType : TypeJudgment }
 
 
-let makeAccAndSelf ownType acc = { acc = acc; ownType = ownType }
-let getAcc { acc = acc } = acc
-let getSelf { ownType = ownType } = ownType
-
-/// Combine two `AccumulatorAndSelfValue`s into a single accumulator and unified type judgment
-let combineAccAndSelves (aas1 : AccumulatorAndOwnType) (aas2 : AccumulatorAndOwnType) : AccumulatorAndOwnType =
-    { acc = Acc.combineAccumulators aas1.acc aas2.acc
-      ownType = unifyJudgments aas1.ownType aas2.ownType }
 
 
-/// Combine multiple `AccumulatorAndSelfValue`s into a single accumulator and unified type judgment
-let combineManyAccAndSelves list =
-    Seq.fold
-        combineAccAndSelves
-        { acc = Map.empty
-          ownType = Ok TypeConstraints.empty }
-        list
+module AccumulatorAndOwnType =
+
+    /// This processes the type judgment with the information available in the accumulator at every opportune point, the idea being that in any AccumulatorAndOwnType, whenever we look at the Acc or its ownType, all the available information has been properly propagated through the type judgment and doesn't need to be done by the external code
+    /// @TODO: check if I haven't already basically implemented this code somewhere in the Acc module!
+    let private processAccAndOwnType acc typeJudgment = typeJudgment
+
+
+    /// Makes an AccumulatorAndOwnType from a type judgment and an Accumulator
+    let make (ownType : TypeJudgment) (acc : Accumulator) : AccumulatorAndOwnType = { acc = acc; ownType = ownType }
+
+    let getAcc { acc = acc } : Accumulator = acc
+    let getSelf { ownType = ownType } : TypeJudgment = ownType
+
+    /// Combine two `AccumulatorAndSelfValue`s into a single accumulator and unified type judgment
+    let combine (aas1 : AccumulatorAndOwnType) (aas2 : AccumulatorAndOwnType) : AccumulatorAndOwnType =
+        { acc = Acc.combineAccumulators aas1.acc aas2.acc
+          ownType = unifyJudgments aas1.ownType aas2.ownType }
+
+
+    /// Combine multiple `AccumulatorAndSelfValue`s into a single accumulator and unified type judgment
+    let combineMany (list : AccumulatorAndOwnType seq) : AccumulatorAndOwnType =
+        Seq.fold
+            combine
+            { acc = Map.empty
+              ownType = Ok TypeConstraints.empty }
+            list
+
+
+
+
+
+module Aaot = AccumulatorAndOwnType
 
 
 let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccumulatorAndOwnType =
@@ -1986,14 +1939,14 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
         | T.ExplicitValue explicit ->
             match explicit with
             | T.Primitive primitive ->
-                makeAccAndSelf
+                Aaot.make
                     (typeOfPrimitiveLiteralValue primitive
                      |> TypeConstraints.fromDefinitive
                      |> Ok)
                     Map.empty
 
             | T.DotGetter dotGetter ->
-                makeAccAndSelf
+                Aaot.make
                     (Map.empty
                      |> Map.add dotGetter TypeConstraints.empty
                      |> DtRecordWith
@@ -2008,20 +1961,20 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
 
                     let combinedAcc =
                         typedList
-                        |> List.map getAcc
+                        |> List.map Aaot.getAcc
                         |> Acc.combineManyAccs
 
                     let combinedSelf =
                         (typedList
                          |> List.fold
                              (fun state expr ->
-                                 (state, getSelf expr)
+                                 (state, Aaot.getSelf expr)
                                  ||> Result.bind2 unifyTypeConstraints unifyTypeErrors)
                              (Ok TypeConstraints.empty)
                          |> Result.map (DtList >> TypeConstraints.fromDefinitive))
 
 
-                    makeAccAndSelf combinedSelf combinedAcc
+                    Aaot.make combinedSelf combinedAcc
 
 
                 | T.CompoundValues.Tuple tuple ->
@@ -2029,18 +1982,18 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
 
                     let combinedAcc =
                         typedList
-                        |> TOM.map getAcc
+                        |> TOM.map Aaot.getAcc
                         |> TOM.toList
                         |> Acc.combineManyAccs
 
                     let combinedSelf =
                         typedList
-                        |> TOM.map getSelf
+                        |> TOM.map Aaot.getSelf
                         |> TOM.sequenceResult
                         |> concatResultErrListNel
                         |> Result.map (DtTuple >> TypeConstraints.fromDefinitive)
 
-                    makeAccAndSelf combinedSelf combinedAcc
+                    Aaot.make combinedSelf combinedAcc
 
 
 
@@ -2051,20 +2004,20 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
 
                     let combinedAcc =
                         typedList
-                        |> List.map (snd >> getAcc)
+                        |> List.map (snd >> Aaot.getAcc)
                         |> Acc.combineManyAccs
 
                     let combinedType =
                         typedList
                         |> List.map (fun (key, expr) ->
-                            getSelf expr
+                            Aaot.getSelf expr
                             |> Result.map (fun inferred -> key, inferred))
                         |> Result.sequenceList
                         |> Result.map Map.ofList
                         |> concatResultErrListNel
                         |> Result.map (DtRecordExact >> TypeConstraints.fromDefinitive)
 
-                    makeAccAndSelf combinedType combinedAcc
+                    Aaot.make combinedType combinedAcc
 
 
                 | T.CompoundValues.RecordExtension (extended, additions) ->
@@ -2075,7 +2028,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
 
                     let combinedAcc =
                         typedList
-                        |> NEL.map (snd >> getAcc)
+                        |> NEL.map (snd >> Aaot.getAcc)
                         |> NEL.toList
                         |> Acc.combineManyAccs
 
@@ -2087,7 +2040,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
                     let derivedFromFieldsType : TypeJudgment =
                         typedList
                         |> NEL.map (fun (key, expr) ->
-                            getSelf expr
+                            Aaot.getSelf expr
                             |> Result.map (fun inferred -> key, inferred))
                         |> NEL.sequenceResult
                         |> Result.map (NEL.toList >> Map.ofList)
@@ -2097,22 +2050,22 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
                     let combinedType : TypeJudgment =
                         Result.bind (unifyTypeConstraints typeOfEditedRecord) derivedFromFieldsType
 
-                    makeAccAndSelf combinedType combinedAcc
+                    Aaot.make combinedType combinedAcc
 
             | T.Function funcVal ->
                 let typeOfBody = getAccumulatorFromExpr funcVal.body
 
                 let funcParamsAccumulatorsAndSelfTypes =
-                    NEL.map getAccumulatorFromParam funcVal.params_
+                    NEL.map (getParamFromPattern >> getAccumulatorFromParam) funcVal.params_
 
                 let funcParamsAccumulators =
                     funcParamsAccumulatorsAndSelfTypes
-                    |> NEL.map getAcc
+                    |> NEL.map Aaot.getAcc
 
 
                 let funcParamTypes =
                     funcParamsAccumulatorsAndSelfTypes
-                    |> NEL.map getSelf
+                    |> NEL.map Aaot.getSelf
                     |> NEL.sequenceResult
                     |> concatResultErrListNel
 
@@ -2139,19 +2092,19 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
                 /// This contains all the names defined from each param
                 let combinedNamesDefinedHere =
                     funcParamsAccumulators
-                    |> NEL.map getValueNames
+                    |> NEL.map getLocalValueNames
                     |> NEL.fold Set.union Set.empty
 
                 let guidMap = makeGuidMapForNames combinedNamesDefinedHere
 
 
-                makeAccAndSelf
+                Aaot.make
                     (replaceValueNamesWithGuidsInTypeJudgment guidMap arrowType)
                     (replaceValueNamesWithGuidsInAcc guidMap combinedAcc)
 
 
         | T.UpperIdentifier name ->
-            makeAccAndSelf
+            Aaot.make
                 (TypeConstraints.fromConstraint (ByConstructorType name)
                  |> Ok)
                 Map.empty
@@ -2162,7 +2115,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
                 |> TypeConstraints.fromConstraint
                 |> Ok
 
-            makeAccAndSelf inferredType Map.empty
+            Aaot.make inferredType Map.empty
 
 
         | T.LetExpression (declarations, expr) ->
@@ -2180,9 +2133,9 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
                     let unifiedAcc =
                         Acc.combineAccumulators assignedExprAccAndSelf.acc bindingAccAndSelf.acc
 
-                    makeAccAndSelf unifiedOwnType unifiedAcc)
+                    Aaot.make unifiedOwnType unifiedAcc)
 
-            let bindingAccs = typedDeclarations |> NEL.map getAcc
+            let bindingAccs = typedDeclarations |> NEL.map Aaot.getAcc
 
             let combinedAcc =
                 bindingAccs
@@ -2191,12 +2144,12 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
             /// This contains all the names defined from each param
             let combinedNamesDefinedHere =
                 bindingAccs
-                |> NEL.map getValueNames
+                |> NEL.map getLocalValueNames
                 |> NEL.fold Set.union Set.empty
 
             let guidMap = makeGuidMapForNames combinedNamesDefinedHere
 
-            makeAccAndSelf
+            Aaot.make
                 (replaceValueNamesWithGuidsInTypeJudgment guidMap bodyExpr.ownType)
                 (deleteGuidsFromAcc guidMap combinedAcc)
 
@@ -2225,7 +2178,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
 
                 let combinedType = unifyJudgments ifTrueAccAndOwn.ownType ifFalseAccAndOwn.ownType
 
-                makeAccAndSelf combinedType combinedAcc
+                Aaot.make combinedType combinedAcc
 
 
 
@@ -2234,37 +2187,38 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
                 let accsAndSelvesOfPatterns =
                     branches
                     |> NEL.map (fun branch ->
-                        let branchAccAndSelf = getAccumulatorFromParam branch.matchPattern
+                        let branchAccAndSelf =
+                            getAccumulatorFromParam (getParamFromPattern branch.matchPattern)
 
                         /// This contains all the names defined for this pattern
-                        let combinedNamesDefinedHere = getValueNames branchAccAndSelf.acc
+                        let combinedNamesDefinedHere = getLocalValueNames branchAccAndSelf.acc
 
                         let guidMap = makeGuidMapForNames combinedNamesDefinedHere
 
-                        makeAccAndSelf
+                        Aaot.make
                             (replaceValueNamesWithGuidsInTypeJudgment guidMap branchAccAndSelf.ownType)
                             (replaceValueNamesWithGuidsInAcc guidMap branchAccAndSelf.acc))
                     |> NEL.toList
-                    |> combineManyAccAndSelves
+                    |> Aaot.combineMany
 
                 let matchExprAccAndSelf = getAccumulatorFromExpr exprToMatch
 
                 // The combined accumulator and type from the matched expression and the patterns
                 let combinedMatchExprAndPatterns =
-                    combineAccAndSelves accsAndSelvesOfPatterns matchExprAccAndSelf
+                    Aaot.combine accsAndSelvesOfPatterns matchExprAccAndSelf
 
                 // The combined accumulator and type from the branches
                 let combinedBranches =
                     branches
                     |> NEL.map (fun branch -> getAccumulatorFromExpr branch.body)
                     |> NEL.toList
-                    |> combineManyAccAndSelves
+                    |> Aaot.combineMany
 
                 let combinedAcc =
                     Acc.combineAccumulators combinedMatchExprAndPatterns.acc combinedBranches.acc
 
 
-                makeAccAndSelf combinedBranches.ownType combinedAcc
+                Aaot.make combinedBranches.ownType combinedAcc
 
 
 
@@ -2276,98 +2230,22 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
             let funcAccAndSelf = getAccumulatorFromExpr funcExpr
             let paramsAccAndSelves = params_ |> NEL.map getAccumulatorFromExpr
 
-            let rec makeParamsArrowTypeAndGetReturnType
-                (funcType : TypeConstraints)
-                (paramsApplied : TypeConstraints nel)
-                : AccumulatorAndOwnType =
+            let paramAndBodyAaot =
+                match funcAccAndSelf.ownType with
+                | Ok constr -> addMultipleParamConstraints constr paramsAccAndSelves Acc.empty
 
-                (*
-
-
-
-
+                | Error e ->
+                    NEL.map Aaot.getAcc paramsAccAndSelves
+                    |> NEL.fold Acc.combineAccumulators Acc.empty
+                    |> Aaot.make (Error e)
 
 
+            let combinedAcc = Acc.combineAccumulators paramAndBodyAaot.acc funcAccAndSelf.acc
 
-
-
+            Aaot.make paramAndBodyAaot.ownType combinedAcc
 
 
 
-
-
-
-                @TODO: Use the new `IsReturnTypeOf` constraint to signify the relationship of the type with other constrained types (and then at some point stick it in an Accumulator I think?)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                *)
-
-                let (NEL (firstParam, tail)) = paramsApplied
-
-                let defFuncRequirement = DtArrow (firstParam, TypeConstraints.makeUnspecific ())
-                let funcRequirementConstraint = TypeConstraints.fromDefinitive defFuncRequirement
-
-                let unifiedFuncConstraints = unifyTypeConstraints funcType funcRequirementConstraint
-                let acc = addConstraintToJudgment funcRequirementConstraint unifiedFuncConstraints
-
-                let returnType : TypeJudgment =
-                    unifiedFuncConstraints
-                    |> Result.bind (fun unifiedFuncConstr ->
-                        match unifiedFuncConstr with
-                        | Constrained (Some (DtArrow (_, toType)), _) -> Ok toType
-
-                        | _ ->
-                            // @TODO: this is technically not correct because this should be a list of multiple mutually irreconcilable definitive types, one on its own makes no sense. Need to actually implement what the correct type error logic would be.
-                            Error (IncompatibleTypes [ defFuncRequirement ]))
-
-                match returnType with
-                | Ok returnType_ ->
-                    match tail with
-                    | [] -> makeAccAndSelf (Ok returnType_) acc
-                    | nextParam :: restParams ->
-                        let recursiveAccAndSelf =
-                            makeParamsArrowTypeAndGetReturnType returnType_ (NEL (nextParam, restParams))
-
-                        makeAccAndSelf recursiveAccAndSelf.ownType (Acc.combineAccumulators acc recursiveAccAndSelf.acc)
-
-                | Error e -> makeAccAndSelf (Error e) acc
-
-
-            let paramsTypes =
-                paramsAccAndSelves
-                |> NEL.map getSelf
-                |> NEL.sequenceResult
-                |> concatResultErrListNel
-
-            /// Contains the return type + the accumulator containing the type constraints of what the function's type needs to be based on its applied params
-            let inferredReturnTypeWithAccs =
-                (funcAccAndSelf.ownType, paramsTypes)
-                ||> Result.map2 makeParamsArrowTypeAndGetReturnType unifyTypeErrors
-                |> function
-                    | Error e -> makeAccAndSelf (Error e) Map.empty
-                    | Ok accAndSelf -> accAndSelf
-
-            let combinedAccs =
-                Acc.combineManyAccs (
-                    inferredReturnTypeWithAccs.acc
-                    :: funcAccAndSelf.acc
-                       :: (NEL.map getAcc paramsAccAndSelves |> NEL.toList)
-                )
-
-            makeAccAndSelf inferredReturnTypeWithAccs.ownType combinedAccs
 
 
 
@@ -2375,7 +2253,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
 
             let rec makeImpliedRecStructure exprType dotSeqsLeft =
                 match dotSeqsLeft with
-                | [] -> makeAccAndSelf (Ok exprType) Map.empty
+                | [] -> Aaot.make (Ok exprType) Map.empty
                 | firstDotter :: rest ->
                     let defRequirement =
                         DtRecordWith (
@@ -2405,9 +2283,9 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
                     | Ok returnType_ ->
                         let recursiveAccAndSelf = makeImpliedRecStructure returnType_ rest
 
-                        makeAccAndSelf recursiveAccAndSelf.ownType (Acc.combineAccumulators acc recursiveAccAndSelf.acc)
+                        Aaot.make recursiveAccAndSelf.ownType (Acc.combineAccumulators acc recursiveAccAndSelf.acc)
 
-                    | Error e -> makeAccAndSelf (Error e) acc
+                    | Error e -> Aaot.make (Error e) acc
 
             let exprAccAndSelf = getAccumulatorFromExpr dottedExpr
 
@@ -2416,12 +2294,12 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
                 |> Result.map (fun constr -> makeImpliedRecStructure constr (NEL.toList dotSequence))
                 |> function
                     | Ok accAndSelf -> accAndSelf
-                    | Error e -> makeAccAndSelf (Error e) Map.empty
+                    | Error e -> Aaot.make (Error e) Map.empty
 
             let combinedAcc =
                 Acc.combineAccumulators exprAccAndSelf.acc dottedExprAccAndSelf.acc
 
-            makeAccAndSelf dottedExprAccAndSelf.ownType combinedAcc
+            Aaot.make dottedExprAccAndSelf.ownType combinedAcc
 
 
 
@@ -2435,8 +2313,8 @@ and getAccumulatorFromExpr (expr : TypedExpr) : AccumulatorAndOwnType =
     getAccumulatorFromSingleOrCompExpr expr.expr
 
 
-/// @TODO: need to implement this still. Basically just infer the type of the param as a whole, and also the relationship of that type to each of its deconstructed constituents.
-and getAccumulatorFromParam (param : FunctionOrCaseMatchParam) : AccumulatorAndOwnType =
+//and getAccumulatorFromParam (param : FunctionOrCaseMatchParam) : AccumulatorAndOwnType =
+and getAccumulatorFromParam (param : AssignmentPattern) : AccumulatorAndOwnType =
     //failwith "@TODO: implement getAccumulatorFromParam"
 
 
@@ -2453,12 +2331,12 @@ and getAccumulatorFromParam (param : FunctionOrCaseMatchParam) : AccumulatorAndO
             let inferredType = TypeConstraints.makeUnspecific ()
 
             Acc.makeAccFromLocalIdentAndTypeConstraints ident inferredType
-            |> makeAccAndSelf (Ok inferredType)
+            |> Aaot.make (Ok inferredType)
 
 
-        | Ignored -> makeAccAndSelf (Ok TypeConstraints.empty) Map.empty
+        | Ignored -> Aaot.make (Ok TypeConstraints.empty) Map.empty
 
-        | Unit -> makeAccAndSelf (Ok <| TypeConstraints.fromDefinitive DtUnitType) Map.empty
+        | Unit -> Aaot.make (Ok <| TypeConstraints.fromDefinitive DtUnitType) Map.empty
 
         | DestructuredPattern destructured -> getInferredTypeFromDestructuredPattern destructured
 
@@ -2468,7 +2346,7 @@ and getAccumulatorFromParam (param : FunctionOrCaseMatchParam) : AccumulatorAndO
             let aliasAcc = Acc.addJudgmentToAccum alias nestedAccAndType.ownType Map.empty
 
             let combinedAcc = Acc.combineAccumulators nestedAccAndType.acc aliasAcc
-            makeAccAndSelf nestedAccAndType.ownType combinedAcc
+            Aaot.make nestedAccAndType.ownType combinedAcc
 
 
 
@@ -2499,7 +2377,7 @@ and getAccumulatorFromParam (param : FunctionOrCaseMatchParam) : AccumulatorAndO
                     Map.empty
 
 
-            makeAccAndSelf inferredType acc
+            Aaot.make inferredType acc
 
 
         | DestructuredCons consItems ->
@@ -2507,16 +2385,16 @@ and getAccumulatorFromParam (param : FunctionOrCaseMatchParam) : AccumulatorAndO
 
             let inferredType : TypeJudgment =
                 gatheredItems
-                |> TOM.map getSelf
+                |> TOM.map Aaot.getSelf
                 |> TOM.fold unifyJudgments (Ok TypeConstraints.empty)
 
             let acc : Accumulator =
                 gatheredItems
-                |> TOM.map getAcc
+                |> TOM.map Aaot.getAcc
                 |> TOM.toList
                 |> Acc.combineManyAccs
 
-            makeAccAndSelf inferredType acc
+            Aaot.make inferredType acc
 
 
         | DestructuredTuple tupleItems ->
@@ -2524,19 +2402,19 @@ and getAccumulatorFromParam (param : FunctionOrCaseMatchParam) : AccumulatorAndO
 
             let inferredType : TypeJudgment =
                 gatheredItems
-                |> TOM.map getSelf
+                |> TOM.map Aaot.getSelf
                 |> TOM.sequenceResult
                 |> Result.map (DtTuple >> TypeConstraints.fromDefinitive)
                 |> concatResultErrListNel
 
             let acc : Accumulator =
                 gatheredItems
-                |> TOM.map getAcc
+                |> TOM.map Aaot.getAcc
                 |> TOM.toList
                 |> Acc.combineManyAccs
 
 
-            makeAccAndSelf inferredType acc
+            Aaot.make inferredType acc
 
 
         | DestructuredTypeVariant (ctor, params_) ->
@@ -2548,13 +2426,13 @@ and getAccumulatorFromParam (param : FunctionOrCaseMatchParam) : AccumulatorAndO
                 accAndSelf.ownType
                 |> Result.map (TypeConstraints.addConstraint ctorType)
 
-            makeAccAndSelf selfType accAndSelf.acc
+            Aaot.make selfType accAndSelf.acc
 
 
     /// This is for a deconstructed newtype pattern match, which returns all the constraints and inferred accumulated information about the pattern matched params, to be used inside a function, let, or case match expression body
     and makeArrowAndGetAccsAndSelves (params_ : AssignmentPattern list) : AccumulatorAndOwnType =
         match params_ with
-        | [] -> makeAccAndSelf (Ok <| TypeConstraints.makeUnspecific ()) Map.empty
+        | [] -> Aaot.make (Ok <| TypeConstraints.makeUnspecific ()) Map.empty
         | head :: rest ->
             let ofFirst = getInferredTypeFromAssignmentPattern head
             let ofRest = makeArrowAndGetAccsAndSelves rest
@@ -2569,10 +2447,125 @@ and getAccumulatorFromParam (param : FunctionOrCaseMatchParam) : AccumulatorAndO
 
             let combinedAcc = Acc.combineAccumulators ofFirst.acc ofRest.acc
 
-            makeAccAndSelf inferredType combinedAcc
+            Aaot.make inferredType combinedAcc
 
 
-    getInferredTypeFromAssignmentPattern param.paramPattern
+    getInferredTypeFromAssignmentPattern param
+
+
+
+/// This gets the return type of the function, if we know that the function definitely has type Arrow. Otherwise it fails.
+/// @TODO: which, on second thought, is not quite right because then it will fail unless we already know that it is an Arrow type, whereas actually this should impose its own constraint.
+/// But I think the answer to the above is that this helper is only meant to be used after we've already tried to unify this with a definitive Arrow type, so any (compatible) function value should already have the definitive Arrow type by the time we get to this point.
+and private getFuncReturnType (tc : TypeConstraints) : TypeJudgment =
+    match tc with
+    | Constrained (Some (DtArrow (_, toType)), _) -> Ok toType
+
+    | Constrained _ ->
+        let paramGeneric = TypeConstraints.makeUnspecific ()
+        let returnGeneric = TypeConstraints.makeUnspecific ()
+
+        let defFuncRequirement = DtArrow (paramGeneric, returnGeneric)
+        Error (IncompatibleTypes [ defFuncRequirement ])
+
+
+/// Ensure TypeConstraints is compatible with the params it's being called with, *but* don't narrow the function to only work with those params; because we want to maintain let polymorphism!
+/// Hmm actually I think if we are to maintain let polymorphism, then instead of constraining the function's params and output type to only work with those from this one instance of its use, we actually *reverse* the constraints, and from this function we infer constraints on the param or params (and maybe its output also?)
+/// So I think what this function needs to do is:
+///     a) on the value called as a function: simply add a constraint that it needs to be a function
+///         i. and maybe actually add additional constraints from the shape of its param(s); but nothing else! no narrowing of the param types based on the value it's called with!
+///     b) impose any param-inferred constraints from the function onto the *value* it is called with - so not vice versa
+//and addArrowConstraint
+//    (funcExprConstraint : TypeConstraints)
+//    (paramPattern : AssignmentPattern)
+//    (actualParamType : TypeConstraints)
+//    (acc : Accumulator)
+//    : AccumulatorAndOwnType =
+//    let paramAccAndOwn = getAccumulatorFromParam paramPattern
+
+//    match paramAccAndOwn.ownType with
+//    | Ok paramType ->
+//        let funcRequirementConstraint =
+//            DtArrow (paramType, TypeConstraints.makeUnspecific ())
+//            |> TypeConstraints.fromDefinitive
+
+//        let funcJudgment = unifyTypeConstraints funcRequirementConstraint funcExprConstraint
+//        let actualParamJudgment = unifyTypeConstraints paramType actualParamType
+
+//        let returnType = funcJudgment |> Result.bind getFuncReturnType
+
+//        let newAcc =
+//            acc
+//            |> Acc.addSingleTypeConstraint funcRequirementConstraint
+//            |> Acc.addSingleTypeJudgment actualParamJudgment
+//            |> Acc.combineAccumulators paramAccAndOwn.acc
+
+//        Aaot.make returnType newAcc
+
+//    | Error e -> Aaot.make (Error e) acc
+
+
+
+
+and addArrowConstraint
+
+
+    (*
+
+
+
+    @TODO: add the function expression itself in here - or at least its referenced name - because to ensure we're tracking that a function `f` is a function with whatever signature it has, we need to pass that name f into the Accumulator. Otherwise we're only storing the other type constraints about the function in the Acc that we bubble up from here, but not actually tracking `f`'s own type!
+
+
+
+    *)
+
+
+    (funcExprConstraint : TypeConstraints)
+    (actualParamAccAndOwn : AccumulatorAndOwnType)
+    (acc : Accumulator)
+    : AccumulatorAndOwnType =
+
+    let paramRefConstr = newGuid () |> IsBoundVar
+
+    let paramConstraint = TypeConstraints.fromConstraint paramRefConstr
+    let putativeReturnType = TypeConstraints.makeUnspecific ()
+
+    let funcRequirementConstraint =
+        DtArrow (paramConstraint, putativeReturnType)
+        |> TypeConstraints.fromDefinitive
+
+    let funcJudgment = unifyTypeConstraints funcRequirementConstraint funcExprConstraint
+
+    let actualParamJudgment =
+        unifyJudgments (Ok paramConstraint) actualParamAccAndOwn.ownType
+
+    let returnType = funcJudgment |> Result.bind getFuncReturnType
+
+    let newAcc =
+        acc
+        |> Acc.addSingleTypeConstraint funcRequirementConstraint
+        |> Acc.addSingleTypeJudgment actualParamJudgment
+        |> Acc.combineAccumulators actualParamAccAndOwn.acc
+
+    Aaot.make returnType newAcc
+
+
+
+and addMultipleParamConstraints
+    (funcExprConstraint : TypeConstraints)
+    (actualParams : AccumulatorAndOwnType nel)
+    (acc : Accumulator)
+    : AccumulatorAndOwnType =
+    actualParams
+    |> NEL.fold
+        (fun state actualParam ->
+            match state.ownType with
+            | Ok constr -> addArrowConstraint constr actualParam state.acc
+            | Error e -> Aaot.make (Error e) acc)
+        (Aaot.make (Ok funcExprConstraint) acc)
+
+
 
 
 
@@ -2586,7 +2579,7 @@ and replaceParamsFromAcc (names : Map<LowerIdent, TypeJudgment>) (acc : Accumula
     failwith "@TODO: implement replaceParamsFromAcc"
 
 /// This will only return names in the keys and only if they are locally defined, not namespaced ones
-and getValueNames (acc : Accumulator) : LowerIdent set =
+and getLocalValueNames (acc : Accumulator) : LowerIdent set =
     //failwith
     //    "@TODO: this should get all the value names in the Accumulator. So that we get all the names defined in a param or let binding, and replace it with type variable GUIDs. So this tells us which names we should be replacing."
     Map.keys acc

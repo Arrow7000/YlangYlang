@@ -515,12 +515,22 @@ module Map =
             (Ok Map.empty)
 
 
-    let choose f map =
+    let choose (f : 'Key -> 'T -> 'U option) map =
         map
         |> Map.fold
             (fun newMap key value ->
                 match f key value with
                 | Some x -> Map.add key x newMap
+                | None -> newMap)
+            Map.empty
+
+
+    let chooseKeyVals (f : 'Key -> 'T -> ('K * 'U) option) map =
+        map
+        |> Map.fold
+            (fun newMap key value ->
+                match f key value with
+                | Some (k', v') -> Map.add k' v' newMap
                 | None -> newMap)
             Map.empty
 

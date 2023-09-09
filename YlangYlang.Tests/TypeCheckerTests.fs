@@ -1,4 +1,4 @@
-﻿module TypeCheckerTests
+module TypeCheckerTests
 
 module S = SyntaxTree
 module Cst = ConcreteSyntaxTree
@@ -9,7 +9,8 @@ open TypeChecker
 open QualifiedSyntaxTree.Names
 open Errors
 
-
+module Acc = Accumulator
+module Aaot = AccumulatorAndOwnType
 
 open Expecto
 
@@ -20,7 +21,8 @@ let private makeNumberExpression : S.NumberLiteralValue -> Cst.Expression =
     >> S.ExplicitValue
     >> S.SingleValueExpression
 
-let private getType (expr : T.TypedExpr) : TypeJudgment = getAccumulatorFromExpr expr |> getSelf
+let private getType (expr : T.TypedExpr) : TypeJudgment =
+    getAccumulatorFromExpr expr |> Aaot.getSelf
 
 
 
@@ -36,7 +38,7 @@ let private getTypeFromElmStr text : Result<TypeConstraints, Errors> =
     |> Result.bind (
         typeCheckCstExpression List.empty
         >> getAccumulatorFromExpr
-        >> getSelf
+        >> Aaot.getSelf
         >> Result.mapError TypeError
     )
 
@@ -52,7 +54,7 @@ let getAccFromElmStr text : Result<Accumulator, Errors> =
     |> Result.map (
         typeCheckCstExpression List.empty
         >> getAccumulatorFromExpr
-        >> getAcc
+        >> Aaot.getAcc
     )
 
 
