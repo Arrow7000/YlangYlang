@@ -1926,6 +1926,11 @@ module AccumulatorAndOwnType =
             list
 
 
+    /// Given an Aaot, rolls up the inferred information from the Accumulator, adds gleaned information into the TypeConstraints of the `.ownType`, and returns that thing.
+    ///
+    /// @TODO: I wonder... if it might be worth making two versions of the TypeConstraints; one for internal usage where you only have one definitive version at the top and the rest are only references to GUIDs, – GUIDs which are then expected to live inside the accompanying Accumulator so that we can always keep track of which which things relate to which other things – and the other which is for standalone use – e.g. when actually returning the inferred type of a value to the use – which is an actually fleshed out one with nested type constraints that can contain their own definitive types as well as reference constraints.
+    let applyAndGetType (aaot : AccumulatorAndOwnType) : TypeJudgment = ()
+
 
 
 
@@ -2151,7 +2156,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : Accum
 
             Aaot.make
                 (replaceValueNamesWithGuidsInTypeJudgment guidMap bodyExpr.ownType)
-                (deleteGuidsFromAcc guidMap combinedAcc)
+                (deleteGuidsFromAcc (Map.values guidMap |> Set.ofSeq) combinedAcc)
 
 
 
@@ -2315,9 +2320,6 @@ and getAccumulatorFromExpr (expr : TypedExpr) : AccumulatorAndOwnType =
 
 //and getAccumulatorFromParam (param : FunctionOrCaseMatchParam) : AccumulatorAndOwnType =
 and getAccumulatorFromParam (param : AssignmentPattern) : AccumulatorAndOwnType =
-    //failwith "@TODO: implement getAccumulatorFromParam"
-
-
     /// This *only* gets the inferred type based on the destructuring pattern, not based on usage or anything else.
     ///
     /// We infer the types of the parameters based only on
@@ -2568,9 +2570,11 @@ and addMultipleParamConstraints
 
 
 
-
+/// This should: from a binding, derive the type + all the names declared/destructured along with their types in the Accumulator - for use in the let expression body (and of course not outside of it)
 and getAccumulatorFromBinding (binding : LetBinding) : AccumulatorAndOwnType =
-    failwith "@TODO: implement getAccumulatorFromBinding"
+    getAccumulatorFromParam binding.paramPattern
+
+
 
 
 /// This takes a map of names defined in this scope and the full combined Accumulator, and replaces the named values defined at this scope with GUIDs, so that they no longer reference named values (which are not in scope and therefore meaningless outside of this scope!) and replace them with simple GUIDs which therefore act as simple type variables
@@ -2589,23 +2593,133 @@ and getLocalValueNames (acc : Accumulator) : LowerIdent set =
         | _ -> None)
 
 
-and makeGuidMapForNames (names : LowerIdent set) : Map<LowerIdent, System.Guid> =
-    failwith "@TODO: generates a GUID for each name given"
+and makeGuidMapForNames (names : LowerIdent set) : Map<LowerIdent, TypeConstraintId> =
+    Set.toList names
+    |> List.map (fun name -> name, newGuid ())
+    |> Map.ofList
 
 
-and replaceValueNamesWithGuidsInAcc (names : Map<LowerIdent, System.Guid>) (acc : Accumulator) : Accumulator =
-    failwith "@TODO: replaces all the names in the given accumulator with GUIDs"
+
+
+
+and replaceRefConstrInDefType switcher (defType : DefinitiveType) =
+    match defType with
+    | DtUnitType -> DtUnitType
+    | DtPrimitiveType p -> DtPrimitiveType p
+    | DtTuple tom -> DtTuple (TOM.map (replaceRefConstrInTypeConstraints switcher) tom)
+    | DtList tc -> DtList (replaceRefConstrInTypeConstraints switcher tc)
+    | DtRecordWith fields -> DtRecordWith (Map.map (fun _ -> replaceRefConstrInTypeConstraints switcher) fields)
+    | DtRecordExact fields -> DtRecordExact (Map.map (fun _ -> replaceRefConstrInTypeConstraints switcher) fields)
+    | DtNewType (typeName, typeParams) ->
+        DtNewType (typeName, List.map (Tuple.mapSnd (replaceRefConstrInTypeConstraints switcher)) typeParams)
+    | DtArrow (fromType, toType) ->
+        DtArrow (replaceRefConstrInTypeConstraints switcher fromType, replaceRefConstrInTypeConstraints switcher toType)
+
+and replaceRefConstrInTypeConstraints switcher tc =
+    let (Constrained (defOpt, refs)) = tc
+
+    Constrained (Option.map (replaceRefConstrInDefType switcher) defOpt, switcher refs)
+
+
+
+
+
+/// Replaces the references to names in the ref constraints with guids
+and singleSwitcher names refConstr =
+    match refConstr with
+    | ByValue (LocalLower ident) ->
+        match Map.tryFind ident names with
+        | Some replacementId -> IsBoundVar replacementId
+        | None -> refConstr
+
+    | HasTypeOfFirstParamOf constr' -> HasTypeOfFirstParamOf (singleSwitcher names constr')
+    | IsOfTypeByName (name, typeParams) ->
+        IsOfTypeByName (name, List.map (replaceRefConstrInTypeConstraints (Set.map (singleSwitcher names))) typeParams)
+    | _ -> refConstr
+
+
+
+
+and replaceValueNamesWithGuidsInTypeConstraints
+    (names : Map<LowerIdent, TypeConstraintId>)
+    (tc : TypeConstraints)
+    : TypeConstraints =
+    replaceRefConstrInTypeConstraints (Set.map (singleSwitcher names)) tc
+
+
+and replaceValueNamesWithGuidsInAcc (names : Map<LowerIdent, TypeConstraintId>) (acc : Accumulator) : Accumulator =
+    let switcher = Set.map (singleSwitcher names)
+
+    acc
+    |> Map.mapKeyVal (fun refs defOptResult ->
+        switcher refs, Result.map (Option.map (replaceRefConstrInDefType switcher)) defOptResult)
+
+
 
 and replaceValueNamesWithGuidsInTypeJudgment
-    (names : Map<LowerIdent, System.Guid>)
+    (names : Map<LowerIdent, TypeConstraintId>)
     (typeJudgment : TypeJudgment)
     : TypeJudgment =
-    failwith
-        "@TODO: implement replaceValueNamesWithGuidsInTypeJudgment. Replaces all the names in the given type judgment with GUIDs"
+    Result.map (replaceValueNamesWithGuidsInTypeConstraints names) typeJudgment
 
-/// @TODO: removes all the listed GUIDs from the Accumulator, for a let expression so that we don't expose the names or type variables and shit to higher scopes when they're no longer needed.
-and deleteGuidsFromAcc (names : Map<LowerIdent, System.Guid>) (acc : Accumulator) : Accumulator =
-    failwith "@TODO: implement deleteGuidsFromAcc. Removes all the listed GUIDs from the Accumulator"
+
+
+
+
+
+
+
+
+
+and deleteGuidsFromRefConstraints guids refConstr =
+    match refConstr with
+    | IsBoundVar tcId ->
+        if Set.contains tcId guids then
+            None
+        else
+            Some refConstr
+    | HasTypeOfFirstParamOf constr' ->
+        match deleteGuidsFromRefConstraints guids constr' with
+        | Some constr'' -> Some (HasTypeOfFirstParamOf constr'')
+        | None -> None
+    | IsOfTypeByName (name, typeParams) ->
+        IsOfTypeByName (name, List.map (deleteGuidsFromTypeConstraints guids) typeParams)
+        |> Some
+    | _ -> Some refConstr
+
+
+and deleteGuidsFromDefType guids defType =
+    match defType with
+    | DtUnitType -> DtUnitType
+    | DtPrimitiveType p -> DtPrimitiveType p
+    | DtTuple tom -> DtTuple (TOM.map (deleteGuidsFromTypeConstraints guids) tom)
+    | DtList tc -> DtList (deleteGuidsFromTypeConstraints guids tc)
+    | DtRecordWith fields -> DtRecordWith (Map.map (fun _ -> deleteGuidsFromTypeConstraints guids) fields)
+    | DtRecordExact fields -> DtRecordExact (Map.map (fun _ -> deleteGuidsFromTypeConstraints guids) fields)
+    | DtNewType (typeName, typeParams) ->
+        DtNewType (typeName, List.map (Tuple.mapSnd (deleteGuidsFromTypeConstraints guids)) typeParams)
+    | DtArrow (fromType, toType) ->
+        DtArrow (deleteGuidsFromTypeConstraints guids fromType, deleteGuidsFromTypeConstraints guids toType)
+
+
+
+and deleteGuidsFromTypeConstraints guids tc =
+    let (Constrained (defOpt, refs)) = tc
+
+    Constrained (
+        Option.map (deleteGuidsFromDefType guids) defOpt,
+        Set.choose (deleteGuidsFromRefConstraints guids) refs
+    )
+
+
+/// Removes all the listed GUIDs from the Accumulator, for a let expression so that we don't expose the names or type variables and shit to higher scopes when they're no longer needed.
+/// @TODO: Although... maybe actually we do need to keep them around to expose type constraints to outside the function/value?
+and deleteGuidsFromAcc (guids : TypeConstraintId set) (acc : Accumulator) : Accumulator =
+    acc
+    |> Map.mapKeyVal (fun refs defOptResult ->
+        Set.choose (deleteGuidsFromRefConstraints guids) refs,
+        Result.map (Option.map (deleteGuidsFromDefType guids)) defOptResult)
+
 
 
 /// Denotes that a type judgment has another constraint upon it
