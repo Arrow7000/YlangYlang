@@ -261,10 +261,10 @@ and unifyDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveType) : Res
 
     | DtNewType (typeRefA, typeParamsA), DtNewType (typeRefB, typeParamsB) ->
         if typeRefA = typeRefB then
-            unifyTypesList (List.map snd typeParamsA) (List.map snd typeParamsB)
+            unifyTypesList typeParamsA typeParamsB
             |> Result.mapError (fun _ -> TypeError.fromTypes [ typeA; typeB ])
             |> Result.bind (Result.sequenceList >> concatResultErrListNel)
-            |> Result.map (fun unifiedParams -> DtNewType (typeRefA, List.zip (List.map fst typeParamsA) unifiedParams))
+            |> Result.map (fun unifiedParams -> DtNewType (typeRefA, unifiedParams))
 
         else
             Error <| TypeError.fromTypes [ typeA; typeB ]
@@ -537,8 +537,10 @@ let rec mentionableTypeToDefinite (mentionable : Cst.MentionableType) : TypeCons
         let definiteTypeParams =
             List.map (S.getNode >> mentionableTypeToDefinite) typeParams
 
-        IsOfTypeByName (typeOrModuleIdentToUpperNameVal typeName.node, definiteTypeParams)
-        |> TypeConstraints.fromConstraint
+        //IsOfTypeByName (typeOrModuleIdentToUpperNameVal typeName.node, definiteTypeParams)
+        //|> TypeConstraints.fromConstraint
+        DtNewType (typeOrModuleIdentToUpperNameVal typeName.node, definiteTypeParams)
+        |> TypeConstraints.fromDefinitive
 
     | S.Arrow (fromType, toTypes) ->
         DtArrow (
@@ -1702,11 +1704,28 @@ module Accumulator =
     *)
 
 
+
+
+
+
+
+
     (*
         Create and add/combine
     *)
 
     let empty = Map.empty
+
+    let addNewTypeConstraint name tc acc =
+
+
+
+
+
+
+
+
+
 
 
     /// This contains the core logic for adding a new constraint to the Acc
@@ -1717,30 +1736,28 @@ module Accumulator =
         : Accumulator =
         let predicate = Set.intersect namesSet >> Set.isNotEmpty
 
+        let combineTwoDefOptResults
+            (a : Result<RefDefType option, AccTypeError>)
+            (b : Result<RefDefType option, AccTypeError>)
+            : Result<RefDefType option, AccTypeError> =
+            match a, b with
+            | Ok (Some a_), Ok (Some b_) -> unifyDefinitiveTypes a_ b_ |> Result.map Some
+
+            | Ok (Some def), Ok None
+            | Ok None, Ok (Some def) -> Ok (Some def)
+
+            | Ok None, Ok None -> Ok None
+
+            | Error err1, Error err2 -> DefTypeClash (err1, err2) |> Error
+
+            | Ok _, Error e
+            | Error e, Ok _ -> Error e
+
+
+
         let combiner
-            (keyvalList : (RefConstr set * Result<DefinitiveType option, TypeError>) list)
-            : RefConstr set * Result<DefinitiveType option, TypeError> =
-
-            let combineTwoDefOptResults
-                (a : Result<DefinitiveType option, TypeError>)
-                (b : Result<DefinitiveType option, TypeError>)
-                : Result<DefinitiveType option, TypeError> =
-                match a, b with
-                | Ok (Some a_), Ok (Some b_) -> unifyDefinitiveTypes a_ b_ |> Result.map Some
-
-                | Ok (Some def), Ok None
-                | Ok None, Ok (Some def) -> Ok (Some def)
-
-                | Ok None, Ok None -> Ok None
-
-                | Error err1, Error err2 -> unifyTypeErrors err1 err2 |> Error
-
-                | Ok None, Error e
-                | Error e, Ok None -> Error e
-
-                | Ok (Some def), Error e
-                | Error e, Ok (Some def) -> addDefToTypeError def e |> Error
-
+            (keyvalList : (RefConstr set * Result<RefDefType option, AccTypeError>) list)
+            : RefConstr set * Result<RefDefType option, AccTypeError> =
             let keySets, defTypes = List.unzip keyvalList
 
             let newKey = Set.unionMany keySets
@@ -1840,7 +1857,17 @@ module Accumulator =
         Get information out of the Acc
     *)
 
+    /// This takes an Acc and for each defType value it takes the TypeConstraints it contains, replaces it with a guid token, and sticks those replaced type constraints into the Acc, whilst flattening those too. All the while unifying the things it adds to the top level
+    let flattenAccVals (acc : Accumulator) = ()
 
+
+    /// Given a TypeConstraints, this uses the information from the Accumulator to populate the TC with as much (relevant and actionable) information as possible
+    let informTypeWithAcc (tc : TypeConstraints) (acc : Accumulator) = Ok ()
+
+
+
+
+    /// Returns a map of the referenced values inside an Acc and the type constraints they've been inferred to have
     let private makeMapFromAccum (accum : Accumulator) : Map<RefConstr, TypeJudgment> =
         let convertSingleAccEntryBack (nameSet : RefConstr set) (defOpt : DefinitiveType option) : TypeConstraints =
             Constrained (defOpt, nameSet)
@@ -1930,6 +1957,7 @@ module AccumulatorAndOwnType =
     ///
     /// @TODO: I wonder... if it might be worth making two versions of the TypeConstraints; one for internal usage where you only have one definitive version at the top and the rest are only references to GUIDs, – GUIDs which are then expected to live inside the accompanying Accumulator so that we can always keep track of which which things relate to which other things – and the other which is for standalone use – e.g. when actually returning the inferred type of a value to the use – which is an actually fleshed out one with nested type constraints that can contain their own definitive types as well as reference constraints.
     let applyAndGetType (aaot : AccumulatorAndOwnType) : TypeJudgment = ()
+
 
 
 
@@ -2528,7 +2556,7 @@ and addArrowConstraint
     (acc : Accumulator)
     : AccumulatorAndOwnType =
 
-    let paramRefConstr = newGuid () |> IsBoundVar
+    let paramRefConstr = makeTypeConstrId () |> IsBoundVar
 
     let paramConstraint = TypeConstraints.fromConstraint paramRefConstr
     let putativeReturnType = TypeConstraints.makeUnspecific ()
@@ -2595,7 +2623,7 @@ and getLocalValueNames (acc : Accumulator) : LowerIdent set =
 
 and makeGuidMapForNames (names : LowerIdent set) : Map<LowerIdent, TypeConstraintId> =
     Set.toList names
-    |> List.map (fun name -> name, newGuid ())
+    |> List.map (fun name -> name, makeTypeConstrId ())
     |> Map.ofList
 
 
@@ -2611,7 +2639,7 @@ and replaceRefConstrInDefType switcher (defType : DefinitiveType) =
     | DtRecordWith fields -> DtRecordWith (Map.map (fun _ -> replaceRefConstrInTypeConstraints switcher) fields)
     | DtRecordExact fields -> DtRecordExact (Map.map (fun _ -> replaceRefConstrInTypeConstraints switcher) fields)
     | DtNewType (typeName, typeParams) ->
-        DtNewType (typeName, List.map (Tuple.mapSnd (replaceRefConstrInTypeConstraints switcher)) typeParams)
+        DtNewType (typeName, List.map (replaceRefConstrInTypeConstraints switcher) typeParams)
     | DtArrow (fromType, toType) ->
         DtArrow (replaceRefConstrInTypeConstraints switcher fromType, replaceRefConstrInTypeConstraints switcher toType)
 
@@ -2633,8 +2661,8 @@ and singleSwitcher names refConstr =
         | None -> refConstr
 
     | HasTypeOfFirstParamOf constr' -> HasTypeOfFirstParamOf (singleSwitcher names constr')
-    | IsOfTypeByName (name, typeParams) ->
-        IsOfTypeByName (name, List.map (replaceRefConstrInTypeConstraints (Set.map (singleSwitcher names))) typeParams)
+    //| IsOfTypeByName (name, typeParams) ->
+    //    IsOfTypeByName (name, List.map (replaceRefConstrInTypeConstraints (Set.map (singleSwitcher names))) typeParams)
     | _ -> refConstr
 
 
@@ -2682,9 +2710,9 @@ and deleteGuidsFromRefConstraints guids refConstr =
         match deleteGuidsFromRefConstraints guids constr' with
         | Some constr'' -> Some (HasTypeOfFirstParamOf constr'')
         | None -> None
-    | IsOfTypeByName (name, typeParams) ->
-        IsOfTypeByName (name, List.map (deleteGuidsFromTypeConstraints guids) typeParams)
-        |> Some
+    //| IsOfTypeByName (name, typeParams) ->
+    //    IsOfTypeByName (name, List.map (deleteGuidsFromTypeConstraints guids) typeParams)
+    //    |> Some
     | _ -> Some refConstr
 
 
@@ -2697,7 +2725,7 @@ and deleteGuidsFromDefType guids defType =
     | DtRecordWith fields -> DtRecordWith (Map.map (fun _ -> deleteGuidsFromTypeConstraints guids) fields)
     | DtRecordExact fields -> DtRecordExact (Map.map (fun _ -> deleteGuidsFromTypeConstraints guids) fields)
     | DtNewType (typeName, typeParams) ->
-        DtNewType (typeName, List.map (Tuple.mapSnd (deleteGuidsFromTypeConstraints guids)) typeParams)
+        DtNewType (typeName, List.map (deleteGuidsFromTypeConstraints guids) typeParams)
     | DtArrow (fromType, toType) ->
         DtArrow (deleteGuidsFromTypeConstraints guids fromType, deleteGuidsFromTypeConstraints guids toType)
 

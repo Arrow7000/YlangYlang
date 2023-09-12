@@ -37,7 +37,7 @@ and AssignmentPattern =
 type TypeConstraintId = | TypeConstraintId of System.Guid
 
 
-let newGuid () =
+let makeTypeConstrId () =
     System.Guid.NewGuid () |> TypeConstraintId
 
 
@@ -64,7 +64,7 @@ and DefinitiveType =
     | DtRecordWith of referencedFields : Map<RecordFieldName, TypeConstraints>
     | DtRecordExact of Map<RecordFieldName, TypeConstraints>
     /// This guy will only be able to be assigned at the root of a file once we have the types on hand to resolve them and assign
-    | DtNewType of typeName : UpperNameValue * typeParams : (LowerIdent * TypeConstraints) list
+    | DtNewType of typeName : UpperNameValue * typeParams : TypeConstraints list
     | DtArrow of fromType : TypeConstraints * toType : TypeConstraints
 
 
@@ -83,8 +83,7 @@ and RefConstr =
     /// I.e. these can represent invariants between params that a function or type constructor takes.
     | IsBoundVar of TypeConstraintId
 
-    /// This means that the thing has to adhere to the type of the first parameter of the referenced thing. And if that referenced thing is not a function then that's a type error.
-    | HasTypeOfFirstParamOf of RefConstr
+    //| HasTypeOfFirstParamOf of TypeConstraintId
 
 
     /// I.e. must be the type that this constructor is a variant of; when given constructor params this will look like a `DtArrow`.
@@ -97,8 +96,7 @@ and RefConstr =
     /// I.e. must be the same type as this type param
     | ByTypeParam of LowerIdent
 
-    /// I.e. must be this type name + have this many type params
-    | IsOfTypeByName of typeName : UpperNameValue * typeParams : TypeConstraints list
+//| IsOfTypeByName of typeName : UpperNameValue * typeParams : TypeConstraints list
 
 
 ///// A more limited reference constraint, only for value expressions
@@ -118,7 +116,7 @@ and TypeConstraints =
 
     /// Makes a new TypeConstraints which is empty of specific, but still has a Guid so as not to lose links required between the thing that is assigned this constraint and anything else it is linked to
     static member makeUnspecific () =
-        Constrained (None, Set.singleton (IsBoundVar (newGuid ())))
+        Constrained (None, Set.singleton (IsBoundVar (makeTypeConstrId ())))
 
     static member fromDefinitive (def : DefinitiveType) : TypeConstraints = Constrained (Some def, Set.empty)
 
@@ -154,8 +152,130 @@ and TypeJudgment = Result<TypeConstraints, TypeError>
 
 
 
+
+
+
+
+/// Basically the same as a T.DefinitiveType but with guids referencing other types in the Acc instead of their own TypeConstraints
+type RefDefType =
+    | RefDtUnitType
+    | RefDtPrimitiveType of BuiltInPrimitiveTypes
+    | RefDtTuple of TypeConstraintId tom
+    | RefDtList of TypeConstraintId
+    | RefDtRecordWith of referencedFields : Map<RecordFieldName, TypeConstraintId>
+    | RefDtRecordExact of Map<RecordFieldName, TypeConstraintId>
+    | RefDtNewType of typeName : UpperNameValue * typeParams : TypeConstraintId list
+    | RefDtArrow of fromType : TypeConstraintId * toType : TypeConstraintId
+
+
+
+type AccTypeError = | DefTypeClash of RefDefType * RefDefType
+
+
 /// Helper type for accumulating type constraints
-type Accumulator = Map<RefConstr set, Result<DefinitiveType option, TypeError>>
+type Accumulator = Map<RefConstr set, Result<RefDefType option, AccTypeError>>
+
+
+
+
+
+
+
+
+
+
+
+/// Attempt at making accumulator working by using two internal maps, one where every single def type gets a guid assigned to it, and every ref constraint gets placed in a set with its others, which points to a guid, which in turn may have a def type assigned to it.
+type Accumulator2
+// electric boogaloo
+ =
+    { refConstraintsMap : Map<RefConstr set, TypeConstraintId>
+      dataMap : Map<TypeConstraintId, Result<RefDefType, AccTypeError>> }
+
+    static member empty =
+        { refConstraintsMap = Map.empty
+          dataMap = Map.empty }
+
+
+    member this.getAlignedConstraints (constr : RefConstr) : RefConstr set option =
+        this.refConstraintsMap
+        |> Map.tryPick (fun key _ ->
+            if Set.contains constr key then
+                Some key
+            else
+                None)
+
+    member this.getConstraintIdByRefConstr (constr : RefConstr) : TypeConstraintId option =
+        let key = this.getAlignedConstraints constr
+        Option.bind (fun k -> Map.tryFind k this.refConstraintsMap) key
+
+
+    /// @TODO: still probably need to rework the dataMap so that it stores only defTypeResults - the no def type case is represented by there just not being a keyval in the dataMap for the given typeConstraintId
+    member this.getDefByConstr (constr : RefConstr) =
+        let key = this.getConstraintIdByRefConstr constr
+        Option.bind (fun k -> Map.tryFind k this.dataMap) key
+
+    member this.addTypeConstraints (tcRef : RefConstr) (tc : TypeConstraints) =
+        let newKey = makeTypeConstrId ()
+
+        let (Constrained (defOpt, refs)) = tc
+        let refsFromTypeAndSelf = Set.add tcRef refs
+
+        // Need to roll up the maps, first the refConstr map, and combine whichever ref constr sets are now to be combined - and where refs are to be combined, def types are indeed to be unified; which probably requires resolving the def types stored under constraint IDs and trying to unify those in turn, which also probably means regenerating constraint IDs, deleting the old ones under the old constraint IDs, and inserting new ones, containing the new unified definitive types!
+
+
+
+        let hasOverlap a b = Set.union a b |> Set.isNotEmpty
+
+        let shouldRefsKeyBeReplaced mapRefsKey =
+            hasOverlap refsFromTypeAndSelf mapRefsKey
+
+
+
+        let refConstraintsAndConstraintIdsToReplace =
+            this.refConstraintsMap
+            |> Map.fold
+                (fun constrsAndIds key value ->
+                    if shouldRefsKeyBeReplaced key then
+                        (refsFromTypeAndSelf, value) :: constrsAndIds
+                    else
+                        constrsAndIds)
+                List.empty
+
+        let newRefsKey =
+            refConstraintsAndConstraintIdsToReplace
+            |> List.map fst
+            |> Set.unionMany
+
+        let constraintIdsToReplace =
+            refConstraintsAndConstraintIdsToReplace
+            |> List.map snd
+
+        let newRefConstraintsMap =
+            refConstraintsAndConstraintIdsToReplace
+            |> List.fold
+                (fun map (refConstraints, constrId) ->
+                    Map.combineManyKeys (hasOverlap refConstraints) (fun _ -> refConstraints, constrId) map)
+                this.refConstraintsMap
+
+
+
+        let newDataMap =
+            constraintIdsToReplace
+            |> List.choose (fun constrId -> Map.tryFind constrId this.dataMap)
+            |> Result.sequenceList
+            |> Result.map (fun refDefs ->
+                // @TODO: try to unify the refDefs - will likely need to do it recursively, with possibly needing to run multiple passes on unifying refDefs and then unifying the things referred to with constraint IDs - although that might mean that I also need to allow for constraint IDs to link to reference constraints, not only the other way around
+                ())
+
+
+        { refConstraintsMap = newRefConstraintsMap
+          dataMap = newDataMap }
+
+
+
+    member this.unifyRefDefTypes (replaceIdsWithIdAndType : TypeConstraintId list -> unit) a b = []
+
 
 
 
