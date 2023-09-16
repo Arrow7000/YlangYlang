@@ -1734,7 +1734,7 @@ module Accumulator =
         (namesSet : RefConstr set)
         (acc : Accumulator)
         : Accumulator =
-        let predicate = Set.intersect namesSet >> Set.isNotEmpty
+        let predicate k _ = Set.intersect namesSet >> Set.isNotEmpty
 
         let combineTwoDefOptResults
             (a : Result<RefDefType option, AccTypeError>)

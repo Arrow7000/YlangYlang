@@ -564,7 +564,7 @@ module Map =
 
     /// Combine multiple keys and values in a map into a single keyval pair, according to which keys match a predicate. The resulting map will have the keys that were combined removed
     let combineManyKeys<'Key, 'T when 'Key : comparison>
-        (predicate : 'Key -> bool)
+        (predicate : 'Key -> 'T -> bool)
         (combiner : ('Key * 'T) list -> 'Key * 'T)
         (map : Map<'Key, 'T>)
         =
@@ -572,7 +572,7 @@ module Map =
             map
             |> Map.fold
                 (fun (keyvalsToMerge, newMap) key value ->
-                    if predicate key then
+                    if predicate key value then
                         (key, value) :: keyvalsToMerge, newMap
                     else
                         keyvalsToMerge, Map.add key value newMap
@@ -582,6 +582,12 @@ module Map =
 
         let combinedKey, combinedVal = combiner keyvalsToMerge
         Map.add combinedKey combinedVal scouredMap
+
+
+
+    let removeKeys (keys : 'Key seq) map =
+        let keySet = Set.ofSeq keys
+        Map.filter (fun k _ -> Set.contains k keySet) map
 
 
 
@@ -759,3 +765,7 @@ module Tuple =
     let mapFst f (a, b) = f a, b
     let mapSnd f (a, b) = a, f b
     let mapBoth f g (a, b) = f a, g b
+
+
+module Triple =
+    let mapThird (f : 'c -> 'd) (a, b, c) = a, b, f c

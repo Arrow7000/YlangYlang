@@ -185,96 +185,439 @@ type Accumulator = Map<RefConstr set, Result<RefDefType option, AccTypeError>>
 
 
 
-/// Attempt at making accumulator working by using two internal maps, one where every single def type gets a guid assigned to it, and every ref constraint gets placed in a set with its others, which points to a guid, which in turn may have a def type assigned to it.
-type Accumulator2
-// electric boogaloo
- =
-    { refConstraintsMap : Map<RefConstr set, TypeConstraintId>
-      dataMap : Map<TypeConstraintId, Result<RefDefType, AccTypeError>> }
+///// Attempt at making accumulator working by using two internal maps, one where every single def type gets a guid assigned to it, and every ref constraint gets placed in a set with its others, which points to a guid, which in turn may have a def type assigned to it.
+//type Accumulator2
+//// electric boogaloo
+// =
+//    { refConstraintsMap : Map<TypeConstraintId, RefConstr set>
+//      dataMap : Map<TypeConstraintId, Result<RefDefType, AccTypeError>> }
+
+//    static member empty =
+//        { refConstraintsMap = Map.empty
+//          dataMap = Map.empty }
+
+
+//    //member this.getAlignedConstraints (constr : RefConstr) : RefConstr set option =
+//    //    this.refConstraintsMap
+//    //    |> Map.tryPick (fun key _ ->
+//    //        if Set.contains constr key then
+//    //            Some key
+//    //        else
+//    //            None)
+
+//    //member this.getConstraintIdByRefConstr (constr : RefConstr) : TypeConstraintId option =
+//    //    let key = this.getAlignedConstraints constr
+//    //    Option.bind (fun k -> Map.tryFind k this.refConstraintsMap) key
+
+
+//    ///// @TODO: still probably need to rework the dataMap so that it stores only defTypeResults - the no def type case is represented by there just not being a keyval in the dataMap for the given typeConstraintId
+//    //member this.getDefByConstr (constr : RefConstr) =
+//    //    let key = this.getConstraintIdByRefConstr constr
+//    //    Option.bind (fun k -> Map.tryFind k this.dataMap) key
+
+//    member this.addTypeConstraints (tcRef : RefConstr) (tc : TypeConstraints) : Accumulator2 =
+
+//        /// This returns a Result of a unified refDef in the success case and AccTypeErr in the failure case + a list of guids that have newly been found to need to be unified as a consequence of unifying these two refDefs - which it should apply to itself again immediately, and after there are no more unifications to be made in the refDefs map, those guid unifications should be passed to the map of guids to ref constraints to be applied there - which may once again result in more guids to be combined in the guids to refDefs map, and vice versa, in potentially multiple iterations
+//        let rec unifyRefDefs
+//            (a : RefDefType)
+//            (b : RefDefType)
+//            : Result<RefDefType, AccTypeError> * TypeConstraintId list =
+//            failwith "@TODO: implement"
+
+
+//        //and unifyRefConstrs (constrIds:TypeConstraintId list)  =
+
+
+
+
+//        let newKey = makeTypeConstrId ()
+
+//        let (Constrained (defOpt, refs)) = tc
+//        let refsFromTypeAndSelf = Set.add tcRef refs
+
+//        // Need to roll up the maps, first the refConstr map, and combine whichever ref constr sets are now to be combined - and where refs are to be combined, def types are indeed to be unified; which probably requires resolving the def types stored under constraint IDs and trying to unify those in turn, which also probably means regenerating constraint IDs, deleting the old ones under the old constraint IDs, and inserting new ones, containing the new unified definitive types!
+
+
+
+//        let hasOverlap a b = Set.union a b |> Set.isNotEmpty
+
+//        let shouldRefsKeyBeReplaced mapRefsKey =
+//            hasOverlap refsFromTypeAndSelf mapRefsKey
+
+
+
+//        let refConstraintsAndConstraintIdsToReplace =
+//            this.refConstraintsMap
+//            |> Map.fold
+//                (fun constrsAndIds key value ->
+//                    if shouldRefsKeyBeReplaced value then
+//                        (key, refsFromTypeAndSelf) :: constrsAndIds
+//                    else
+//                        constrsAndIds)
+//                List.empty
+
+//        let newRefs =
+//            refConstraintsAndConstraintIdsToReplace
+//            |> List.map snd
+//            |> Set.unionMany
+
+//        let constraintIdsToReplace =
+//            refConstraintsAndConstraintIdsToReplace
+//            |> List.map fst
+//            |> Set.ofSeq
+
+//        let newRefConstraintsMap =
+//            this.refConstraintsMap
+//            |> Map.filter (fun key _ -> Set.contains key constraintIdsToReplace)
+//            |> Map.add newKey newRefs
+
+
+//        let defsToUnifyResult =
+//            constraintIdsToReplace
+//            |> Set.toList
+//            |> List.choose (fun constrId -> Map.tryFind constrId this.dataMap)
+//            |> Result.sequenceList
+
+
+//        match defsToUnifyResult with
+//        | Ok defsToUnify ->
+//            match defsToUnify, defOpt with
+//            | [], None -> { this with refConstraintsMap = newRefConstraintsMap }
+
+//            | [], Some defType ->
+
+//                let currStateAcc2 = { this with refConstraintsMap = newRefConstraintsMap }
+
+//                currStateAcc2.addDefinitiveType tcRef defType
+
+//            | headDef :: restDefs, _ ->
+
+//                //let rec unifyAllRefDefs defsToUnify constrsToUnify =
+//                //    match defsToUnify with
+//                //    | first :: rest ->
+
+
+//                let allUnifiedRefDef,constrIdsToUnify =
+//                    // @TODO: try to unify the refDefs - will likely need to do it recursively, with possibly needing to run multiple passes on unifying refDefs and then unifying the things referred to with constraint IDs - although that might mean that I also need to allow for constraint IDs to link to reference constraints, not only the other way around
+//                    restDefs
+//                    // First unify the existing combined refDefs
+//                    |> List.fold
+//                        (fun (unifiedDefResult, constrsToUnifySoFar) refDef ->
+//                            match unifiedDefResult with
+//                            | Ok unifiedDef ->
+//                                let result, newConstrsToUnify = unifyRefDefs refDef unifiedDef
+//                                result, newConstrsToUnify @ constrsToUnifySoFar
+
+//                            | Error e -> unifiedDefResult, constrsToUnifySoFar)
+//                        (Ok headDef, List.empty)
+
+//                // Then add in the new refDef from the TC, if there is one
+//                //|>
+
+
+
+
+
+
+
+
+//                { refConstraintsMap = newRefConstraintsMap
+//                  dataMap = newDataMap }
+
+
+//    /// @TODO: this doesn't need to be a method on this at all, just putting it here for now for safekeeping
+//    //static member unifyRefDefType (a : RefDefType) (b : RefDefType) (acc : Accumulator2) : Accumulator2 =
+//    //    failwith "@TODO: implement"
+
+
+//    member this.addDefinitiveType (tcRef : RefConstr) (defType : DefinitiveType) : Accumulator2 =
+//        failwith
+//            "@TODO: implement; will need to store the refDef version of the definitive type + recursively call the this.addTypeConstraints function for the ones contained inside the DefType"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+type private TypeCheckResult =
+    { idOfTypeConstraint : TypeConstraintId
+      refDefResultOpt : Result<RefDefType, AccTypeError> option
+      refConstraints : RefConstr set }
+
+    static member fromRefDef constrId refDef =
+        { idOfTypeConstraint = constrId
+          refDefResultOpt = Some (Ok refDef)
+          refConstraints = Set.empty }
+
+
+
+type private AccModificationsToMake =
+    { typeConstraintsToRemove : TypeConstraintId set
+      accumulatorToSubsume : Accumulator2 }
 
     static member empty =
-        { refConstraintsMap = Map.empty
-          dataMap = Map.empty }
+        { typeConstraintsToRemove = Set.empty
+          accumulatorToSubsume = Accumulator2.empty }
 
-
-    member this.getAlignedConstraints (constr : RefConstr) : RefConstr set option =
-        this.refConstraintsMap
-        |> Map.tryPick (fun key _ ->
-            if Set.contains constr key then
-                Some key
-            else
-                None)
-
-    member this.getConstraintIdByRefConstr (constr : RefConstr) : TypeConstraintId option =
-        let key = this.getAlignedConstraints constr
-        Option.bind (fun k -> Map.tryFind k this.refConstraintsMap) key
-
-
-    /// @TODO: still probably need to rework the dataMap so that it stores only defTypeResults - the no def type case is represented by there just not being a keyval in the dataMap for the given typeConstraintId
-    member this.getDefByConstr (constr : RefConstr) =
-        let key = this.getConstraintIdByRefConstr constr
-        Option.bind (fun k -> Map.tryFind k this.dataMap) key
-
-    member this.addTypeConstraints (tcRef : RefConstr) (tc : TypeConstraints) =
-        let newKey = makeTypeConstrId ()
-
-        let (Constrained (defOpt, refs)) = tc
-        let refsFromTypeAndSelf = Set.add tcRef refs
-
-        // Need to roll up the maps, first the refConstr map, and combine whichever ref constr sets are now to be combined - and where refs are to be combined, def types are indeed to be unified; which probably requires resolving the def types stored under constraint IDs and trying to unify those in turn, which also probably means regenerating constraint IDs, deleting the old ones under the old constraint IDs, and inserting new ones, containing the new unified definitive types!
+    static member fromTcr (tcr : TypeCheckResult) =
+        { typeConstraintsToRemove = Set.empty
+          accumulatorToSubsume =
+            { refConstraintsMap =
+                [ tcr.idOfTypeConstraint, (tcr.refDefResultOpt, tcr.refConstraints) ]
+                |> Map.ofSeq } }
 
 
 
-        let hasOverlap a b = Set.union a b |> Set.isNotEmpty
-
-        let shouldRefsKeyBeReplaced mapRefsKey =
-            hasOverlap refsFromTypeAndSelf mapRefsKey
-
+and private SubTypeCheckResults =
+    { accModifications : AccModificationsToMake
+      typeCheckResult : TypeCheckResult }
 
 
-        let refConstraintsAndConstraintIdsToReplace =
-            this.refConstraintsMap
+    static member fromTypeCheckResult tcr =
+        { accModifications = AccModificationsToMake.fromTcr tcr
+          typeCheckResult = tcr }
+
+
+
+/// Attempt at making accumulator working by using two internal maps, one where every single def type gets a guid assigned to it, and every ref constraint gets placed in a set with its others, which points to a guid, which in turn may have a def type assigned to it.
+and Accumulator2
+// electric boogaloo
+ =
+    { refConstraintsMap : Map<TypeConstraintId, Result<RefDefType, AccTypeError> option * RefConstr set> }
+
+    static member empty = { refConstraintsMap = Map.empty }
+
+
+
+
+
+//let private combineSubTypeCheckResults
+//    (combineTypeCheckResults : TypeCheckResult -> TypeCheckResult -> TypeCheckResult)
+//    (stcrA : SubTypeCheckResults)
+//    (stcrB : SubTypeCheckResults)
+//    : SubTypeCheckResults =
+//    { typeConstraintsToRemove = Set.union stcrA.typeConstraintsToRemove stcrB.typeConstraintsToRemove
+//      accumulatorToSubsume =
+//        { refConstraintsMap =
+//            Map.merge stcrA.accumulatorToSubsume.refConstraintsMap stcrB.accumulatorToSubsume.refConstraintsMap }
+//      typeCheckResult = combineTypeCheckResults stcrA.typeCheckResult stcrB.typeCheckResult
+
+//    }
+
+
+let private combineAccModifications
+    (stcrA : AccModificationsToMake)
+    (stcrB : AccModificationsToMake)
+    : AccModificationsToMake =
+    { typeConstraintsToRemove = Set.union stcrA.typeConstraintsToRemove stcrB.typeConstraintsToRemove
+      accumulatorToSubsume =
+        { refConstraintsMap =
+            Map.merge stcrA.accumulatorToSubsume.refConstraintsMap stcrB.accumulatorToSubsume.refConstraintsMap } }
+
+
+
+let private combineAccModsFromResults a b =
+    combineAccModifications a.accModifications b.accModifications
+
+let private makeModificationsToAcc (modifs : AccModificationsToMake) (acc : Accumulator2) : Accumulator2 =
+    { acc with
+        refConstraintsMap =
+            acc.refConstraintsMap
+            |> Map.removeKeys (Set.toList modifs.typeConstraintsToRemove)
+            |> Map.merge modifs.accumulatorToSubsume.refConstraintsMap }
+
+
+
+
+
+
+
+
+
+let rec private addRefDefWithRefConstrs
+    (refDefOpt : RefDefType option)
+    (refConstrs : RefConstr set)
+    (acc : Accumulator2)
+    : SubTypeCheckResults =
+    Map.combineManyKeys (fun _  (_,constrs) -> Set.union constrs refConstrs |> Set.isNotEmpty )   
+                    (fun  constrIdsAndVals ->  
+                            // @TODO: the regular `Map.combineManyKeys` won't do it here, because we need to extract the combined constraint IDs so that we can stick it in the STCR, which this one won't let us do. Might be worth it making another version of the combineManyKeys, or to copy it here and slightly modify it?
+                    )  acc.refConstraintsMap
+
+
+
+
+and private unifyRefDefs (refDefA : RefDefType) (refDefB : RefDefType) (acc : Accumulator2) : SubTypeCheckResults =
+    failwith "@TODO: implement"
+
+
+/// Not sure this is meaningfully different from just injecting in a new set of RefConstrs that is the result of unioning these two sets together
+and private unifyRefConstraints
+    (refConstrsA : RefConstr set)
+    (refConstrsB : RefConstr set)
+    (acc : Accumulator2)
+    : SubTypeCheckResults =
+    failwith "@TODO: implement"
+
+
+
+
+
+
+
+let rec private addDefinitiveType (def : DefinitiveType) (acc : Accumulator2) : SubTypeCheckResults =
+    match def with
+    | DtUnitType ->
+        TypeCheckResult.fromRefDef (makeTypeConstrId ()) RefDtUnitType
+        |> SubTypeCheckResults.fromTypeCheckResult
+
+    | DtPrimitiveType prim ->
+        TypeCheckResult.fromRefDef (makeTypeConstrId ()) (RefDtPrimitiveType prim)
+        |> SubTypeCheckResults.fromTypeCheckResult
+
+    | DtList tc ->
+        let resultOfGeneric = addTypeConstraints tc acc
+        let listType = RefDtList resultOfGeneric.typeCheckResult.idOfTypeConstraint
+        let refDefAddResult = addRefDefWithRefConstrs (Some listType) Set.empty acc
+
+        { typeCheckResult = refDefAddResult.typeCheckResult
+          accModifications = combineAccModsFromResults resultOfGeneric refDefAddResult }
+
+    | DtTuple tom ->
+        let resultsTom = TOM.map (fun tc -> addTypeConstraints tc acc) tom
+
+        let tupleType =
+            RefDtTuple (
+                resultsTom
+                |> TOM.map (fun result -> result.typeCheckResult.idOfTypeConstraint)
+            )
+
+        let refDefAddResult = addRefDefWithRefConstrs (Some tupleType) Set.empty acc
+
+        let combinedModifs =
+            resultsTom
+            |> TOM.map (fun result -> result.accModifications)
+            |> TOM.fold combineAccModifications refDefAddResult.accModifications
+
+        { typeCheckResult = refDefAddResult.typeCheckResult
+          accModifications = combinedModifs }
+
+
+    | DtArrow (fromType, toType) ->
+        let fromResult = addTypeConstraints fromType acc
+        let toResult = addTypeConstraints toType acc
+
+        let arrowType =
+            RefDtArrow (fromResult.typeCheckResult.idOfTypeConstraint, toResult.typeCheckResult.idOfTypeConstraint)
+
+        let refDefAddResult = addRefDefWithRefConstrs (Some arrowType) Set.empty acc
+
+        { typeCheckResult = refDefAddResult.typeCheckResult
+          accModifications =
+            combineAccModsFromResults fromResult toResult
+            |> combineAccModifications refDefAddResult.accModifications }
+
+    | DtRecordExact map ->
+        let resultsMap = Map.map (fun _ tc -> addTypeConstraints tc acc) map
+
+        let mapType =
+            RefDtRecordExact (
+                resultsMap
+                |> Map.map (fun _ result -> result.typeCheckResult.idOfTypeConstraint)
+            )
+
+        let refDefAddResult = addRefDefWithRefConstrs (Some mapType) Set.empty acc
+
+        let combinedAccModifs =
+            resultsMap
+            |> Map.map (fun _ result -> result.accModifications)
             |> Map.fold
-                (fun constrsAndIds key value ->
-                    if shouldRefsKeyBeReplaced key then
-                        (refsFromTypeAndSelf, value) :: constrsAndIds
-                    else
-                        constrsAndIds)
-                List.empty
+                (fun combined _ accModif -> combineAccModifications accModif combined)
+                AccModificationsToMake.empty
 
-        let newRefsKey =
-            refConstraintsAndConstraintIdsToReplace
-            |> List.map fst
-            |> Set.unionMany
+        { typeCheckResult = refDefAddResult.typeCheckResult
+          accModifications = combinedAccModifs }
 
-        let constraintIdsToReplace =
-            refConstraintsAndConstraintIdsToReplace
-            |> List.map snd
+    | DtRecordWith map ->
+        let resultsMap = Map.map (fun _ tc -> addTypeConstraints tc acc) map
 
-        let newRefConstraintsMap =
-            refConstraintsAndConstraintIdsToReplace
-            |> List.fold
-                (fun map (refConstraints, constrId) ->
-                    Map.combineManyKeys (hasOverlap refConstraints) (fun _ -> refConstraints, constrId) map)
-                this.refConstraintsMap
+        let mapType =
+            RefDtRecordWith (
+                resultsMap
+                |> Map.map (fun _ result -> result.typeCheckResult.idOfTypeConstraint)
+            )
 
+        let refDefAddResult = addRefDefWithRefConstrs (Some mapType) Set.empty acc
 
+        let combinedAccModifs =
+            resultsMap
+            |> Map.map (fun _ result -> result.accModifications)
+            |> Map.fold
+                (fun combined _ accModif -> combineAccModifications accModif combined)
+                AccModificationsToMake.empty
 
-        let newDataMap =
-            constraintIdsToReplace
-            |> List.choose (fun constrId -> Map.tryFind constrId this.dataMap)
-            |> Result.sequenceList
-            |> Result.map (fun refDefs ->
-                // @TODO: try to unify the refDefs - will likely need to do it recursively, with possibly needing to run multiple passes on unifying refDefs and then unifying the things referred to with constraint IDs - although that might mean that I also need to allow for constraint IDs to link to reference constraints, not only the other way around
-                ())
+        { typeCheckResult = refDefAddResult.typeCheckResult
+          accModifications = combinedAccModifs }
 
 
-        { refConstraintsMap = newRefConstraintsMap
-          dataMap = newDataMap }
+    | DtNewType (typeName, constraints) ->
+        let resultsList = List.map (fun tc -> addTypeConstraints tc acc) constraints
+
+        let newType =
+            RefDtNewType (
+                typeName,
+                resultsList
+                |> List.map (fun result -> result.typeCheckResult.idOfTypeConstraint)
+            )
+
+        let refDefAddResult = addRefDefWithRefConstrs (Some newType) Set.empty acc
+
+        let combinedModifs =
+            resultsList
+            |> List.map (fun result -> result.accModifications)
+            |> List.fold combineAccModifications refDefAddResult.accModifications
+
+        { typeCheckResult = refDefAddResult.typeCheckResult
+          accModifications = combinedModifs }
+
+
+and private addTypeConstraints (Constrained (defOpt, refConstrs)) (acc : Accumulator2) : SubTypeCheckResults =
+    let defTypeAddResult =
+        match defOpt with
+        | Some def -> Some (addDefinitiveType def acc)
+        | None -> None
+
+    let refDefTypeOpt, newRefConstrs =
+        match defTypeAddResult with
+        | None -> None, Set.empty
+        | Some defTypeResult ->
+            defTypeResult.typeCheckResult.refDefResultOpt
+            |> Option.bind Result.toOption,
+            defTypeResult.typeCheckResult.refConstraints
+
+    let combinedRefConstrs = Set.union newRefConstrs refConstrs
+
+    addRefDefWithRefConstrs refDefTypeOpt combinedRefConstrs acc
 
 
 
-    member this.unifyRefDefTypes (replaceIdsWithIdAndType : TypeConstraintId list -> unit) a b = []
+
+
+
+let addTypeConstraintsToAcc typeConstraints acc =
+    let result = addTypeConstraints typeConstraints acc
+    makeModificationsToAcc result.accModifications acc
 
 
 
