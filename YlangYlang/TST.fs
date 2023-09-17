@@ -355,11 +355,27 @@ type private TypeCheckResult =
       refDefResultOpt : Result<RefDefType, AccTypeError> option
       refConstraints : RefConstr set }
 
-    static member fromRefDef constrId refDef =
-        { idOfTypeConstraint = constrId
-          refDefResultOpt = Some (Ok refDef)
-          refConstraints = Set.empty }
+    static member fromRefDef (constrId : TypeConstraintId) (refDef : RefDefType) =
+        TypeCheckResult.fromRefDefOpt constrId (Some refDef)
 
+    static member fromRefDefOpt (constrId : TypeConstraintId) (refDefOpt : RefDefType option) =
+        TypeCheckResult.fromRefDefOptAndRefConstrs constrId refDefOpt Set.empty
+
+    static member fromRefDefOptAndRefConstrs
+        (constrId : TypeConstraintId)
+        (refDefOpt : RefDefType option)
+        (refConstrs : RefConstr set)
+        =
+        TypeCheckResult.fromRefDefResultOptAndRefConstrs constrId (Option.map Ok refDefOpt) refConstrs
+
+    static member fromRefDefResultOptAndRefConstrs
+        (constrId : TypeConstraintId)
+        (refDefResultOpt : Result<RefDefType, AccTypeError> option)
+        (refConstrs : RefConstr set)
+        =
+        { idOfTypeConstraint = constrId
+          refDefResultOpt = refDefResultOpt
+          refConstraints = refConstrs }
 
 
 type private AccModificationsToMake =
@@ -370,12 +386,20 @@ type private AccModificationsToMake =
         { typeConstraintsToRemove = Set.empty
           accumulatorToSubsume = Accumulator2.empty }
 
+    static member addRefDef key refDef modifs =
+        { modifs with
+            accumulatorToSubsume =
+                { refConstraintsMap =
+                    modifs.accumulatorToSubsume.refConstraintsMap
+                    |> Map.add key (Some (Ok refDef), Set.empty) } }
+
     static member fromTcr (tcr : TypeCheckResult) =
         { typeConstraintsToRemove = Set.empty
           accumulatorToSubsume =
             { refConstraintsMap =
                 [ tcr.idOfTypeConstraint, (tcr.refDefResultOpt, tcr.refConstraints) ]
                 |> Map.ofSeq } }
+
 
 
 
@@ -387,6 +411,11 @@ and private SubTypeCheckResults =
     static member fromTypeCheckResult tcr =
         { accModifications = AccModificationsToMake.fromTcr tcr
           typeCheckResult = tcr }
+
+    static member getAccModifs (stcr : SubTypeCheckResults) = stcr.accModifications
+
+///Alias for SubTypeCheckResults
+and Stcr = SubTypeCheckResults
 
 
 
@@ -450,25 +479,280 @@ let rec private addRefDefWithRefConstrs
     (refConstrs : RefConstr set)
     (acc : Accumulator2)
     : SubTypeCheckResults =
-    Map.combineManyKeys (fun _  (_,constrs) -> Set.union constrs refConstrs |> Set.isNotEmpty )   
-                    (fun  constrIdsAndVals ->  
-                            // @TODO: the regular `Map.combineManyKeys` won't do it here, because we need to extract the combined constraint IDs so that we can stick it in the STCR, which this one won't let us do. Might be worth it making another version of the combineManyKeys, or to copy it here and slightly modify it?
-                    )  acc.refConstraintsMap
+    // Fold through the map, if there's an overlap, combine it with what we've already got, otherwise don't return anything. And then based on whether we've returned something or not, then either we've already chucked the new stuff in, or not.
+    acc.refConstraintsMap
+    |> Map.fold
+        (fun (stcr : SubTypeCheckResults) constrId (refDefResOpt, refConstrs) ->
+            let combinedRefConstrs = Set.union stcr.typeCheckResult.refConstraints refConstrs
+            let hasOverlap = Set.isNotEmpty combinedRefConstrs
+
+            if hasOverlap then
+                let unifiedRefDefResult : SubTypeCheckResults =
+                    unifyRefDefResOpts refDefResOpt stcr.typeCheckResult.refDefResultOpt acc
+
+                let combinedTcrsAccModifs : AccModificationsToMake =
+                    combineAccModsFromResults unifiedRefDefResult stcr
+
+                let modifsWithThisConstrIdRemoved : AccModificationsToMake =
+                    { combinedTcrsAccModifs with
+                        typeConstraintsToRemove = Set.add constrId combinedTcrsAccModifs.typeConstraintsToRemove }
+
+                { typeCheckResult =
+                    { unifiedRefDefResult.typeCheckResult with
+                        refConstraints = Set.union unifiedRefDefResult.typeCheckResult.refConstraints combinedRefConstrs }
+                  accModifications = modifsWithThisConstrIdRemoved }
+            else
+                stcr)
+        (TypeCheckResult.fromRefDefOptAndRefConstrs (makeTypeConstrId ()) refDefOpt refConstrs
+         |> SubTypeCheckResults.fromTypeCheckResult)
 
 
 
 
+
+
+/// This is the function that actually traverses TypeConstraintIds to check if types are actually compatible with one another!
 and private unifyRefDefs (refDefA : RefDefType) (refDefB : RefDefType) (acc : Accumulator2) : SubTypeCheckResults =
-    failwith "@TODO: implement"
+    let newKey = makeTypeConstrId ()
+
+    /// Lil helper function that makes a simple SubTypeCheckResults from a simple RefDefType directly – using the type constraint ID made earlier
+    let stcrFromRefDef (refDef : RefDefType) =
+        TypeCheckResult.fromRefDef newKey refDef
+        |> SubTypeCheckResults.fromTypeCheckResult
 
 
-/// Not sure this is meaningfully different from just injecting in a new set of RefConstrs that is the result of unioning these two sets together
-and private unifyRefConstraints
-    (refConstrsA : RefConstr set)
-    (refConstrsB : RefConstr set)
+
+    /// Returns an error if lists don't have the same length
+    let rec zipList combinedSoFar a b : Result<('a * 'b) list, ('a * 'b) list> =
+        match a, b with
+        | [], [] -> Ok (List.rev combinedSoFar)
+        | headA :: tailA, headB :: tailB -> zipList ((headA, headB) :: combinedSoFar) tailA tailB
+        | [], _ :: _
+        | _ :: _, [] -> Error (List.rev combinedSoFar)
+
+
+
+
+    match refDefA, refDefB with
+    | RefDtUnitType, RefDtUnitType -> stcrFromRefDef RefDtUnitType
+    | RefDtPrimitiveType primA, RefDtPrimitiveType primB ->
+        if primA = primB then
+            stcrFromRefDef (RefDtPrimitiveType primA)
+        else
+            TypeCheckResult.fromRefDefResultOptAndRefConstrs
+                newKey
+                (Some (Error (DefTypeClash (refDefA, refDefB))))
+                Set.empty
+            |> SubTypeCheckResults.fromTypeCheckResult
+
+    | RefDtTuple (TOM (headA, neckA, tailA)), RefDtTuple (TOM (headB, neckB, tailB)) ->
+        let combinedListResult = zipList List.empty tailA tailB
+
+        match combinedListResult with
+        | Ok combinedList ->
+            let combinedTom = TOM.new_ (headA, headB) (neckA, neckB) combinedList
+
+            let tomResults =
+                combinedTom
+                |> TOM.map (fun (idA, idB) -> unifyTypeConstraintIds idA idB acc)
+
+            let typeConstraintIdTom =
+                tomResults
+                |> TOM.map (fun stcr -> stcr.typeCheckResult.idOfTypeConstraint)
+
+            let tupleType = RefDtTuple typeConstraintIdTom
+            let tcr = TypeCheckResult.fromRefDef newKey tupleType
+
+            let combinedModifs =
+                tomResults
+                |> TOM.fold
+                    (fun state stcr -> combineAccModifications stcr.accModifications state)
+                    (AccModificationsToMake.fromTcr tcr)
+
+
+            { typeCheckResult = tcr
+              accModifications = combinedModifs }
+
+
+    //| Error combinedListSoFar->
+    //    combinedListSoFar
+
+    | RefDtList paramA, RefDtList paramB ->
+        let unifiedResult = unifyTypeConstraintIds paramA paramB acc
+
+        let listType = RefDtList unifiedResult.typeCheckResult.idOfTypeConstraint
+        let tcr = TypeCheckResult.fromRefDef newKey listType
+
+        let combinedModifs =
+            AccModificationsToMake.fromTcr tcr
+            |> combineAccModifications unifiedResult.accModifications
+
+        { typeCheckResult = tcr
+          accModifications = combinedModifs }
+
+    | RefDtRecordExact mapA, RefDtRecordExact mapB ->
+        let mergeResults =
+            Map.mergeExact (fun k valA valB -> unifyTypeConstraintIds valA valB acc) mapA mapB
+
+        match mergeResults with
+        | Ok mergedMap ->
+            let mergedAccModifs =
+                Map.map (fun _ -> Stcr.getAccModifs) mergedMap
+                |> Map.fold (fun state _ -> combineAccModifications state) AccModificationsToMake.empty
+
+            let mapType =
+                mergedMap
+                |> Map.map (fun _ v -> v.typeCheckResult.idOfTypeConstraint)
+                |> RefDtRecordExact
+
+            let tcr = TypeCheckResult.fromRefDef newKey mapType
+
+            let combinedModifs =
+                AccModificationsToMake.fromTcr tcr
+                |> combineAccModifications mergedAccModifs
+
+            { typeCheckResult = tcr
+              accModifications = combinedModifs }
+
+
+    | RefDtRecordWith mapA, RefDtRecordWith mapB ->
+        // @TODO: actually the logic here should be different to that of exact maps
+        // @TODO: and actually there should also be compatible cases where one is exact and one is "with"
+
+
+        let mergeResults =
+            Map.mergeExact (fun k valA valB -> unifyTypeConstraintIds valA valB acc) mapA mapB
+
+        match mergeResults with
+        | Ok mergedMap ->
+            let mergedAccModifs =
+                Map.map (fun _ -> Stcr.getAccModifs) mergedMap
+                |> Map.fold (fun state _ -> combineAccModifications state) AccModificationsToMake.empty
+
+            let mapType =
+                mergedMap
+                |> Map.map (fun _ v -> v.typeCheckResult.idOfTypeConstraint)
+                |> RefDtRecordExact
+
+            let tcr = TypeCheckResult.fromRefDef newKey mapType
+
+            let combinedModifs =
+                AccModificationsToMake.fromTcr tcr
+                |> combineAccModifications mergedAccModifs
+
+            { typeCheckResult = tcr
+              accModifications = combinedModifs }
+
+
+
+    | RefDtNewType (nameA, typeParamsA), RefDtNewType (nameB, typeParamsB) ->
+        if nameA = nameB then
+            let zippedLists = zipList List.empty typeParamsA typeParamsB
+
+            match zippedLists with
+            | Ok combinedList ->
+                let tomResults =
+                    combinedList
+                    |> List.map (fun (idA, idB) -> unifyTypeConstraintIds idA idB acc)
+
+                let typeConstraintIdTom =
+                    tomResults
+                    |> List.map (fun stcr -> stcr.typeCheckResult.idOfTypeConstraint)
+
+                let tupleType = RefDtNewType (nameA, typeConstraintIdTom)
+                let tcr = TypeCheckResult.fromRefDef newKey tupleType
+
+                let combinedModifs =
+                    tomResults
+                    |> List.fold
+                        (fun state stcr -> combineAccModifications stcr.accModifications state)
+                        (AccModificationsToMake.fromTcr tcr)
+
+
+                { typeCheckResult = tcr
+                  accModifications = combinedModifs }
+        else
+            TypeCheckResult.fromRefDefResultOptAndRefConstrs
+                newKey
+                (Some (Error (DefTypeClash (refDefA, refDefB))))
+                Set.empty
+            |> Stcr.fromTypeCheckResult
+
+
+    | RefDtArrow (fromTypeA, toTypeA), RefDtArrow (fromTypeB, toTypeB) ->
+        let unifiedFroms = unifyTypeConstraintIds fromTypeA fromTypeB acc
+        let unifiedTos = unifyTypeConstraintIds toTypeA toTypeB acc
+
+        let arrowType =
+            RefDtArrow (unifiedFroms.typeCheckResult.idOfTypeConstraint, unifiedTos.typeCheckResult.idOfTypeConstraint)
+
+        let tcr = TypeCheckResult.fromRefDef newKey arrowType
+
+        let modifs =
+            AccModificationsToMake.fromTcr tcr
+            |> combineAccModifications unifiedFroms.accModifications
+            |> combineAccModifications unifiedTos.accModifications
+
+        { typeCheckResult = tcr
+          accModifications = modifs }
+
+    | _ ->
+        // @TODO: Fill in the case where the types are not compatible
+        TypeCheckResult.fromRefDefResultOptAndRefConstrs
+            newKey
+            (Some (Error (DefTypeClash (refDefA, refDefB))))
+            Set.empty
+        |> Stcr.fromTypeCheckResult
+
+
+
+and private unifyTypeConstraintIds
+    (idA : TypeConstraintId)
+    (idB : TypeConstraintId)
     (acc : Accumulator2)
     : SubTypeCheckResults =
-    failwith "@TODO: implement"
+    let itemA, refConstrsA = Map.find idA acc.refConstraintsMap
+    let itemB, refConstrsB = Map.find idB acc.refConstraintsMap
+    let combined = unifyRefDefResOpts itemA itemB acc
+
+    { combined with
+        typeCheckResult =
+            { combined.typeCheckResult with
+                refConstraints =
+                    Set.unionMany [ combined.typeCheckResult.refConstraints
+                                    refConstrsA
+                                    refConstrsB ] } }
+
+
+
+/// Lil helper function that essentially just does the same as above, but handles the non-success cases also
+and private unifyRefDefResOpts
+    (refDefResOptA : Result<RefDefType, AccTypeError> option)
+    (refDefResOptB : Result<RefDefType, AccTypeError> option)
+    (acc : Accumulator2)
+    : SubTypeCheckResults =
+    let newKey = makeTypeConstrId ()
+
+    match refDefResOptA, refDefResOptB with
+    | None, None ->
+        TypeCheckResult.fromRefDefOpt newKey None
+        |> SubTypeCheckResults.fromTypeCheckResult
+    | Some x, None
+    | None, Some x ->
+        TypeCheckResult.fromRefDefResultOptAndRefConstrs newKey (Some x) Set.empty
+        |> SubTypeCheckResults.fromTypeCheckResult
+
+    | Some refDefResA, Some refDefResB ->
+        match refDefResA, refDefResB with
+        | Ok _, Error e
+        | Error e, Ok _
+        | Error e, Error _ ->
+            TypeCheckResult.fromRefDefResultOptAndRefConstrs newKey (Some (Error e)) Set.empty
+            |> SubTypeCheckResults.fromTypeCheckResult
+
+        | Ok refDefA, Ok refDefB -> unifyRefDefs refDefA refDefB acc
+
+
 
 
 
