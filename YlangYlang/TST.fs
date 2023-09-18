@@ -123,6 +123,8 @@ and TypeConstraints =
     static member fromConstraint (constr : RefConstr) : TypeConstraints =
         Constrained (None, Set.singleton constr)
 
+    static member addRefConstraints (constrs : RefConstr set) (Constrained (defOpt, refConstrs)) =
+        Constrained (defOpt, Set.union constrs refConstrs)
 
 
 //static member bind f constraints =
@@ -415,7 +417,9 @@ and private SubTypeCheckResults =
     static member getAccModifs (stcr : SubTypeCheckResults) = stcr.accModifications
 
 ///Alias for SubTypeCheckResults
-and Stcr = SubTypeCheckResults
+and private Stcr = SubTypeCheckResults
+
+
 
 
 
@@ -431,18 +435,130 @@ and Accumulator2
 
 
 
-//let private combineSubTypeCheckResults
-//    (combineTypeCheckResults : TypeCheckResult -> TypeCheckResult -> TypeCheckResult)
-//    (stcrA : SubTypeCheckResults)
-//    (stcrB : SubTypeCheckResults)
-//    : SubTypeCheckResults =
-//    { typeConstraintsToRemove = Set.union stcrA.typeConstraintsToRemove stcrB.typeConstraintsToRemove
-//      accumulatorToSubsume =
-//        { refConstraintsMap =
-//            Map.merge stcrA.accumulatorToSubsume.refConstraintsMap stcrB.accumulatorToSubsume.refConstraintsMap }
-//      typeCheckResult = combineTypeCheckResults stcrA.typeCheckResult stcrB.typeCheckResult
 
-//    }
+let rec convertRefDefToTypeConstraints
+    (refDef : RefDefType)
+    (acc : Accumulator2)
+    : Result<TypeConstraints, AccTypeError> =
+
+    let fromDef = TypeConstraints.fromDefinitive >> Ok
+
+    match refDef with
+    | RefDtUnitType -> fromDef DtUnitType
+    | RefDtPrimitiveType prim -> DtPrimitiveType prim |> fromDef
+    | RefDtList constrId ->
+        let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+
+        match foundTypeResultOpt with
+        | Some foundTypeResult ->
+            foundTypeResult
+            |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
+            |> Result.map (
+                TypeConstraints.addRefConstraints refConstrs
+                >> DtList
+                >> TypeConstraints.fromDefinitive
+            )
+
+        | None -> Constrained (None, refConstrs) |> Ok
+
+    | RefDtTuple constrTom ->
+        let resultsTom =
+            constrTom
+            |> TOM.map (fun constrId ->
+                let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+
+                match foundTypeResultOpt with
+                | Some foundTypeResult ->
+                    foundTypeResult
+                    |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
+                    |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                | None -> Constrained (None, refConstrs) |> Ok)
+            |> TOM.sequenceResult
+
+        match resultsTom with
+        | Ok typeConstraints -> DtTuple typeConstraints |> fromDef
+
+        | Error e -> Error (NEL.head e)
+
+
+    | RefDtNewType (typeName, typeParams) ->
+        let resultsTom =
+            typeParams
+            |> List.map (fun constrId ->
+                let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+
+                match foundTypeResultOpt with
+                | Some foundTypeResult ->
+                    foundTypeResult
+                    |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
+                    |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                | None -> Constrained (None, refConstrs) |> Ok)
+            |> Result.sequenceList
+
+        match resultsTom with
+        | Ok typeConstraints -> DtNewType (typeName, typeConstraints) |> fromDef
+
+        | Error e -> Error (NEL.head e)
+
+
+    | RefDtArrow (fromId, toId) ->
+        let resultsPair =
+            (fromId, toId)
+            |> Tuple.map (fun constrId ->
+                let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+
+                match foundTypeResultOpt with
+                | Some foundTypeResult ->
+                    foundTypeResult
+                    |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
+                    |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                | None -> Constrained (None, refConstrs) |> Ok)
+            |> Tuple.sequenceResult
+
+        resultsPair
+        |> Result.map (DtArrow >> TypeConstraints.fromDefinitive)
+
+
+
+    | RefDtRecordExact fields ->
+        let resultsMap =
+            fields
+            |> Map.map (fun _ constrId ->
+                let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+
+                match foundTypeResultOpt with
+                | Some foundTypeResult ->
+                    foundTypeResult
+                    |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
+                    |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                | None -> Constrained (None, refConstrs) |> Ok)
+            |> Map.sequenceResult
+
+        match resultsMap with
+        | Ok typeConstraintsMap -> DtRecordExact typeConstraintsMap |> fromDef
+        | Error (_, errsNel) -> Error (NEL.head errsNel)
+
+
+    | RefDtRecordWith fields ->
+        let resultsMap =
+            fields
+            |> Map.map (fun _ constrId ->
+                let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+
+                match foundTypeResultOpt with
+                | Some foundTypeResult ->
+                    foundTypeResult
+                    |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
+                    |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                | None -> Constrained (None, refConstrs) |> Ok)
+            |> Map.sequenceResult
+
+        match resultsMap with
+        | Ok typeConstraintsMap -> DtRecordWith typeConstraintsMap |> fromDef
+        | Error (_, errsNel) -> Error (NEL.head errsNel)
+
+
+
 
 
 let private combineAccModifications
@@ -899,9 +1015,50 @@ and private addTypeConstraints (Constrained (defOpt, refConstrs)) (acc : Accumul
 
 
 
-let addTypeConstraintsToAcc typeConstraints acc =
+let addTypeConstraintsToAcc (typeConstraints : TypeConstraints) (acc : Accumulator2) : Accumulator2 =
     let result = addTypeConstraints typeConstraints acc
     makeModificationsToAcc result.accModifications acc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+type RefConstrToTypeConstraintsMap = Map<RefConstr, Result<TypeConstraints, AccTypeError> option>
+
+
+
+let makeTcMapByName (acc : Accumulator2) : RefConstrToTypeConstraintsMap =
+    Map.values acc.refConstraintsMap
+    |> Seq.map (fun (refDefResOpt, refConstrs) ->
+        refConstrs,
+        refDefResOpt
+        |> Option.map (Result.bind (fun refDef -> convertRefDefToTypeConstraints refDef acc)))
+    |> Seq.collect (fun (refConstrs, refDefResOpt) ->
+        Set.toList refConstrs
+        |> List.map (fun refConstr -> refConstr, refDefResOpt))
+    |> Map.ofSeq
+
+
+
+
+let getTypeConstraintsFromMap
+    (refConstr : RefConstr)
+    (map : RefConstrToTypeConstraintsMap)
+    : Result<TypeConstraints, AccTypeError> option =
+    Map.tryFind refConstr map |> Option.flatten
+
+
+
 
 
 

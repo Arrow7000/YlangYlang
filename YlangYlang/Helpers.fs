@@ -498,7 +498,7 @@ module Map =
             (Ok Map.empty)
 
 
-
+    /// Also produces an NEL of the errors so that the first error can be accessed easily without needing to handle the (impossible) case of an empty map
     let sequenceResult map =
         map
         |> Map.fold
@@ -507,11 +507,11 @@ module Map =
                 | Ok oks ->
                     match value with
                     | Ok ok -> Ok (Map.add key ok oks)
-                    | Error err -> Error (Map.add key err Map.empty)
-                | Error errs ->
+                    | Error err -> Error (Map.add key err Map.empty, NEL.make err)
+                | Error (errsMap, errsNel) ->
                     match value with
-                    | Ok _ -> Error errs
-                    | Error err -> Error (Map.add key err errs))
+                    | Ok _ -> Error (errsMap, errsNel)
+                    | Error err -> Error (Map.add key err errsMap, NEL.cons err errsNel))
             (Ok Map.empty)
 
 
@@ -765,6 +765,15 @@ module Tuple =
     let mapFst f (a, b) = f a, b
     let mapSnd f (a, b) = a, f b
     let mapBoth f g (a, b) = f a, g b
+    let map f (a, b) = f a, f b
+
+    let sequenceResult (a, b) =
+        match a, b with
+        | Ok a', Ok b' -> Ok (a', b')
+        | Ok _, Error e
+        | Error e, Ok _ -> Error e
+        | Error e, Error _ -> Error e
+
 
 
 module Triple =

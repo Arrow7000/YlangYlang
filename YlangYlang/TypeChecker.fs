@@ -277,7 +277,8 @@ and unifyDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveType) : Res
         |> Result.bind (
             Map.sequenceResult
             >> Result.mapError (
-                Map.values
+                fst
+                >> Map.values
                 >> Seq.toList
                 >> combineTypeErrorsFromList
             )
@@ -292,7 +293,8 @@ and unifyDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveType) : Res
         |> Result.bind (
             Map.sequenceResult
             >> Result.mapError (
-                Map.values
+                fst
+                >> Map.values
                 >> Seq.toList
                 >> combineTypeErrorsFromList
             )
