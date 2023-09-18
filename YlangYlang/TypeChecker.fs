@@ -1718,7 +1718,6 @@ module Accumulator =
 
     let empty = Map.empty
 
-    let addNewTypeConstraint name tc acc =
 
 
 
@@ -1736,12 +1735,13 @@ module Accumulator =
         (namesSet : RefConstr set)
         (acc : Accumulator)
         : Accumulator =
-        let predicate k _ = Set.intersect namesSet >> Set.isNotEmpty
+        let predicate k _ =
+            Set.intersect namesSet k |> Set.isNotEmpty
 
         let combineTwoDefOptResults
-            (a : Result<RefDefType option, AccTypeError>)
-            (b : Result<RefDefType option, AccTypeError>)
-            : Result<RefDefType option, AccTypeError> =
+            (a : Result<DefinitiveType option, TypeError>)
+            (b : Result<DefinitiveType option, TypeError>)
+            : Result<DefinitiveType option, TypeError> =
             match a, b with
             | Ok (Some a_), Ok (Some b_) -> unifyDefinitiveTypes a_ b_ |> Result.map Some
 
@@ -1750,7 +1750,7 @@ module Accumulator =
 
             | Ok None, Ok None -> Ok None
 
-            | Error err1, Error err2 -> DefTypeClash (err1, err2) |> Error
+            | Error err1, Error err2 -> unifyTypeErrors err1 err2 |> Error
 
             | Ok _, Error e
             | Error e, Ok _ -> Error e
@@ -1758,8 +1758,8 @@ module Accumulator =
 
 
         let combiner
-            (keyvalList : (RefConstr set * Result<RefDefType option, AccTypeError>) list)
-            : RefConstr set * Result<RefDefType option, AccTypeError> =
+            (keyvalList : (RefConstr set * Result<DefinitiveType option, TypeError>) list)
+            : RefConstr set * Result<DefinitiveType option, TypeError> =
             let keySets, defTypes = List.unzip keyvalList
 
             let newKey = Set.unionMany keySets
@@ -1955,10 +1955,10 @@ module AccumulatorAndOwnType =
             list
 
 
-    /// Given an Aaot, rolls up the inferred information from the Accumulator, adds gleaned information into the TypeConstraints of the `.ownType`, and returns that thing.
-    ///
-    /// @TODO: I wonder... if it might be worth making two versions of the TypeConstraints; one for internal usage where you only have one definitive version at the top and the rest are only references to GUIDs, – GUIDs which are then expected to live inside the accompanying Accumulator so that we can always keep track of which which things relate to which other things – and the other which is for standalone use – e.g. when actually returning the inferred type of a value to the use – which is an actually fleshed out one with nested type constraints that can contain their own definitive types as well as reference constraints.
-    let applyAndGetType (aaot : AccumulatorAndOwnType) : TypeJudgment = ()
+///// Given an Aaot, rolls up the inferred information from the Accumulator, adds gleaned information into the TypeConstraints of the `.ownType`, and returns that thing.
+/////
+///// @TODO: I wonder... if it might be worth making two versions of the TypeConstraints; one for internal usage where you only have one definitive version at the top and the rest are only references to GUIDs, – GUIDs which are then expected to live inside the accompanying Accumulator so that we can always keep track of which which things relate to which other things – and the other which is for standalone use – e.g. when actually returning the inferred type of a value to the use – which is an actually fleshed out one with nested type constraints that can contain their own definitive types as well as reference constraints.
+//let applyAndGetType (aaot : AccumulatorAndOwnType) : TypeJudgment = ()
 
 
 
@@ -2662,7 +2662,7 @@ and singleSwitcher names refConstr =
         | Some replacementId -> IsBoundVar replacementId
         | None -> refConstr
 
-    | HasTypeOfFirstParamOf constr' -> HasTypeOfFirstParamOf (singleSwitcher names constr')
+    //| HasTypeOfFirstParamOf constr' -> HasTypeOfFirstParamOf (singleSwitcher names constr')
     //| IsOfTypeByName (name, typeParams) ->
     //    IsOfTypeByName (name, List.map (replaceRefConstrInTypeConstraints (Set.map (singleSwitcher names))) typeParams)
     | _ -> refConstr
@@ -2708,10 +2708,10 @@ and deleteGuidsFromRefConstraints guids refConstr =
             None
         else
             Some refConstr
-    | HasTypeOfFirstParamOf constr' ->
-        match deleteGuidsFromRefConstraints guids constr' with
-        | Some constr'' -> Some (HasTypeOfFirstParamOf constr'')
-        | None -> None
+    //| HasTypeOfFirstParamOf constr' ->
+    //    match deleteGuidsFromRefConstraints guids constr' with
+    //    | Some constr'' -> Some (HasTypeOfFirstParamOf constr'')
+    //    | None -> None
     //| IsOfTypeByName (name, typeParams) ->
     //    IsOfTypeByName (name, List.map (deleteGuidsFromTypeConstraints guids) typeParams)
     //    |> Some

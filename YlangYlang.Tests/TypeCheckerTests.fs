@@ -128,9 +128,7 @@ module TypeDsl =
     /// Make a constraint based on constructor name
     let ct = LocalUpper >> ByConstructorType
 
-    /// Make a constraint based on type name
-    let tn name typeParams =
-        IsOfTypeByName (LocalUpper name, typeParams)
+
 
 
 
