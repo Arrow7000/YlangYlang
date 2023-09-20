@@ -152,20 +152,7 @@ and TypeJudgment = Result<TypeConstraints, TypeError>
 
 
 
-/// Basically the same as a T.DefinitiveType but with guids referencing other types in the Acc instead of their own TypeConstraints
-type RefDefType =
-    | RefDtUnitType
-    | RefDtPrimitiveType of BuiltInPrimitiveTypes
-    | RefDtTuple of TypeConstraintId tom
-    | RefDtList of TypeConstraintId
-    | RefDtRecordWith of referencedFields : Map<RecordFieldName, TypeConstraintId>
-    | RefDtRecordExact of Map<RecordFieldName, TypeConstraintId>
-    | RefDtNewType of typeName : UpperNameValue * typeParams : TypeConstraintId list
-    | RefDtArrow of fromType : TypeConstraintId * toType : TypeConstraintId
 
-
-
-type AccTypeError = | DefTypeClash of RefDefType * RefDefType
 
 
 /// Helper type for accumulating type constraints
@@ -190,6 +177,26 @@ type Accumulator = Map<RefConstr set, Result<DefinitiveType option, TypeError>>
 
 
 
+/// Only to be used as keys and references in Accumulator and RefDefTypes
+type AccumulatorTypeId = | AccumulatorTypeId of System.Guid
+
+
+
+
+/// Basically the same as a T.DefinitiveType but with guids referencing other types in the Acc instead of their own TypeConstraints
+type RefDefType =
+    | RefDtUnitType
+    | RefDtPrimitiveType of BuiltInPrimitiveTypes
+    | RefDtTuple of AccumulatorTypeId tom
+    | RefDtList of AccumulatorTypeId
+    | RefDtRecordWith of referencedFields : Map<RecordFieldName, AccumulatorTypeId>
+    | RefDtRecordExact of Map<RecordFieldName, AccumulatorTypeId>
+    | RefDtNewType of typeName : UpperNameValue * typeParams : AccumulatorTypeId list
+    | RefDtArrow of fromType : AccumulatorTypeId * toType : AccumulatorTypeId
+
+
+
+type AccTypeError = | DefTypeClash of RefDefType * RefDefType
 
 
 
@@ -198,10 +205,11 @@ type Accumulator = Map<RefConstr set, Result<DefinitiveType option, TypeError>>
 and Accumulator2
 // electric boogaloo
  =
-    { refConstraintsMap : Map<TypeConstraintId, Result<RefDefType, AccTypeError> option * RefConstr set> }
+    { refConstraintsMap : Map<AccumulatorTypeId, Result<RefDefType, AccTypeError> option * RefConstr set> }
 
     static member empty = { refConstraintsMap = Map.empty }
 
+//static member fromRefDefResOptAndConstrs refDefResOpt refConstrs =
 
 
 and TypeJudgment2 = Result<RefDefType option, AccTypeError>

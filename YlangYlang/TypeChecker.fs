@@ -1919,25 +1919,25 @@ module Accumulator2 =
     *)
 
     type private TypeCheckResult =
-        { idOfTypeConstraint : TypeConstraintId
+        { idOfTypeConstraint : AccumulatorTypeId
           refDefResultOpt : Result<RefDefType, AccTypeError> option
           refConstraints : RefConstr set }
 
-        static member fromRefDef (constrId : TypeConstraintId) (refDef : RefDefType) =
+        static member fromRefDef (constrId : AccumulatorTypeId) (refDef : RefDefType) =
             TypeCheckResult.fromRefDefOpt constrId (Some refDef)
 
-        static member fromRefDefOpt (constrId : TypeConstraintId) (refDefOpt : RefDefType option) =
+        static member fromRefDefOpt (constrId : AccumulatorTypeId) (refDefOpt : RefDefType option) =
             TypeCheckResult.fromRefDefOptAndRefConstrs constrId refDefOpt Set.empty
 
         static member fromRefDefOptAndRefConstrs
-            (constrId : TypeConstraintId)
+            (constrId : AccumulatorTypeId)
             (refDefOpt : RefDefType option)
             (refConstrs : RefConstr set)
             =
             TypeCheckResult.fromRefDefResultOptAndRefConstrs constrId (Option.map Ok refDefOpt) refConstrs
 
         static member fromRefDefResultOptAndRefConstrs
-            (constrId : TypeConstraintId)
+            (constrId : AccumulatorTypeId)
             (refDefResultOpt : Result<RefDefType, AccTypeError> option)
             (refConstrs : RefConstr set)
             =
@@ -1949,7 +1949,7 @@ module Accumulator2 =
 
 
     type private AccModificationsToMake =
-        { typeConstraintIdsToRemove : TypeConstraintId set
+        { typeConstraintIdsToRemove : AccumulatorTypeId set
           accumulatorToSubsume : Accumulator2 }
 
 
@@ -1986,13 +1986,17 @@ module Accumulator2 =
 
 
 
+    let private makeAccTypeId () : AccumulatorTypeId =
+        System.Guid.NewGuid () |> AccumulatorTypeId
+
+
 
 
     (*
         Combine and implement `AccModificationsToMake`
     *)
 
-    let private combineAccModifications
+    let combineAccModifications
         (stcrA : AccModificationsToMake)
         (stcrB : AccModificationsToMake)
         : AccModificationsToMake =
@@ -2003,10 +2007,10 @@ module Accumulator2 =
 
 
 
-    let private combineAccModsFromResults (a : SubTypeCheckResults) (b : SubTypeCheckResults) : AccModificationsToMake =
+    let combineAccModsFromResults (a : SubTypeCheckResults) (b : SubTypeCheckResults) : AccModificationsToMake =
         combineAccModifications a.accModifications b.accModifications
 
-    let private makeModificationsToAcc (modifs : AccModificationsToMake) (acc : Accumulator2) : Accumulator2 =
+    let makeModificationsToAcc (modifs : AccModificationsToMake) (acc : Accumulator2) : Accumulator2 =
         { acc with
             refConstraintsMap =
                 acc.refConstraintsMap
@@ -2020,7 +2024,7 @@ module Accumulator2 =
 
 
 
-    let rec private addRefDefResOptWithRefConstrs
+    let rec addRefDefResOptWithRefConstrs
         (refDefResOpt : Result<RefDefType, AccTypeError> option)
         (refConstrs : RefConstr set)
         (acc : Accumulator2)
@@ -2050,14 +2054,14 @@ module Accumulator2 =
                       accModifications = modifsWithThisConstrIdRemoved }
                 else
                     stcr)
-            (TypeCheckResult.fromRefDefResultOptAndRefConstrs (makeTypeConstrId ()) refDefResOpt refConstrs
+            (TypeCheckResult.fromRefDefResultOptAndRefConstrs (makeAccTypeId ()) refDefResOpt refConstrs
              |> SubTypeCheckResults.fromTypeCheckResult)
 
 
 
     /// This is the function that actually traverses TypeConstraintIds to check if types are actually compatible with one another!
-    and private unifyRefDefs (refDefA : RefDefType) (refDefB : RefDefType) (acc : Accumulator2) : SubTypeCheckResults =
-        let newKey = makeTypeConstrId ()
+    and unifyRefDefs (refDefA : RefDefType) (refDefB : RefDefType) (acc : Accumulator2) : SubTypeCheckResults =
+        let newKey = makeAccTypeId ()
 
         /// Lil helper function that makes a simple SubTypeCheckResults from a simple RefDefType directly – using the type constraint ID made earlier
         let stcrFromRefDef (refDef : RefDefType) =
@@ -2253,9 +2257,9 @@ module Accumulator2 =
 
 
 
-    and private unifyTypeConstraintIds
-        (idA : TypeConstraintId)
-        (idB : TypeConstraintId)
+    and unifyTypeConstraintIds
+        (idA : AccumulatorTypeId)
+        (idB : AccumulatorTypeId)
         (acc : Accumulator2)
         : SubTypeCheckResults =
         let itemA, refConstrsA = Map.find idA acc.refConstraintsMap
@@ -2273,12 +2277,12 @@ module Accumulator2 =
 
 
     /// Lil helper function that essentially just does the same as above, but handles the non-success cases also
-    and private unifyRefDefResOpts
+    and unifyRefDefResOpts
         (refDefResOptA : Result<RefDefType, AccTypeError> option)
         (refDefResOptB : Result<RefDefType, AccTypeError> option)
         (acc : Accumulator2)
         : SubTypeCheckResults =
-        let newKey = makeTypeConstrId ()
+        let newKey = makeAccTypeId ()
 
         match refDefResOptA, refDefResOptB with
         | None, None ->
@@ -2307,14 +2311,14 @@ module Accumulator2 =
 
 
 
-    let rec private addDefinitiveType (def : DefinitiveType) (acc : Accumulator2) : SubTypeCheckResults =
+    let rec addDefinitiveType (def : DefinitiveType) (acc : Accumulator2) : SubTypeCheckResults =
         match def with
         | DtUnitType ->
-            TypeCheckResult.fromRefDef (makeTypeConstrId ()) RefDtUnitType
+            TypeCheckResult.fromRefDef (makeAccTypeId ()) RefDtUnitType
             |> SubTypeCheckResults.fromTypeCheckResult
 
         | DtPrimitiveType prim ->
-            TypeCheckResult.fromRefDef (makeTypeConstrId ()) (RefDtPrimitiveType prim)
+            TypeCheckResult.fromRefDef (makeAccTypeId ()) (RefDtPrimitiveType prim)
             |> SubTypeCheckResults.fromTypeCheckResult
 
         | DtList tc ->
@@ -2424,7 +2428,7 @@ module Accumulator2 =
 
 
 
-    and private addTypeConstraints (Constrained (defOpt, refConstrs)) (acc : Accumulator2) : SubTypeCheckResults =
+    and addTypeConstraints (Constrained (defOpt, refConstrs)) (acc : Accumulator2) : SubTypeCheckResults =
         let defTypeAddResult =
             match defOpt with
             | Some def -> Some (addDefinitiveType def acc)
@@ -2444,7 +2448,7 @@ module Accumulator2 =
 
 
 
-    and private addRefDefWithRefConstrs
+    and addRefDefWithRefConstrs
         (refDefOpt : RefDefType option)
         (refConstrs : RefConstr set)
         (acc : Accumulator2)
@@ -2671,7 +2675,7 @@ module Acc2 = Accumulator2
 type AccumulatorAndOwnType =
     { acc : Accumulator2
       //ownType : TypeJudgment2
-      ownTypeId : TypeConstraintId }
+      ownTypeId : AccumulatorTypeId }
     member this.ownType =
         Map.tryFind this.ownTypeId this.acc.refConstraintsMap
         |> Option.defaultValue (None, Set.empty)
