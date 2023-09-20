@@ -1912,58 +1912,6 @@ module Accumulator =
 
 
 
-
-
-module Acc = Accumulator
-
-
-
-
-
-type AccumulatorAndOwnType =
-    { acc : Accumulator
-      ownType : TypeJudgment }
-
-
-
-
-module AccumulatorAndOwnType =
-
-    /// This processes the type judgment with the information available in the accumulator at every opportune point, the idea being that in any AccumulatorAndOwnType, whenever we look at the Acc or its ownType, all the available information has been properly propagated through the type judgment and doesn't need to be done by the external code
-    /// @TODO: check if I haven't already basically implemented this code somewhere in the Acc module!
-    let private processAccAndOwnType acc typeJudgment = typeJudgment
-
-
-    /// Makes an AccumulatorAndOwnType from a type judgment and an Accumulator
-    let make (ownType : TypeJudgment) (acc : Accumulator) : AccumulatorAndOwnType = { acc = acc; ownType = ownType }
-
-    let getAcc { acc = acc } : Accumulator = acc
-    let getSelf { ownType = ownType } : TypeJudgment = ownType
-
-    /// Combine two `AccumulatorAndSelfValue`s into a single accumulator and unified type judgment
-    let combine (aas1 : AccumulatorAndOwnType) (aas2 : AccumulatorAndOwnType) : AccumulatorAndOwnType =
-        { acc = Acc.combineAccumulators aas1.acc aas2.acc
-          ownType = unifyJudgments aas1.ownType aas2.ownType }
-
-
-    /// Combine multiple `AccumulatorAndSelfValue`s into a single accumulator and unified type judgment
-    let combineMany (list : AccumulatorAndOwnType seq) : AccumulatorAndOwnType =
-        Seq.fold
-            combine
-            { acc = Map.empty
-              ownType = Ok TypeConstraints.empty }
-            list
-
-
-///// Given an Aaot, rolls up the inferred information from the Accumulator, adds gleaned information into the TypeConstraints of the `.ownType`, and returns that thing.
-/////
-///// @TODO: I wonder... if it might be worth making two versions of the TypeConstraints; one for internal usage where you only have one definitive version at the top and the rest are only references to GUIDs, – GUIDs which are then expected to live inside the accompanying Accumulator so that we can always keep track of which which things relate to which other things – and the other which is for standalone use – e.g. when actually returning the inferred type of a value to the use – which is an actually fleshed out one with nested type constraints that can contain their own definitive types as well as reference constraints.
-//let applyAndGetType (aaot : AccumulatorAndOwnType) : TypeJudgment = ()
-
-
-
-
-
 module Accumulator2 =
 
     (*
@@ -2001,22 +1949,16 @@ module Accumulator2 =
 
 
     type private AccModificationsToMake =
-        { typeConstraintsToRemove : TypeConstraintId set
+        { typeConstraintIdsToRemove : TypeConstraintId set
           accumulatorToSubsume : Accumulator2 }
 
+
         static member empty =
-            { typeConstraintsToRemove = Set.empty
+            { typeConstraintIdsToRemove = Set.empty
               accumulatorToSubsume = Accumulator2.empty }
 
-        static member addRefDef key refDef modifs =
-            { modifs with
-                accumulatorToSubsume =
-                    { refConstraintsMap =
-                        modifs.accumulatorToSubsume.refConstraintsMap
-                        |> Map.add key (Some (Ok refDef), Set.empty) } }
-
         static member fromTcr (tcr : TypeCheckResult) =
-            { typeConstraintsToRemove = Set.empty
+            { typeConstraintIdsToRemove = Set.empty
               accumulatorToSubsume =
                 { refConstraintsMap =
                     [ tcr.idOfTypeConstraint, (tcr.refDefResultOpt, tcr.refConstraints) ]
@@ -2039,156 +1981,36 @@ module Accumulator2 =
     /// Alias for SubTypeCheckResults
     and private Stcr = SubTypeCheckResults
 
+    (* End of helper types *)
 
 
 
 
 
 
-    let rec convertRefDefToTypeConstraints
-        (refDef : RefDefType)
-        (acc : Accumulator2)
-        : Result<TypeConstraints, AccTypeError> =
-
-        let fromDef = TypeConstraints.fromDefinitive >> Ok
-
-        match refDef with
-        | RefDtUnitType -> fromDef DtUnitType
-        | RefDtPrimitiveType prim -> DtPrimitiveType prim |> fromDef
-        | RefDtList constrId ->
-            let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
-
-            match foundTypeResultOpt with
-            | Some foundTypeResult ->
-                foundTypeResult
-                |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
-                |> Result.map (
-                    TypeConstraints.addRefConstraints refConstrs
-                    >> DtList
-                    >> TypeConstraints.fromDefinitive
-                )
-
-            | None -> Constrained (None, refConstrs) |> Ok
-
-        | RefDtTuple constrTom ->
-            let resultsTom =
-                constrTom
-                |> TOM.map (fun constrId ->
-                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
-
-                    match foundTypeResultOpt with
-                    | Some foundTypeResult ->
-                        foundTypeResult
-                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
-                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
-                    | None -> Constrained (None, refConstrs) |> Ok)
-                |> TOM.sequenceResult
-
-            match resultsTom with
-            | Ok typeConstraints -> DtTuple typeConstraints |> fromDef
-
-            | Error e -> Error (NEL.head e)
-
-
-        | RefDtNewType (typeName, typeParams) ->
-            let resultsTom =
-                typeParams
-                |> List.map (fun constrId ->
-                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
-
-                    match foundTypeResultOpt with
-                    | Some foundTypeResult ->
-                        foundTypeResult
-                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
-                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
-                    | None -> Constrained (None, refConstrs) |> Ok)
-                |> Result.sequenceList
-
-            match resultsTom with
-            | Ok typeConstraints -> DtNewType (typeName, typeConstraints) |> fromDef
-
-            | Error e -> Error (NEL.head e)
-
-
-        | RefDtArrow (fromId, toId) ->
-            let resultsPair =
-                (fromId, toId)
-                |> Tuple.map (fun constrId ->
-                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
-
-                    match foundTypeResultOpt with
-                    | Some foundTypeResult ->
-                        foundTypeResult
-                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
-                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
-                    | None -> Constrained (None, refConstrs) |> Ok)
-                |> Tuple.sequenceResult
-
-            resultsPair
-            |> Result.map (DtArrow >> TypeConstraints.fromDefinitive)
-
-
-
-        | RefDtRecordExact fields ->
-            let resultsMap =
-                fields
-                |> Map.map (fun _ constrId ->
-                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
-
-                    match foundTypeResultOpt with
-                    | Some foundTypeResult ->
-                        foundTypeResult
-                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
-                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
-                    | None -> Constrained (None, refConstrs) |> Ok)
-                |> Map.sequenceResult
-
-            match resultsMap with
-            | Ok typeConstraintsMap -> DtRecordExact typeConstraintsMap |> fromDef
-            | Error (_, errsNel) -> Error (NEL.head errsNel)
-
-
-        | RefDtRecordWith fields ->
-            let resultsMap =
-                fields
-                |> Map.map (fun _ constrId ->
-                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
-
-                    match foundTypeResultOpt with
-                    | Some foundTypeResult ->
-                        foundTypeResult
-                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
-                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
-                    | None -> Constrained (None, refConstrs) |> Ok)
-                |> Map.sequenceResult
-
-            match resultsMap with
-            | Ok typeConstraintsMap -> DtRecordWith typeConstraintsMap |> fromDef
-            | Error (_, errsNel) -> Error (NEL.head errsNel)
-
-
-
-
+    (*
+        Combine and implement `AccModificationsToMake`
+    *)
 
     let private combineAccModifications
         (stcrA : AccModificationsToMake)
         (stcrB : AccModificationsToMake)
         : AccModificationsToMake =
-        { typeConstraintsToRemove = Set.union stcrA.typeConstraintsToRemove stcrB.typeConstraintsToRemove
+        { typeConstraintIdsToRemove = Set.union stcrA.typeConstraintIdsToRemove stcrB.typeConstraintIdsToRemove
           accumulatorToSubsume =
             { refConstraintsMap =
                 Map.merge stcrA.accumulatorToSubsume.refConstraintsMap stcrB.accumulatorToSubsume.refConstraintsMap } }
 
 
 
-    let private combineAccModsFromResults a b =
+    let private combineAccModsFromResults (a : SubTypeCheckResults) (b : SubTypeCheckResults) : AccModificationsToMake =
         combineAccModifications a.accModifications b.accModifications
 
     let private makeModificationsToAcc (modifs : AccModificationsToMake) (acc : Accumulator2) : Accumulator2 =
         { acc with
             refConstraintsMap =
                 acc.refConstraintsMap
-                |> Map.removeKeys (Set.toList modifs.typeConstraintsToRemove)
+                |> Map.removeKeys (Set.toList modifs.typeConstraintIdsToRemove)
                 |> Map.merge modifs.accumulatorToSubsume.refConstraintsMap }
 
 
@@ -2198,9 +2020,8 @@ module Accumulator2 =
 
 
 
-
-    let rec private addRefDefWithRefConstrs
-        (refDefOpt : RefDefType option)
+    let rec private addRefDefResOptWithRefConstrs
+        (refDefResOpt : Result<RefDefType, AccTypeError> option)
         (refConstrs : RefConstr set)
         (acc : Accumulator2)
         : SubTypeCheckResults =
@@ -2220,7 +2041,7 @@ module Accumulator2 =
 
                     let modifsWithThisConstrIdRemoved : AccModificationsToMake =
                         { combinedTcrsAccModifs with
-                            typeConstraintsToRemove = Set.add constrId combinedTcrsAccModifs.typeConstraintsToRemove }
+                            typeConstraintIdsToRemove = Set.add constrId combinedTcrsAccModifs.typeConstraintIdsToRemove }
 
                     { typeCheckResult =
                         { unifiedRefDefResult.typeCheckResult with
@@ -2229,11 +2050,8 @@ module Accumulator2 =
                       accModifications = modifsWithThisConstrIdRemoved }
                 else
                     stcr)
-            (TypeCheckResult.fromRefDefOptAndRefConstrs (makeTypeConstrId ()) refDefOpt refConstrs
+            (TypeCheckResult.fromRefDefResultOptAndRefConstrs (makeTypeConstrId ()) refDefResOpt refConstrs
              |> SubTypeCheckResults.fromTypeCheckResult)
-
-
-
 
 
 
@@ -2605,6 +2423,7 @@ module Accumulator2 =
               accModifications = combinedModifs }
 
 
+
     and private addTypeConstraints (Constrained (defOpt, refConstrs)) (acc : Accumulator2) : SubTypeCheckResults =
         let defTypeAddResult =
             match defOpt with
@@ -2625,6 +2444,161 @@ module Accumulator2 =
 
 
 
+    and private addRefDefWithRefConstrs
+        (refDefOpt : RefDefType option)
+        (refConstrs : RefConstr set)
+        (acc : Accumulator2)
+        : SubTypeCheckResults =
+        addRefDefResOptWithRefConstrs (Option.map Ok refDefOpt) refConstrs acc
+
+
+    /// @TODO: this needs more thinking through because it doesn't work as is
+    let combine (acc1 : Accumulator2) (acc2 : Accumulator2) : Accumulator2 =
+        acc1.refConstraintsMap
+        |> Map.fold
+            (fun acc key (refDefOpt, refConstrs) ->
+                let stcr = addRefDefResOptWithRefConstrs refDefOpt refConstrs acc
+                makeModificationsToAcc stcr.accModifications acc)
+            acc2
+
+
+
+
+
+
+
+    (*
+        Conversions to and from TypeConstraints
+    *)
+
+
+    let rec convertRefDefToTypeConstraints
+        (refDef : RefDefType)
+        (acc : Accumulator2)
+        : Result<TypeConstraints, AccTypeError> =
+
+        let fromDef = TypeConstraints.fromDefinitive >> Ok
+
+        match refDef with
+        | RefDtUnitType -> fromDef DtUnitType
+        | RefDtPrimitiveType prim -> DtPrimitiveType prim |> fromDef
+        | RefDtList constrId ->
+            let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+
+            match foundTypeResultOpt with
+            | Some foundTypeResult ->
+                foundTypeResult
+                |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
+                |> Result.map (
+                    TypeConstraints.addRefConstraints refConstrs
+                    >> DtList
+                    >> TypeConstraints.fromDefinitive
+                )
+
+            | None -> Constrained (None, refConstrs) |> Ok
+
+        | RefDtTuple constrTom ->
+            let resultsTom =
+                constrTom
+                |> TOM.map (fun constrId ->
+                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+
+                    match foundTypeResultOpt with
+                    | Some foundTypeResult ->
+                        foundTypeResult
+                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
+                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                    | None -> Constrained (None, refConstrs) |> Ok)
+                |> TOM.sequenceResult
+
+            match resultsTom with
+            | Ok typeConstraints -> DtTuple typeConstraints |> fromDef
+
+            | Error e -> Error (NEL.head e)
+
+
+        | RefDtNewType (typeName, typeParams) ->
+            let resultsTom =
+                typeParams
+                |> List.map (fun constrId ->
+                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+
+                    match foundTypeResultOpt with
+                    | Some foundTypeResult ->
+                        foundTypeResult
+                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
+                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                    | None -> Constrained (None, refConstrs) |> Ok)
+                |> Result.sequenceList
+
+            match resultsTom with
+            | Ok typeConstraints -> DtNewType (typeName, typeConstraints) |> fromDef
+
+            | Error e -> Error (NEL.head e)
+
+
+        | RefDtArrow (fromId, toId) ->
+            let resultsPair =
+                (fromId, toId)
+                |> Tuple.map (fun constrId ->
+                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+
+                    match foundTypeResultOpt with
+                    | Some foundTypeResult ->
+                        foundTypeResult
+                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
+                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                    | None -> Constrained (None, refConstrs) |> Ok)
+                |> Tuple.sequenceResult
+
+            resultsPair
+            |> Result.map (DtArrow >> TypeConstraints.fromDefinitive)
+
+
+
+        | RefDtRecordExact fields ->
+            let resultsMap =
+                fields
+                |> Map.map (fun _ constrId ->
+                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+
+                    match foundTypeResultOpt with
+                    | Some foundTypeResult ->
+                        foundTypeResult
+                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
+                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                    | None -> Constrained (None, refConstrs) |> Ok)
+                |> Map.sequenceResult
+
+            match resultsMap with
+            | Ok typeConstraintsMap -> DtRecordExact typeConstraintsMap |> fromDef
+            | Error (_, errsNel) -> Error (NEL.head errsNel)
+
+
+        | RefDtRecordWith fields ->
+            let resultsMap =
+                fields
+                |> Map.map (fun _ constrId ->
+                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+
+                    match foundTypeResultOpt with
+                    | Some foundTypeResult ->
+                        foundTypeResult
+                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
+                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                    | None -> Constrained (None, refConstrs) |> Ok)
+                |> Map.sequenceResult
+
+            match resultsMap with
+            | Ok typeConstraintsMap -> DtRecordWith typeConstraintsMap |> fromDef
+            | Error (_, errsNel) -> Error (NEL.head errsNel)
+
+
+
+
+
+
+
 
 
 
@@ -2632,20 +2606,11 @@ module Accumulator2 =
         let result = addTypeConstraints typeConstraints acc
         makeModificationsToAcc result.accModifications acc
 
-
-
-    let addTypeConstraintForName (name : RefConstr) (tc : TypeConstraints) (acc : Accumulator2) =
+    let addTypeConstraintForName (name : RefConstr) (tc : TypeConstraints) (acc : Accumulator2) : Accumulator2 =
         let (Constrained (defOpt, refs)) = tc
         let tcWithName = Constrained (defOpt, Set.add name refs)
 
         addTypeConstraintsToAcc tcWithName acc
-
-
-
-
-
-
-
 
 
 
@@ -2689,6 +2654,63 @@ module RefConstrToTypeConstraintsMap =
 
 
 
+
+
+
+
+
+
+
+module Acc = Accumulator
+module Acc2 = Accumulator2
+
+
+
+
+
+type AccumulatorAndOwnType =
+    { acc : Accumulator2
+      //ownType : TypeJudgment2
+      ownTypeId : TypeConstraintId }
+    member this.ownType =
+        Map.tryFind this.ownTypeId this.acc.refConstraintsMap
+        |> Option.defaultValue (None, Set.empty)
+
+
+
+
+module AccumulatorAndOwnType =
+
+    /// This processes the type judgment with the information available in the accumulator at every opportune point, the idea being that in any AccumulatorAndOwnType, whenever we look at the Acc or its ownType, all the available information has been properly propagated through the type judgment and doesn't need to be done by the external code
+    /// @TODO: check if I haven't already basically implemented this code somewhere in the Acc module!
+    let private processAccAndOwnType acc typeJudgment = typeJudgment
+
+
+    /// Makes an AccumulatorAndOwnType from a type judgment and an Accumulator
+    let make (ownType : TypeJudgment2) (acc : Accumulator2) : AccumulatorAndOwnType = { acc = acc; ownType = ownType }
+
+    let getAcc { acc = acc } : Accumulator2 = acc
+    let getSelf { ownType = ownType } : TypeJudgment2 = ownType
+
+    /// Combine two `AccumulatorAndSelfValue`s into a single accumulator and unified type judgment
+    let combine (aas1 : AccumulatorAndOwnType) (aas2 : AccumulatorAndOwnType) : AccumulatorAndOwnType =
+        { acc = Acc.combineAccumulators aas1.acc aas2.acc
+          ownType = unifyJudgments aas1.ownType aas2.ownType }
+
+
+    /// Combine multiple `AccumulatorAndSelfValue`s into a single accumulator and unified type judgment
+    let combineMany (list : AccumulatorAndOwnType seq) : AccumulatorAndOwnType =
+        Seq.fold
+            combine
+            { acc = Map.empty
+              ownType = Ok TypeConstraints.empty }
+            list
+
+
+///// Given an Aaot, rolls up the inferred information from the Accumulator, adds gleaned information into the TypeConstraints of the `.ownType`, and returns that thing.
+/////
+///// @TODO: I wonder... if it might be worth making two versions of the TypeConstraints; one for internal usage where you only have one definitive version at the top and the rest are only references to GUIDs, – GUIDs which are then expected to live inside the accompanying Accumulator so that we can always keep track of which which things relate to which other things – and the other which is for standalone use – e.g. when actually returning the inferred type of a value to the use – which is an actually fleshed out one with nested type constraints that can contain their own definitive types as well as reference constraints.
+//let applyAndGetType (aaot : AccumulatorAndOwnType) : TypeJudgment = ()
 
 
 

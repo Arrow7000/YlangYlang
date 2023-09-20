@@ -204,7 +204,7 @@ and Accumulator2
 
 
 
-
+and TypeJudgment2 = Result<RefDefType option, AccTypeError>
 
 
 (* Name dictionaries *)
