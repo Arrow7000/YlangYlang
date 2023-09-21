@@ -200,20 +200,49 @@ type AccTypeError = | DefTypeClash of RefDefType * RefDefType
 
 
 
+type TypeJudgment2 = Result<RefDefType option, AccTypeError>
+
+
 
 /// Attempt at making accumulator working by using two internal maps, one where every single def type gets a guid assigned to it, and every ref constraint gets placed in a set with its others, which points to a guid, which in turn may have a def type assigned to it.
-and Accumulator2
+type Accumulator2
 // electric boogaloo
  =
-    { refConstraintsMap : Map<AccumulatorTypeId, Result<RefDefType, AccTypeError> option * RefConstr set> }
+    { refConstraintsMap : Map<AccumulatorTypeId, Result<RefDefType, AccTypeError> option * RefConstr set>
 
-    static member empty = { refConstraintsMap = Map.empty }
+      /// This stores old ID references so that we don't ever run the risk of an ID ever getting out of date or replaced. This way a reference ID, once made, is reliable.
+      redirectMap : Map<AccumulatorTypeId, AccumulatorTypeId> }
 
-//static member fromRefDefResOptAndConstrs refDefResOpt refConstrs =
+    static member empty =
+        { refConstraintsMap = Map.empty
+          redirectMap = Map.empty }
 
 
-and TypeJudgment2 = Result<RefDefType option, AccTypeError>
+    static member getTypeById (accId : AccumulatorTypeId) (acc : Accumulator2) =
+        match Map.tryFind accId acc.refConstraintsMap with
+        | Some result -> result
+        | None ->
+            match Map.tryFind accId acc.redirectMap with
+            | Some redirectId -> Accumulator2.getTypeById redirectId acc
+            | None ->
+                failwith $"It shouldn't be possible to not find an AccId in either the real or redirect maps: {accId}"
 
+
+    /// Use with caution! This literally just replaces entries and sticks the replaced keys in the redirect map. It does *not* unify the new entry with the rest of the reference constraints map!
+    static member replaceEntries
+        (accIdsToReplace : AccumulatorTypeId set)
+        (newAccId : AccumulatorTypeId)
+        (refDefResOpt : Result<RefDefType, AccTypeError> option)
+        (refConstrs : RefConstr set)
+        (acc : Accumulator2)
+        =
+        { refConstraintsMap =
+            Map.removeKeys accIdsToReplace acc.refConstraintsMap
+            |> Map.add newAccId (refDefResOpt, refConstrs)
+
+          redirectMap =
+              acc.redirectMap
+              |> Map.addBulk (Set.map (fun accId -> accId, newAccId) accIdsToReplace) }
 
 (* Name dictionaries *)
 

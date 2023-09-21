@@ -1918,68 +1918,76 @@ module Accumulator2 =
         Helpers for the accumulator
     *)
 
-    type private TypeCheckResult =
-        { idOfTypeConstraint : AccumulatorTypeId
-          refDefResultOpt : Result<RefDefType, AccTypeError> option
-          refConstraints : RefConstr set }
-
-        static member fromRefDef (constrId : AccumulatorTypeId) (refDef : RefDefType) =
-            TypeCheckResult.fromRefDefOpt constrId (Some refDef)
-
-        static member fromRefDefOpt (constrId : AccumulatorTypeId) (refDefOpt : RefDefType option) =
-            TypeCheckResult.fromRefDefOptAndRefConstrs constrId refDefOpt Set.empty
-
-        static member fromRefDefOptAndRefConstrs
-            (constrId : AccumulatorTypeId)
-            (refDefOpt : RefDefType option)
-            (refConstrs : RefConstr set)
-            =
-            TypeCheckResult.fromRefDefResultOptAndRefConstrs constrId (Option.map Ok refDefOpt) refConstrs
-
-        static member fromRefDefResultOptAndRefConstrs
-            (constrId : AccumulatorTypeId)
-            (refDefResultOpt : Result<RefDefType, AccTypeError> option)
-            (refConstrs : RefConstr set)
-            =
-            { idOfTypeConstraint = constrId
-              refDefResultOpt = refDefResultOpt
-              refConstraints = refConstrs }
+    /// Basically the same as the AccumulatorAndOwnType
+    type AccAndTypeId =
+        { acc : Accumulator2
+          typeId : AccumulatorTypeId }
 
 
+    //type private TypeCheckResult =
+    //    { idOfTypeConstraint : AccumulatorTypeId
+    //      refDefResultOpt : Result<RefDefType, AccTypeError> option
+    //      refConstraints : RefConstr set }
 
+    //    static member fromRefDef (accId : AccumulatorTypeId) (refDef : RefDefType) =
+    //        TypeCheckResult.fromRefDefOpt accId (Some refDef)
 
-    type private AccModificationsToMake =
-        { typeConstraintIdsToRemove : AccumulatorTypeId set
-          accumulatorToSubsume : Accumulator2 }
+    //    static member fromRefDefOpt (accId : AccumulatorTypeId) (refDefOpt : RefDefType option) =
+    //        TypeCheckResult.fromRefDefOptAndRefConstrs accId refDefOpt Set.empty
 
+    //    static member fromRefDefOptAndRefConstrs
+    //        (accId : AccumulatorTypeId)
+    //        (refDefOpt : RefDefType option)
+    //        (refConstrs : RefConstr set)
+    //        =
+    //        TypeCheckResult.fromRefDefResultOptAndRefConstrs accId (Option.map Ok refDefOpt) refConstrs
 
-        static member empty =
-            { typeConstraintIdsToRemove = Set.empty
-              accumulatorToSubsume = Accumulator2.empty }
-
-        static member fromTcr (tcr : TypeCheckResult) =
-            { typeConstraintIdsToRemove = Set.empty
-              accumulatorToSubsume =
-                { refConstraintsMap =
-                    [ tcr.idOfTypeConstraint, (tcr.refDefResultOpt, tcr.refConstraints) ]
-                    |> Map.ofSeq } }
+    //    static member fromRefDefResultOptAndRefConstrs
+    //        (accId : AccumulatorTypeId)
+    //        (refDefResultOpt : Result<RefDefType, AccTypeError> option)
+    //        (refConstrs : RefConstr set)
+    //        =
+    //        { idOfTypeConstraint = accId
+    //          refDefResultOpt = refDefResultOpt
+    //          refConstraints = refConstrs }
 
 
 
 
-    and private SubTypeCheckResults =
-        { accModifications : AccModificationsToMake
-          typeCheckResult : TypeCheckResult }
+    //type private AccModificationsToMake =
+    //    {
+    //      //accIdsToRemove : AccumulatorTypeId set
+    //      accumulatorToSubsume : Accumulator2 }
 
 
-        static member fromTypeCheckResult tcr =
-            { accModifications = AccModificationsToMake.fromTcr tcr
-              typeCheckResult = tcr }
+    //    static member empty =
+    //        { accIdsToRemove = Set.empty
+    //          accumulatorToSubsume = Accumulator2.empty }
 
-        static member getAccModifs (stcr : SubTypeCheckResults) = stcr.accModifications
+    //    static member fromTcr (tcr : TypeCheckResult) =
+    //        { accIdsToRemove = Set.empty
+    //          accumulatorToSubsume =
+    //            { refConstraintsMap =
+    //                [ tcr.idOfTypeConstraint, (tcr.refDefResultOpt, tcr.refConstraints) ]
+    //                |> Map.ofSeq
+    //              redirectMap = Map.empty } }
 
-    /// Alias for SubTypeCheckResults
-    and private Stcr = SubTypeCheckResults
+
+
+
+    //and private SubTypeCheckResults =
+    //    { accModifications : AccModificationsToMake
+    //      typeCheckResult : TypeCheckResult }
+
+
+    //    static member fromTypeCheckResult tcr =
+    //        { accModifications = AccModificationsToMake.fromTcr tcr
+    //          typeCheckResult = tcr }
+
+    //    static member getAccModifs (stcr : SubTypeCheckResults) = stcr.accModifications
+
+    ///// Alias for SubTypeCheckResults
+    //and private Stcr = SubTypeCheckResults
 
     (* End of helper types *)
 
@@ -1990,41 +1998,137 @@ module Accumulator2 =
         System.Guid.NewGuid () |> AccumulatorTypeId
 
 
+    let private hasOverlap setA setB = Set.intersect setA setB |> Set.isEmpty
 
 
     (*
         Combine and implement `AccModificationsToMake`
     *)
 
-    let combineAccModifications
-        (stcrA : AccModificationsToMake)
-        (stcrB : AccModificationsToMake)
-        : AccModificationsToMake =
-        { typeConstraintIdsToRemove = Set.union stcrA.typeConstraintIdsToRemove stcrB.typeConstraintIdsToRemove
-          accumulatorToSubsume =
-            { refConstraintsMap =
-                Map.merge stcrA.accumulatorToSubsume.refConstraintsMap stcrB.accumulatorToSubsume.refConstraintsMap } }
+    //let combineAccModifications
+    //    (stcrA : AccModificationsToMake)
+    //    (stcrB : AccModificationsToMake)
+    //    : AccModificationsToMake =
+    //    { accIdsToRemove = Set.union stcrA.accIdsToRemove stcrB.accIdsToRemove
+    //      accumulatorToSubsume =
+    //        { refConstraintsMap =
+    //            Map.merge stcrA.accumulatorToSubsume.refConstraintsMap stcrB.accumulatorToSubsume.refConstraintsMap } }
 
 
 
-    let combineAccModsFromResults (a : SubTypeCheckResults) (b : SubTypeCheckResults) : AccModificationsToMake =
-        combineAccModifications a.accModifications b.accModifications
+    //let combineAccModsFromResults (a : SubTypeCheckResults) (b : SubTypeCheckResults) : AccModificationsToMake =
+    //    combineAccModifications a.accModifications b.accModifications
 
-    let makeModificationsToAcc (modifs : AccModificationsToMake) (acc : Accumulator2) : Accumulator2 =
-        { acc with
-            refConstraintsMap =
+    //let makeModificationsToAcc (modifs : AccModificationsToMake) (acc : Accumulator2) : Accumulator2 =
+    //    { acc with
+    //        refConstraintsMap =
+    //            acc.refConstraintsMap
+    //            |> Map.removeKeys (Set.toList modifs.accIdsToRemove)
+    //            |> Map.merge modifs.accumulatorToSubsume.refConstraintsMap }
+
+
+    /// Merges two accumulators. No IDs should be lost, refDefs should be unified according to reference constraint overlaps. And resulting combined IDs should be unified also.
+    ///
+    /// There should be no entities from one Acc referencing IDs in the other.
+    let rec combine (acc1 : Accumulator2) (acc2 : Accumulator2) : Accumulator2 =
+        // I think do a naive merge of the maps first, and then hunt down for duplicates I think... don't think there's really any other way of doing that without running into the issue of new RefDefs containing references from the old map and not the new one.
+        // Unless... we only add the entries in from the old map on an as-needed basis? (in addition to adding them one by one to make sure we've covered them all, even the ones that weren't referenced by other types added previously)
+
+
+
+
+        /// This runs a single new AccId and refConstr set through (a summary of) an existing Accumulator and returns a list of AccIds that should be combined with each other and which RefConstrs should be combined along with it.
+        /// Then once we have that information for each of the entries in the 2nd Acc, we should be able to simply merge the two Acc maps, and call unifyConstraintIds on all of the AccIds that should be replaced - and at some point, probably inside unifyConstraintIds, we should also move the old replaced AccIds out into the redirect map pointing to the new AccIds that replaced them
+        let runSingleRefConstrSetThroughAcc
+            (accIdsAndRefConstrs : Map<AccumulatorTypeId, RefConstr set>)
+            (newAccIdAndRefConstrs : AccumulatorTypeId * RefConstr set)
+            : AccumulatorTypeId set * RefConstr set =
+            let newAccId, newRefConstrs = newAccIdAndRefConstrs
+            let startingState = Set.singleton newAccId, newRefConstrs
+
+            accIdsAndRefConstrs
+            |> Map.fold
+                (fun (snowballedAccIds, snowballedRefConstrs) accId refConstrs ->
+                    if newAccId = accId then
+                        // Because we've probably already added this item into the Acc, so comparing it with itself is a pathological case that doesn't really make sense to do, so let's just skip it.
+                        // Although actually there's probably not much need to add it in, because all we're doing in the overlap case is combining the stes of AccIds and RefConstrs, which is not a big deal to add a thing that should anyway already exist
+                        snowballedAccIds, snowballedRefConstrs
+
+                    else if hasOverlap refConstrs snowballedRefConstrs then
+                        Set.add accId snowballedAccIds, Set.union refConstrs snowballedRefConstrs
+                    else
+                        snowballedAccIds, snowballedRefConstrs)
+                startingState
+
+
+        /// This runs a single new entry through the acc and unifies it
+        let runSingleAndUnify (newAccIdAndRefConstrs : AccumulatorTypeId * RefConstr set) (acc : Accumulator2) =
+            let accIdsAndRefConstrs =
                 acc.refConstraintsMap
-                |> Map.removeKeys (Set.toList modifs.typeConstraintIdsToRemove)
-                |> Map.merge modifs.accumulatorToSubsume.refConstraintsMap }
+                |> Map.map (fun _ (_, refConstrs) -> refConstrs)
+
+            let toUnify =
+                runSingleRefConstrSetThroughAcc accIdsAndRefConstrs newAccIdAndRefConstrs
+
+            // This should be the thing that creates the new AccIds for the merged entries and sticks the old ones in the redirectMap so that we don't have to do it separately in this function
+            unifyManyTypeConstraintIds (fst toUnify) acc
+
+
+        let runAndUnifyBothAccs (acc1 : Accumulator2) (acc2 : Accumulator2) : Accumulator2 =
+            let mergedAcc : Accumulator2 =
+                { refConstraintsMap = Map.merge acc1.refConstraintsMap acc2.refConstraintsMap
+                  redirectMap = Map.merge acc1.redirectMap acc2.redirectMap }
+
+            let entriesToAdd =
+                acc1.refConstraintsMap
+                |> Map.toList
+                |> List.map (fun (accId, (_, refConstrs)) -> accId, refConstrs)
+
+            entriesToAdd
+            |> List.fold (fun state entry -> runSingleAndUnify entry state) mergedAcc
+
+
+        runAndUnifyBothAccs acc1 acc2
 
 
 
 
+    and addAccEntryToAcc
+        (accId : AccumulatorTypeId)
+        (refDefResOpt : Result<RefDefType, AccTypeError> option)
+        (refConstrs : RefConstr set)
+        (acc : Accumulator2)
+        : Accumulator2 =
+        let entriesWithOverlap =
+            Map.filter (fun _ (_, thisConstrs) -> hasOverlap thisConstrs refConstrs) acc.refConstraintsMap
+
+        if Map.isEmpty entriesWithOverlap then
+            { acc with
+                refConstraintsMap =
+                    acc.refConstraintsMap
+                    |> Map.add accId (refDefResOpt, refConstrs) }
+        else
+            let idsToCombine = Map.keys entriesWithOverlap |> List.ofSeq
+
+            let rec makeWindowedList lastOne ids =
+                match ids with
+                | [] -> []
+                | head :: [] -> [ lastOne, head ]
+                | head :: neck :: tail ->
+                    [ lastOne, head; head, neck ]
+                    @ makeWindowedList neck tail
+
+            let idPairsToCombine =
+                match idsToCombine with
+                | [] -> []
+                | head :: rest -> makeWindowedList head rest
+
+            idPairsToCombine
+            |> List.fold (fun combined (idA, idB) -> unifyTypeConstraintIds idA idB combined) acc
 
 
 
-
-    let rec addRefDefResOptWithRefConstrs
+    and addRefDefResOptWithRefConstrs
         (refDefResOpt : Result<RefDefType, AccTypeError> option)
         (refConstrs : RefConstr set)
         (acc : Accumulator2)
@@ -2045,7 +2149,7 @@ module Accumulator2 =
 
                     let modifsWithThisConstrIdRemoved : AccModificationsToMake =
                         { combinedTcrsAccModifs with
-                            typeConstraintIdsToRemove = Set.add constrId combinedTcrsAccModifs.typeConstraintIdsToRemove }
+                            accIdsToRemove = Set.add constrId combinedTcrsAccModifs.accIdsToRemove }
 
                     { typeCheckResult =
                         { unifiedRefDefResult.typeCheckResult with
@@ -2275,6 +2379,11 @@ module Accumulator2 =
                                         refConstrsB ] } }
 
 
+    /// @TODO: maybe do this using the more fundamental unifyTypeConstraintIds? idk tho
+    and unifyManyTypeConstraintIds (ids : AccumulatorTypeId set) (acc : Accumulator2) : Accumulator2 =
+        failwith "@TODO: implement"
+
+
 
     /// Lil helper function that essentially just does the same as above, but handles the non-success cases also
     and unifyRefDefResOpts
@@ -2454,17 +2563,6 @@ module Accumulator2 =
         (acc : Accumulator2)
         : SubTypeCheckResults =
         addRefDefResOptWithRefConstrs (Option.map Ok refDefOpt) refConstrs acc
-
-
-    /// @TODO: this needs more thinking through because it doesn't work as is
-    let combine (acc1 : Accumulator2) (acc2 : Accumulator2) : Accumulator2 =
-        acc1.refConstraintsMap
-        |> Map.fold
-            (fun acc key (refDefOpt, refConstrs) ->
-                let stcr = addRefDefResOptWithRefConstrs refDefOpt refConstrs acc
-                makeModificationsToAcc stcr.accModifications acc)
-            acc2
-
 
 
 
