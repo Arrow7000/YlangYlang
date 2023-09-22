@@ -218,14 +218,36 @@ type Accumulator2
           redirectMap = Map.empty }
 
 
-    static member getTypeById (accId : AccumulatorTypeId) (acc : Accumulator2) =
+    /// If the input AccId is a redirect, gets the actual live AccId that it points to (even after multiple redirects). Useful for editing the data in the refConstraintsMap
+    static member getRealIdAndType
+        accId
+        acc
+        : AccumulatorTypeId * (Result<RefDefType, AccTypeError> option * RefConstr set) =
         match Map.tryFind accId acc.refConstraintsMap with
-        | Some result -> result
+        | Some result -> accId, result
         | None ->
             match Map.tryFind accId acc.redirectMap with
-            | Some redirectId -> Accumulator2.getTypeById redirectId acc
+            | Some redirectId -> Accumulator2.getRealIdAndType redirectId acc
             | None ->
                 failwith $"It shouldn't be possible to not find an AccId in either the real or redirect maps: {accId}"
+
+    static member getRealId (accId : AccumulatorTypeId) (acc : Accumulator2) : AccumulatorTypeId =
+        Accumulator2.getRealIdAndType accId acc |> fst
+
+
+    static member getTypeById (accId : AccumulatorTypeId) (acc : Accumulator2) =
+        Accumulator2.getRealIdAndType accId acc |> snd
+
+
+    static member editRefConstraints
+        (accId : AccumulatorTypeId)
+        (refConstrUpdater : RefConstr set -> RefConstr set)
+        (acc : Accumulator2)
+        : Accumulator2 =
+        let realAccId, (result, refConstrs) = Accumulator2.getRealIdAndType accId acc
+
+        { acc with refConstraintsMap = Map.add realAccId (result, refConstrUpdater refConstrs) acc.refConstraintsMap }
+
 
 
     /// Use with caution! This literally just replaces entries and sticks the replaced keys in the redirect map. It does *not* unify the new entry with the rest of the reference constraints map!
