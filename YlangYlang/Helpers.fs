@@ -2,6 +2,8 @@
 module Helpers
 
 open System
+open System.Collections
+open System.Collections.Generic
 
 
 let tee f x =
@@ -27,6 +29,20 @@ type OneOrTree<'a> =
 
 type NonEmptyList<'a> =
     | NEL of first : 'a * rest : 'a list
+
+
+    interface IEnumerable<'a> with
+        member this.GetEnumerator () =
+            let (NEL (head, tail)) = this
+            let items = head :: tail |> Seq.ofList
+            items.GetEnumerator ()
+
+    interface IEnumerable with
+        member this.GetEnumerator () =
+            (this :> IEnumerable<'a>).GetEnumerator () :> IEnumerator
+
+
+
 
     /// Make new NEL with head and tail
     static member new_ (a : 'a) a's : NEL<'a> = NEL (a, a's)
@@ -147,12 +163,24 @@ and 'a nel = NonEmptyList<'a>
 
 
 
+
 /// List of Two Or More™
 type TwoOrMore<'a> =
     | TOM of head : 'a * neck : 'a * tail : 'a list
 
+    interface IEnumerable<'a> with
+        member this.GetEnumerator () =
+            let (TOM (head, neck, tail)) = this
+            let items = [ head; neck ] @ tail |> Seq.ofList
+            items.GetEnumerator ()
+
+    interface IEnumerable with
+        member this.GetEnumerator () =
+            (this :> IEnumerable<'a>).GetEnumerator () :> IEnumerator
+
+
     /// Make new TOM with head, neck, and tail
-    static member new_ (head : 'a) (neck : 'a) tail : TOM<'a> = TOM (head, neck, tail)
+    static member new_ (head : 'a) (neck : 'a) tail : TwoOrMore<'a> = TOM (head, neck, tail)
 
     /// Make new TOM by just giving it a head and neck
     static member make (head : 'a) (neck : 'a) : TOM<'a> = TOM.new_ head neck List.empty
