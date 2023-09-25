@@ -432,6 +432,7 @@ and ExplicitValue =
 
 and ControlFlowExpression =
     | IfExpression of condition : TypedExpr * ifTrue : TypedExpr * ifFalse : TypedExpr
+    /// A `case <expr> of` expression with one or more patterns
     | CaseMatch of exprToMatch : TypedExpr * branches : CaseMatchBranch nel
 
 and SingleValueExpression =

@@ -2677,16 +2677,41 @@ let rec makeAccIdDestType ((NEL (first, rest)) : AccumulatorTypeId nel) (acc : A
 
 
 
-let rec makeRefDefDestType ((NEL (first, rest)) : RefDefType nel) (acc : Accumulator) : AccAndTypeId =
-    let firstResult = Acc2.addRefDefResOpt (Ok first |> Some) acc
+/// Pass in the IDs for the params passed to a function and return the arrow type the function expression must be inferred to be
+let rec makeAccIdFuncApplicationType ((NEL (first, rest)) : AccumulatorTypeId nel) (acc : Accumulator) : AccAndTypeId =
+
+    let makeArrowType (aati : AccAndTypeId) =
+        let refDefType = RefDtArrow (first, aati.typeId)
+        Acc.addRefDefResOpt (Some (Ok refDefType)) aati.acc
 
     match rest with
-    | [] -> firstResult
-    | head :: tail ->
-        let tailResult = makeRefDefDestType (NEL.new_ head tail) firstResult.acc
+    | [] ->
+        let unspecific = Acc.addRefDefResOpt None acc
+        makeArrowType unspecific
 
-        let refDefType = RefDtArrow (firstResult.typeId, tailResult.typeId)
-        Acc2.addRefDefResOpt (Ok refDefType |> Some) tailResult.acc
+    | head :: tail ->
+        let tailResult = makeAccIdFuncApplicationType (NEL.new_ head tail) acc
+        makeArrowType tailResult
+
+
+
+
+let rec makeDottedSeqImpliedType (fields : RecordFieldName nel) acc =
+    let (NEL (first, rest)) = fields
+
+    let makeDotRecord fieldName aati =
+        let refDefType = RefDtRecordWith ([ fieldName, aati.typeId ] |> Map.ofSeq)
+        Acc.addRefDefResOpt (Some (Ok refDefType)) aati.acc
+
+    match rest with
+    | [] ->
+        let unspecific = Acc.addRefDefResOpt None acc
+        makeDotRecord first unspecific
+
+    | head :: tail ->
+        let tailResult = makeDottedSeqImpliedType (NEL.new_ head tail) acc
+        makeDotRecord first tailResult
+
 
 
 
@@ -2934,83 +2959,25 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
     | T.CompoundExpression compExpr ->
         match compExpr with
         | T.FunctionApplication (funcExpr, params_) ->
-
-            let funcAccAndSelf = getAccumulatorFromExpr funcExpr
             let paramsAccAndSelves = params_ |> NEL.map getAccumulatorFromExpr
+            let paramsAcc = paramsAccAndSelves |> Acc.combineAccsFromAatis
 
-            let paramAndBodyAaot =
-                match funcAccAndSelf.ownType with
-                | Ok constr -> addMultipleParamConstraints constr paramsAccAndSelves Acc.empty
+            /// The Acc based on the parameters and the type that the function must be compatible with based on the parameters that have been applied to the function
+            let requiredFuncAccAndId =
+                makeAccIdFuncApplicationType (NEL.map Aati.getId paramsAccAndSelves) paramsAcc
 
-                | Error e ->
-                    NEL.map AccAndTypeId.getAcc paramsAccAndSelves
-                    |> NEL.fold Acc.combineAccumulators Acc.empty
-                    |> AccAndTypeId.make (Error e)
+            let funcExprAccAndSelf = getAccumulatorFromExpr funcExpr
 
-
-            let combinedAcc = Acc.combineAccumulators paramAndBodyAaot.acc funcAccAndSelf.acc
-
-            AccAndTypeId.make paramAndBodyAaot.ownType combinedAcc
-
-
-
-
+            Acc.combine paramsAcc funcExprAccAndSelf.acc
+            |> Acc.unifyTypeConstraintIds funcExprAccAndSelf.typeId requiredFuncAccAndId.typeId
 
 
         | T.DotAccess (dottedExpr, dotSequence) ->
-
-            let rec makeImpliedRecStructure exprType dotSeqsLeft =
-                match dotSeqsLeft with
-                | [] -> AccAndTypeId.make (Ok exprType) Map.empty
-                | firstDotter :: rest ->
-                    let defRequirement =
-                        DtRecordWith (
-                            [ firstDotter, TypeConstraints.makeUnspecific () ]
-                            |> Map.ofList
-                        )
-
-                    let requiredConstraint = TypeConstraints.fromDefinitive defRequirement
-
-                    let unifiedTypeConstraints = unifyTypeConstraints exprType requiredConstraint
-                    let acc = addConstraintToJudgment requiredConstraint unifiedTypeConstraints
-
-                    let returnType : TypeJudgment =
-                        unifiedTypeConstraints
-                        |> Result.bind (function
-                            | Constrained (Some (DtRecordWith fieldsMap), _)
-                            | Constrained (Some (DtRecordExact fieldsMap), _) ->
-                                match Map.tryFind firstDotter fieldsMap with
-                                | Some valType -> Ok valType
-                                | None -> Error (IncompatibleTypes [ defRequirement ])
-
-                            | _ ->
-                                // @TODO: this is technically not correct because this should be a list of multiple mutually irreconcilable definitive types, one on its own makes no sense. Need to actually implement what the correct type error logic would be.
-                                Error (IncompatibleTypes [ defRequirement ]))
-
-                    match returnType with
-                    | Ok returnType_ ->
-                        let recursiveAccAndSelf = makeImpliedRecStructure returnType_ rest
-
-                        AccAndTypeId.make
-                            recursiveAccAndSelf.ownType
-                            (Acc.combineAccumulators acc recursiveAccAndSelf.acc)
-
-                    | Error e -> AccAndTypeId.make (Error e) acc
-
             let exprAccAndSelf = getAccumulatorFromExpr dottedExpr
 
-            let dottedExprAccAndSelf =
-                exprAccAndSelf.ownType
-                |> Result.map (fun constr -> makeImpliedRecStructure constr (NEL.toList dotSequence))
-                |> function
-                    | Ok accAndSelf -> accAndSelf
-                    | Error e -> AccAndTypeId.make (Error e) Map.empty
+            let withImpliedRecordType = makeDottedSeqImpliedType dotSequence exprAccAndSelf.acc
 
-            let combinedAcc =
-                Acc.combineAccumulators exprAccAndSelf.acc dottedExprAccAndSelf.acc
-
-            AccAndTypeId.make dottedExprAccAndSelf.ownType combinedAcc
-
+            Acc.unifyTypeConstraintIds exprAccAndSelf.typeId withImpliedRecordType.typeId withImpliedRecordType.acc
 
 
         | T.Operator (left, op, right) ->
@@ -3256,21 +3223,6 @@ and addArrowConstraint
         |> Acc.combineAccumulators actualParamAccAndOwn.acc
 
     AccAndTypeId.make returnType newAcc
-
-
-
-and addMultipleParamConstraints
-    (funcExprConstraint : TypeConstraints)
-    (actualParams : AccAndTypeId nel)
-    (acc : Accumulator)
-    : AccAndTypeId =
-    actualParams
-    |> NEL.fold
-        (fun state actualParam ->
-            match state.typeId with
-            | Ok constr -> addArrowConstraint constr actualParam state.acc
-            | Error e -> Aati.make (Error e) acc)
-        (AccAndTypeId.make (Ok funcExprConstraint) acc)
 
 
 
