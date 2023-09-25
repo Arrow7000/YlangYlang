@@ -1,4 +1,4 @@
-﻿module TypeChecker
+module TypeChecker
 
 
 open Lexer
@@ -2321,8 +2321,8 @@ module Accumulator2 =
 
 
     /// @TODO: maybe do this using the more fundamental unifyTypeConstraintIds? idk tho
-    and unifyManyTypeConstraintIds (ids : AccumulatorTypeId set) (acc : Accumulator2) : AccAndTypeId =
-        match Set.toList ids with
+    and unifyManyTypeConstraintIds (ids : AccumulatorTypeId seq) (acc : Accumulator2) : AccAndTypeId =
+        match Seq.toList ids with
         | [] -> addRefConstraints Set.empty acc
         | single :: [] -> Aati.make single acc
         | head :: neck :: tail ->
@@ -2751,7 +2751,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
                     let combinedAcc = typedList |> Acc.combineAccsFromAatis
 
                     let combinedAati =
-                        Acc.unifyManyTypeConstraintIds (List.map Aati.getId typedList |> Set.ofSeq) combinedAcc
+                        Acc.unifyManyTypeConstraintIds (List.map Aati.getId typedList) combinedAcc
 
                     let refDefType = RefDtList combinedAati.typeId
                     Acc2.addRefDefResOpt (makeOkType refDefType) combinedAati.acc
@@ -2993,38 +2993,23 @@ and getAccumulatorFromExpr (expr : TypedExpr) : AccAndTypeId =
 //and getAccumulatorFromParam (param : FunctionOrCaseMatchParam) : AccumulatorAndOwnType =
 and getAccumulatorFromParam (param : AssignmentPattern) : AccAndTypeId =
     /// This *only* gets the inferred type based on the destructuring pattern, not based on usage or anything else.
-    ///
-    /// We infer the types of the parameters based only on
-    /// a) any structure implicit in a destructuring pattern
-    /// b) their usage – not the usage from the param name
-    ///
-    /// @TODO: make this return an `AccumulatorAndOwnType`!
     let rec getInferredTypeFromAssignmentPattern (pattern : AssignmentPattern) : AccAndTypeId =
         match pattern with
-        | Named ident ->
-            let inferredType = TypeConstraints.makeUnspecific ()
+        | Named ident -> Acc.addRefDefResOptWithRefConstrs None (Set.singleton (ByValue (LocalLower ident))) Acc.empty
 
-            Acc.makeAccFromLocalIdentAndTypeConstraints ident inferredType
-            |> AccAndTypeId.make (Ok inferredType)
+        | Ignored -> Acc.addRefDefResOpt None Acc.empty
 
-
-        | Ignored -> AccAndTypeId.make (Ok TypeConstraints.empty) Map.empty
-
-        | Unit -> AccAndTypeId.make (Ok <| TypeConstraints.fromDefinitive DtUnitType) Map.empty
+        | Unit -> Acc.addRefDefResOpt (Some (Ok RefDtUnitType)) Acc.empty
 
         | DestructuredPattern destructured -> getInferredTypeFromDestructuredPattern destructured
 
         | Aliased (pattern_, alias) ->
             let nestedAccAndType = getInferredTypeFromAssignmentPattern pattern_
 
-            let aliasAcc = Acc.addJudgmentToAccum alias nestedAccAndType.ownType Map.empty
+            let withNameAdded =
+                Acc.addRefDefResOptWithRefConstrs None (Set.singleton (ByValue (LocalLower alias))) nestedAccAndType.acc
 
-            let combinedAcc = Acc.combineAccumulators nestedAccAndType.acc aliasAcc
-            AccAndTypeId.make nestedAccAndType.ownType combinedAcc
-
-
-
-
+            Acc.unifyTypeConstraintIds nestedAccAndType.typeId withNameAdded.typeId withNameAdded.acc
 
 
     and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : AccAndTypeId =
@@ -3032,96 +3017,69 @@ and getAccumulatorFromParam (param : AssignmentPattern) : AccAndTypeId =
         | DestructuredRecord fieldNames ->
             let fields =
                 fieldNames
-                |> NEL.map (fun recFieldName -> recFieldName, TypeConstraints.makeUnspecific ())
-                |> NEL.toList
-                |> Map.ofList
+                |> NEL.map (fun recFieldName ->
+                    recFieldName,
+                    Acc.addRefDefResOptWithRefConstrs
+                        None
+                        (Set.singleton (ByValue (LocalLower (recFieldToLowerIdent recFieldName))))
+                        Acc.empty)
+                |> Map.ofSeq
 
-            let inferredType : TypeJudgment =
+            let combinedAcc =
                 fields
-                |> DtRecordWith
-                |> TypeConstraints.fromDefinitive
-                |> Ok
+                |> Map.fold (fun state _ v -> Acc.combine v.acc state) Acc.empty
 
-            let acc : Accumulator =
+            let refDefType =
                 fields
-                |> Map.fold
-                    (fun acc fieldName constraints ->
-                        Acc.makeAccFromLocalIdentAndTypeConstraints (recFieldToLowerIdent fieldName) constraints
-                        |> Acc.combineAccumulators acc)
-                    Map.empty
+                |> Map.map (fun _ v -> v.typeId)
+                |> RefDtRecordWith
 
-
-            AccAndTypeId.make inferredType acc
+            Acc.addRefDefResOpt (Some (Ok refDefType)) combinedAcc
 
 
         | DestructuredCons consItems ->
             let gatheredItems = TOM.map getInferredTypeFromAssignmentPattern consItems
+            let combinedAcc = Acc.combineAccsFromAatis gatheredItems
 
-            let inferredType : TypeJudgment =
-                gatheredItems
-                |> TOM.map AccAndTypeId.getSelf
-                |> TOM.fold unifyJudgments (Ok TypeConstraints.empty)
+            let unified =
+                combinedAcc
+                |> Acc.unifyManyTypeConstraintIds (TOM.map Aati.getId gatheredItems)
 
-            let acc : Accumulator =
-                gatheredItems
-                |> TOM.map AccAndTypeId.getAcc
-                |> TOM.toList
-                |> Acc.combineManyAccs
-
-            AccAndTypeId.make inferredType acc
+            let refDefType = RefDtList unified.typeId
+            Acc.addRefDefResOpt (Some (Ok refDefType)) unified.acc
 
 
         | DestructuredTuple tupleItems ->
             let gatheredItems = TOM.map getInferredTypeFromAssignmentPattern tupleItems
 
-            let inferredType : TypeJudgment =
-                gatheredItems
-                |> TOM.map AccAndTypeId.getSelf
-                |> TOM.sequenceResult
-                |> Result.map (DtTuple >> TypeConstraints.fromDefinitive)
-                |> concatResultErrListNel
+            let combinedAcc = Acc.combineAccsFromAatis gatheredItems
 
-            let acc : Accumulator =
-                gatheredItems
-                |> TOM.map AccAndTypeId.getAcc
-                |> TOM.toList
-                |> Acc.combineManyAccs
-
-
-            AccAndTypeId.make inferredType acc
+            let refDefType = RefDtTuple (TOM.map Aati.getId gatheredItems)
+            Acc.addRefDefResOpt (Some (Ok refDefType)) combinedAcc
 
 
         | DestructuredTypeVariant (ctor, params_) ->
+            let gatheredParams = List.map getInferredTypeFromAssignmentPattern params_
+            let combinedAcc = Acc.combineAccsFromAatis gatheredParams
+
             let ctorType = ByConstructorType ctor
 
-            let accAndSelf = makeArrowAndGetAccsAndSelves params_
+            match List.map Aati.getId gatheredParams with
+            | [] ->
+                // I.e. there are no params
+                Acc.addRefDefResOptWithRefConstrs None (Set.singleton ctorType) combinedAcc
 
-            let selfType : TypeJudgment =
-                accAndSelf.ownType
-                |> Result.map (TypeConstraints.addConstraint ctorType)
+            | head :: tail ->
+                // I.e. there are params
 
-            AccAndTypeId.make selfType accAndSelf.acc
+                /// @TODO: I'm not 100% sure that this is the best way to do this, or if there is actually a more consistent way to specify what the relationship of the constructor to the params should be.
+                /// E.g. one thing which `makeAccIdFuncApplicationType` does *not* capture is the fact that these are not just *some* parameters, but they need to be *all* of the parameters for that type variant. Otherwise should be a type error.
+                let withFuncRequirement =
+                    makeAccIdFuncApplicationType (NEL.new_ head tail) combinedAcc
 
+                Acc.combine combinedAcc withFuncRequirement.acc
+                |> Acc.addRefDefResOptWithRefConstrs None (Set.singleton ctorType)
 
-    /// This is for a deconstructed newtype pattern match, which returns all the constraints and inferred accumulated information about the pattern matched params, to be used inside a function, let, or case match expression body
-    and makeArrowAndGetAccsAndSelves (params_ : AssignmentPattern list) : AccAndTypeId =
-        match params_ with
-        | [] -> AccAndTypeId.make (Ok <| TypeConstraints.makeUnspecific ()) Map.empty
-        | head :: rest ->
-            let ofFirst = getInferredTypeFromAssignmentPattern head
-            let ofRest = makeArrowAndGetAccsAndSelves rest
-
-            let inferredType : TypeJudgment =
-                (ofFirst.ownType, ofRest.ownType)
-                ||> Result.map2
-                        (fun ofFirst_ ofRest_ ->
-                            DtArrow (ofFirst_, ofRest_)
-                            |> TypeConstraints.fromDefinitive)
-                        unifyTypeErrors
-
-            let combinedAcc = Acc.combineAccumulators ofFirst.acc ofRest.acc
-
-            AccAndTypeId.make inferredType combinedAcc
 
 
     getInferredTypeFromAssignmentPattern param
@@ -3143,12 +3101,6 @@ and private getFuncReturnType (tc : TypeConstraints) : TypeJudgment =
         Error (IncompatibleTypes [ defFuncRequirement ])
 
 
-/// Ensure TypeConstraints is compatible with the params it's being called with, *but* don't narrow the function to only work with those params; because we want to maintain let polymorphism!
-/// Hmm actually I think if we are to maintain let polymorphism, then instead of constraining the function's params and output type to only work with those from this one instance of its use, we actually *reverse* the constraints, and from this function we infer constraints on the param or params (and maybe its output also?)
-/// So I think what this function needs to do is:
-///     a) on the value called as a function: simply add a constraint that it needs to be a function
-///         i. and maybe actually add additional constraints from the shape of its param(s); but nothing else! no narrowing of the param types based on the value it's called with!
-///     b) impose any param-inferred constraints from the function onto the *value* it is called with - so not vice versa
 //and addArrowConstraint
 //    (funcExprConstraint : TypeConstraints)
 //    (paramPattern : AssignmentPattern)
@@ -3180,49 +3132,6 @@ and private getFuncReturnType (tc : TypeConstraints) : TypeJudgment =
 
 
 
-
-and addArrowConstraint
-
-
-    (*
-
-
-
-    @TODO: add the function expression itself in here - or at least its referenced name - because to ensure we're tracking that a function `f` is a function with whatever signature it has, we need to pass that name f into the Accumulator. Otherwise we're only storing the other type constraints about the function in the Acc that we bubble up from here, but not actually tracking `f`'s own type!
-
-
-
-    *)
-
-
-    (funcExprConstraint : TypeConstraints)
-    (actualParamAccAndOwn : AccumulatorAndOwnType)
-    (acc : Accumulator)
-    : AccAndTypeId =
-
-    let paramRefConstr = makeTypeConstrId () |> IsBoundVar
-
-    let paramConstraint = TypeConstraints.fromConstraint paramRefConstr
-    let putativeReturnType = TypeConstraints.makeUnspecific ()
-
-    let funcRequirementConstraint =
-        DtArrow (paramConstraint, putativeReturnType)
-        |> TypeConstraints.fromDefinitive
-
-    let funcJudgment = unifyTypeConstraints funcRequirementConstraint funcExprConstraint
-
-    let actualParamJudgment =
-        unifyJudgments (Ok paramConstraint) actualParamAccAndOwn.ownType
-
-    let returnType = funcJudgment |> Result.bind getFuncReturnType
-
-    let newAcc =
-        acc
-        |> Acc.addSingleTypeConstraint funcRequirementConstraint
-        |> Acc.addSingleTypeJudgment actualParamJudgment
-        |> Acc.combineAccumulators actualParamAccAndOwn.acc
-
-    AccAndTypeId.make returnType newAcc
 
 
 
