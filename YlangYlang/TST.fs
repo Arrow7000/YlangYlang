@@ -155,21 +155,6 @@ and TypeJudgment = Result<TypeConstraints, TypeError>
 
 
 
-/// Helper type for accumulating type constraints
-type Accumulator = Map<RefConstr set, Result<DefinitiveType option, TypeError>>
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -266,6 +251,8 @@ type Accumulator2
               acc.redirectMap
               |> Map.addBulk (Set.map (fun accId -> accId, newAccId) accIdsToReplace) }
 
+/// Since we're no longer using the old Accumulator we may as well make the original name an alias for the new one
+type Accumulator = Accumulator2
 (* Name dictionaries *)
 
 
