@@ -206,289 +206,289 @@ module TypeConstraints =
     /// Alias for TC.makeUnspecific
     let any () = TypeConstraints.makeUnspecific ()
 
-    /// @TODO: this needs to be fixed now that `Constrained` types no longer just refer to generically typed params, but also to references to concrete values defined elsewhere!
-    /// Not entirely sure yet how to do this without having to pass in names maps to this function, which I don't want to do, because of the circular definition problem (i.e. in a let bindings list all values can reference all others, even ones defined after itself, so we can't type check each value in isolation but have to "convert" them to type checked values all at once, and the only way we can do that is by allowing a type of an expression to be a reference to "whatever the type of value X is")
-    let rec unifyTypeConstraints (typeA : TypeConstraints) (typeB : TypeConstraints) : TypeJudgment =
-        match typeA, typeB with
-        | Constrained (Some defA, cnstrntsA), Constrained (Some defB, cnstrntsB) ->
-            unifyDefinitiveTypes defA defB
-            |> Result.map (fun unified -> Constrained (Some unified, Set.union cnstrntsA cnstrntsB))
-
-        | Constrained (Some def, cnstrntsA), Constrained (None, cnstrntsB)
-        | Constrained (None, cnstrntsA), Constrained (Some def, cnstrntsB) ->
-            Constrained (Some def, Set.union cnstrntsA cnstrntsB)
-            |> Ok
-
-        | Constrained (None, cnstrntsA), Constrained (None, cnstrntsB) ->
-            Constrained (
-                None,
-                // @TODO: this may not be a simple union of reference constraints, they need to be unified with their own unifier function!
-                Set.union cnstrntsA cnstrntsB
-            )
-            |> Ok
-
-
-
-
-
-    /// @TODO: remember to resolve named types to check for unification, e.g. with named alias type and record
-    and unifyDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveType) : Result<DefinitiveType, TypeError> =
-        match typeA, typeB with
-        | DtTuple a, DtTuple b ->
-            unifyTypesTom a b
-            |> Result.mapError (fun (first, second) ->
-                TypeError.fromTypes [ DtTuple first
-                                      DtTuple second ])
-            |> Result.bind (TOM.sequenceResult >> concatResultErrListNel)
-            |> Result.map DtTuple
-
-        | DtList a, DtList b -> unifyTypeConstraints a b |> Result.map DtList
-
-        | DtArrow (fromA, toA), DtArrow (fromB, toB) ->
-            (unifyTypeConstraints fromA fromB, unifyTypeConstraints toA toB)
-            ||> Result.map2
-                    (fun fromType toType -> DtArrow (fromType, toType))
-                    (fun _ _ ->
-                        TypeError.fromTypes [ DtArrow (fromA, toA)
-                                              DtArrow (fromB, toB) ])
-        //let unifiedToTypes =
-        //    unifyTypesNel toA toB
-        //    |> Result.mapError (fun _ ->
-        //        TypeError.fromTypes [ DtArrow (fromA, toA)
-        //                              DtArrow (fromB, toB) ])
-        //    |> Result.bind (NEL.sequenceResult >> concatResultErrListNel)
-
-        //(unifyTypeConstraints fromA fromB, unifiedToTypes)
-        //||> Result.map2
-        //        (fun fromType toTypes_ -> DtArrow (fromType, toTypes_))
-        //        (fun _ _ ->
-        //            TypeError.fromTypes [ DtArrow (fromA, toA)
-        //                                  DtArrow (fromB, toB) ])
-
-        | DtNewType (typeRefA, typeParamsA), DtNewType (typeRefB, typeParamsB) ->
-            if typeRefA = typeRefB then
-                unifyTypesList typeParamsA typeParamsB
-                |> Result.mapError (fun _ -> TypeError.fromTypes [ typeA; typeB ])
-                |> Result.bind (Result.sequenceList >> concatResultErrListNel)
-                |> Result.map (fun unifiedParams -> DtNewType (typeRefA, unifiedParams))
-
-            else
-                Error <| TypeError.fromTypes [ typeA; typeB ]
-
-        | DtRecordExact a, DtRecordExact b ->
-            Map.mergeExact (fun _ valueA valueB -> unifyTypeConstraints valueA valueB) a b
-            |> Result.mapError (fun _ ->
-                TypeError.fromTypes [ DtRecordExact a
-                                      DtRecordExact b ])
-            |> Result.bind (
-                Map.sequenceResult
-                >> Result.mapError (
-                    fst
-                    >> Map.values
-                    >> Seq.toList
-                    >> combineTypeErrorsFromList
-                )
-            )
-            |> Result.map DtRecordExact
-
-        | DtRecordWith a, DtRecordWith b ->
-            Map.mergeExact (fun _ valueA valueB -> unifyTypeConstraints valueA valueB) a b
-            |> Result.mapError (fun _ ->
-                TypeError.fromTypes [ DtRecordWith a
-                                      DtRecordWith b ])
-            |> Result.bind (
-                Map.sequenceResult
-                >> Result.mapError (
-                    fst
-                    >> Map.values
-                    >> Seq.toList
-                    >> combineTypeErrorsFromList
-                )
-            )
-            |> Result.map DtRecordExact
-
-        | DtRecordExact a, DtRecordWith b
-        | DtRecordWith b, DtRecordExact a -> failwith "@TODO: unify record and extended record types when compatible"
+///// @TODO: this needs to be fixed now that `Constrained` types no longer just refer to generically typed params, but also to references to concrete values defined elsewhere!
+///// Not entirely sure yet how to do this without having to pass in names maps to this function, which I don't want to do, because of the circular definition problem (i.e. in a let bindings list all values can reference all others, even ones defined after itself, so we can't type check each value in isolation but have to "convert" them to type checked values all at once, and the only way we can do that is by allowing a type of an expression to be a reference to "whatever the type of value X is")
+//let rec unifyTypeConstraints (typeA : TypeConstraints) (typeB : TypeConstraints) : TypeJudgment =
+//    match typeA, typeB with
+//    | Constrained (Some defA, cnstrntsA), Constrained (Some defB, cnstrntsB) ->
+//        unifyDefinitiveTypes defA defB
+//        |> Result.map (fun unified -> Constrained (Some unified, Set.union cnstrntsA cnstrntsB))
+
+//    | Constrained (Some def, cnstrntsA), Constrained (None, cnstrntsB)
+//    | Constrained (None, cnstrntsA), Constrained (Some def, cnstrntsB) ->
+//        Constrained (Some def, Set.union cnstrntsA cnstrntsB)
+//        |> Ok
+
+//    | Constrained (None, cnstrntsA), Constrained (None, cnstrntsB) ->
+//        Constrained (
+//            None,
+//            // @TODO: this may not be a simple union of reference constraints, they need to be unified with their own unifier function!
+//            Set.union cnstrntsA cnstrntsB
+//        )
+//        |> Ok
+
+
+
+
+
+///// @TODO: remember to resolve named types to check for unification, e.g. with named alias type and record
+//and unifyDefinitiveTypes (typeA : DefinitiveType) (typeB : DefinitiveType) : Result<DefinitiveType, TypeError> =
+//    match typeA, typeB with
+//    | DtTuple a, DtTuple b ->
+//        unifyTypesTom a b
+//        |> Result.mapError (fun (first, second) ->
+//            TypeError.fromTypes [ DtTuple first
+//                                  DtTuple second ])
+//        |> Result.bind (TOM.sequenceResult >> concatResultErrListNel)
+//        |> Result.map DtTuple
+
+//    | DtList a, DtList b -> unifyTypeConstraints a b |> Result.map DtList
+
+//    | DtArrow (fromA, toA), DtArrow (fromB, toB) ->
+//        (unifyTypeConstraints fromA fromB, unifyTypeConstraints toA toB)
+//        ||> Result.map2
+//                (fun fromType toType -> DtArrow (fromType, toType))
+//                (fun _ _ ->
+//                    TypeError.fromTypes [ DtArrow (fromA, toA)
+//                                          DtArrow (fromB, toB) ])
+//    //let unifiedToTypes =
+//    //    unifyTypesNel toA toB
+//    //    |> Result.mapError (fun _ ->
+//    //        TypeError.fromTypes [ DtArrow (fromA, toA)
+//    //                              DtArrow (fromB, toB) ])
+//    //    |> Result.bind (NEL.sequenceResult >> concatResultErrListNel)
+
+//    //(unifyTypeConstraints fromA fromB, unifiedToTypes)
+//    //||> Result.map2
+//    //        (fun fromType toTypes_ -> DtArrow (fromType, toTypes_))
+//    //        (fun _ _ ->
+//    //            TypeError.fromTypes [ DtArrow (fromA, toA)
+//    //                                  DtArrow (fromB, toB) ])
+
+//    | DtNewType (typeRefA, typeParamsA), DtNewType (typeRefB, typeParamsB) ->
+//        if typeRefA = typeRefB then
+//            unifyTypesList typeParamsA typeParamsB
+//            |> Result.mapError (fun _ -> TypeError.fromTypes [ typeA; typeB ])
+//            |> Result.bind (Result.sequenceList >> concatResultErrListNel)
+//            |> Result.map (fun unifiedParams -> DtNewType (typeRefA, unifiedParams))
+
+//        else
+//            Error <| TypeError.fromTypes [ typeA; typeB ]
+
+//    | DtRecordExact a, DtRecordExact b ->
+//        Map.mergeExact (fun _ valueA valueB -> unifyTypeConstraints valueA valueB) a b
+//        |> Result.mapError (fun _ ->
+//            TypeError.fromTypes [ DtRecordExact a
+//                                  DtRecordExact b ])
+//        |> Result.bind (
+//            Map.sequenceResult
+//            >> Result.mapError (
+//                fst
+//                >> Map.values
+//                >> Seq.toList
+//                >> combineTypeErrorsFromList
+//            )
+//        )
+//        |> Result.map DtRecordExact
+
+//    | DtRecordWith a, DtRecordWith b ->
+//        Map.mergeExact (fun _ valueA valueB -> unifyTypeConstraints valueA valueB) a b
+//        |> Result.mapError (fun _ ->
+//            TypeError.fromTypes [ DtRecordWith a
+//                                  DtRecordWith b ])
+//        |> Result.bind (
+//            Map.sequenceResult
+//            >> Result.mapError (
+//                fst
+//                >> Map.values
+//                >> Seq.toList
+//                >> combineTypeErrorsFromList
+//            )
+//        )
+//        |> Result.map DtRecordExact
+
+//    | DtRecordExact a, DtRecordWith b
+//    | DtRecordWith b, DtRecordExact a -> failwith "@TODO: unify record and extended record types when compatible"
 
-        | DtUnitType, DtUnitType -> DtUnitType |> Ok
-        | DtPrimitiveType a, DtPrimitiveType b ->
-            if a = b then
-                DtPrimitiveType a |> Ok
-            else
-                TypeError.fromTypes [ DtPrimitiveType a
-                                      DtPrimitiveType b ]
-                |> Error
+//    | DtUnitType, DtUnitType -> DtUnitType |> Ok
+//    | DtPrimitiveType a, DtPrimitiveType b ->
+//        if a = b then
+//            DtPrimitiveType a |> Ok
+//        else
+//            TypeError.fromTypes [ DtPrimitiveType a
+//                                  DtPrimitiveType b ]
+//            |> Error
 
-        | _, _ -> Error <| TypeError.fromTypes [ typeA; typeB ]
+//    | _, _ -> Error <| TypeError.fromTypes [ typeA; typeB ]
 
 
 
 
 
-    //and getConstrainedValues (constraintsList : TypeConstraints list) : Map<LowerNameValue, TypeJudgment> =
-    //    constraintsList
-    //    |> List.fold
-    //        (fun map constrainedValue ->
+////and getConstrainedValues (constraintsList : TypeConstraints list) : Map<LowerNameValue, TypeJudgment> =
+////    constraintsList
+////    |> List.fold
+////        (fun map constrainedValue ->
 
-    //            match constrainedValue with
-    //            | TypeConstraints (def, others) ->
+////            match constrainedValue with
+////            | TypeConstraints (def, others) ->
 
-    //                let setFolder (state: (LowerNameValue set * TypeJudgment)) (constrainType: ConstrainType) =
-    //                    match constrainType with
-    //                    | ByValue name ->
-    //                        match Map.tryFind name state with
-    //                        | None -> Map.add name (Ok (TypeConstraints (def, others))) state
+////                let setFolder (state: (LowerNameValue set * TypeJudgment)) (constrainType: ConstrainType) =
+////                    match constrainType with
+////                    | ByValue name ->
+////                        match Map.tryFind name state with
+////                        | None -> Map.add name (Ok (TypeConstraints (def, others))) state
 
-    //                        | Some constraintsForName -> Map.add name (unifyJudgments (Ok constrainedValue) constraintsForName) state
+////                        | Some constraintsForName -> Map.add name (unifyJudgments (Ok constrainedValue) constraintsForName) state
 
 
-    //                    | _ -> state
+////                    | _ -> state
 
 
-    //                let combinedFromOthers = Set.fold setFolder map others
+////                let combinedFromOthers = Set.fold setFolder map others
 
-    //            //| Recursive ->
-    //            )
-    //        Map.empty
+////            //| Recursive ->
+////            )
+////        Map.empty
 
 
-    ///// @TODO: this should basically allow for shrinking the referenced constraints and maybe unifying the concrete constraints, in the case when a name becomes available for resolution
-    //and concretiseConstraintValue (name : LowerNameValue) (constraints : TypeConstraints) : TypeJudgment =
-    //    let tryConcretiseSingleConstraintAndAdd
-    //        (constrainType : ConstrainType)
-    //        (typeConstraints : TypeConstraints)
-    //        : TypeJudgment =
-    //        match constrainType with
-    //        | ByValue valName ->
-    //            if name = valName then
-    //                Ok Recursive
-    //            else
-    //                unifyTypeConstraints typeOfName typeConstraints
+/////// @TODO: this should basically allow for shrinking the referenced constraints and maybe unifying the concrete constraints, in the case when a name becomes available for resolution
+////and concretiseConstraintValue (name : LowerNameValue) (constraints : TypeConstraints) : TypeJudgment =
+////    let tryConcretiseSingleConstraintAndAdd
+////        (constrainType : ConstrainType)
+////        (typeConstraints : TypeConstraints)
+////        : TypeJudgment =
+////        match constrainType with
+////        | ByValue valName ->
+////            if name = valName then
+////                Ok Recursive
+////            else
+////                unifyTypeConstraints typeOfName typeConstraints
 
-    //        | _ -> unifyTypeConstraints typeOfName typeConstraints
+////        | _ -> unifyTypeConstraints typeOfName typeConstraints
 
-    //    match constraints with
-    //    | Recursive -> Ok Recursive
-    //    | TypeConstraints (def, constraintSet) ->
-    //        let state : TypeConstraints =
-    //            Option.map TypeConstraints.makeFromDefinitive def
-    //            |> Option.defaultValue TypeConstraints.empty
+////    match constraints with
+////    | Recursive -> Ok Recursive
+////    | TypeConstraints (def, constraintSet) ->
+////        let state : TypeConstraints =
+////            Option.map TypeConstraints.makeFromDefinitive def
+////            |> Option.defaultValue TypeConstraints.empty
 
 
-    //        constraintSet
-    //        |> Set.fold
-    //            (fun result constrainType -> Result.bind (tryConcretiseSingleConstraintAndAdd constrainType) result)
-    //            (Ok state)
+////        constraintSet
+////        |> Set.fold
+////            (fun result constrainType -> Result.bind (tryConcretiseSingleConstraintAndAdd constrainType) result)
+////            (Ok state)
 
 
-    /// If lengths are the same, returns a list of that length of the type judgments of trying to merge the type at every index in both lists. If lengths are not the same though, returns an error result of both inferred types lists.
-    and private listTraverser (onLengthErr : 'Err) (listA : TypeConstraints list) (listB : TypeConstraints list) =
-        match listA, listB with
-        | [], [] -> Ok []
-        | headA :: tailA, headB :: tailB ->
-            let unifiedHead = unifyTypeConstraints headA headB
+///// If lengths are the same, returns a list of that length of the type judgments of trying to merge the type at every index in both lists. If lengths are not the same though, returns an error result of both inferred types lists.
+//and private listTraverser (onLengthErr : 'Err) (listA : TypeConstraints list) (listB : TypeConstraints list) =
+//    match listA, listB with
+//    | [], [] -> Ok []
+//    | headA :: tailA, headB :: tailB ->
+//        let unifiedHead = unifyTypeConstraints headA headB
 
-            listTraverser onLengthErr tailA tailB
-            |> Result.map (fun unifiedTail -> unifiedHead :: unifiedTail)
+//        listTraverser onLengthErr tailA tailB
+//        |> Result.map (fun unifiedTail -> unifiedHead :: unifiedTail)
 
-        | [], _ :: _
-        | _ :: _, [] -> Error onLengthErr
+//    | [], _ :: _
+//    | _ :: _, [] -> Error onLengthErr
 
 
 
-    and unifyTypesList
-        (listA : TypeConstraints list)
-        (listB : TypeConstraints list)
-        : Result<TypeJudgment list, TypeConstraints list * TypeConstraints list> =
-        listTraverser (listA, listB) listA listB
+//and unifyTypesList
+//    (listA : TypeConstraints list)
+//    (listB : TypeConstraints list)
+//    : Result<TypeJudgment list, TypeConstraints list * TypeConstraints list> =
+//    listTraverser (listA, listB) listA listB
 
-    and unifyTypesNel
-        (NEL (headA, tailA) as nelA : TypeConstraints nel)
-        (NEL (headB, tailB) as nelB : TypeConstraints nel)
-        : Result<TypeJudgment nel, TypeConstraints nel * TypeConstraints nel> =
-        listTraverser (nelA, nelB) tailA tailB
-        |> Result.map (fun unifiedTail ->
-            let unifiedHead = unifyTypeConstraints headA headB
-            NEL (unifiedHead, unifiedTail))
+//and unifyTypesNel
+//    (NEL (headA, tailA) as nelA : TypeConstraints nel)
+//    (NEL (headB, tailB) as nelB : TypeConstraints nel)
+//    : Result<TypeJudgment nel, TypeConstraints nel * TypeConstraints nel> =
+//    listTraverser (nelA, nelB) tailA tailB
+//    |> Result.map (fun unifiedTail ->
+//        let unifiedHead = unifyTypeConstraints headA headB
+//        NEL (unifiedHead, unifiedTail))
 
 
 
-    and unifyTypesTom
-        (TOM (headA, neckA, tailA) as listA : TypeConstraints tom)
-        (TOM (headB, neckB, tailB) as listB : TypeConstraints tom)
-        : Result<TypeJudgment tom, TypeConstraints tom * TypeConstraints tom> =
-        listTraverser (listA, listB) tailA tailB
-        |> Result.map (fun unifiedTail ->
-            let unifiedHead = unifyTypeConstraints headA headB
-            let unifiedNeck = unifyTypeConstraints neckA neckB
-            TOM (unifiedHead, unifiedNeck, unifiedTail))
+//and unifyTypesTom
+//    (TOM (headA, neckA, tailA) as listA : TypeConstraints tom)
+//    (TOM (headB, neckB, tailB) as listB : TypeConstraints tom)
+//    : Result<TypeJudgment tom, TypeConstraints tom * TypeConstraints tom> =
+//    listTraverser (listA, listB) tailA tailB
+//    |> Result.map (fun unifiedTail ->
+//        let unifiedHead = unifyTypeConstraints headA headB
+//        let unifiedNeck = unifyTypeConstraints neckA neckB
+//        TOM (unifiedHead, unifiedNeck, unifiedTail))
 
 
 
 
-    /// If both judgments are ok it unifies their constraints. Otherwise it adds any concrete types to the errors list, or combines errors.
-    ///
-    /// @TODO: this should really also include the other `ConstrainType`s that can be resolved and evaluate to definitive types in case some of them are also incompatible with the other constraints
-    and unifyJudgments (judgmentA : TypeJudgment) (judgmentB : TypeJudgment) =
-        match judgmentA, judgmentB with
-        | Ok a, Ok b -> unifyTypeConstraints a b
+///// If both judgments are ok it unifies their constraints. Otherwise it adds any concrete types to the errors list, or combines errors.
+/////
+///// @TODO: this should really also include the other `ConstrainType`s that can be resolved and evaluate to definitive types in case some of them are also incompatible with the other constraints
+//and unifyJudgments (judgmentA : TypeJudgment) (judgmentB : TypeJudgment) =
+//    match judgmentA, judgmentB with
+//    | Ok a, Ok b -> unifyTypeConstraints a b
 
-        | Error err, Ok (Constrained (Some t, _))
-        | Ok (Constrained (Some t, _)), Error err ->
-            unifyTypeErrors (TypeError.fromTypes [ t ]) err
-            |> Error
+//    | Error err, Ok (Constrained (Some t, _))
+//    | Ok (Constrained (Some t, _)), Error err ->
+//        unifyTypeErrors (TypeError.fromTypes [ t ]) err
+//        |> Error
 
-        | Error e, Ok (Constrained (None, _))
-        | Ok (Constrained (None, _)), Error e -> Error e
+//    | Error e, Ok (Constrained (None, _))
+//    | Ok (Constrained (None, _)), Error e -> Error e
 
-        | Error a, Error b -> unifyTypeErrors a b |> Error
+//    | Error a, Error b -> unifyTypeErrors a b |> Error
 
-    //| Error e, Ok Recursive
-    //| Ok Recursive, Error e -> Error e
+////| Error e, Ok Recursive
+////| Ok Recursive, Error e -> Error e
 
 
 
 
 
-    and unifyDefinitiveJudgments
-        (judgmentA : Result<DefinitiveType, TypeError>)
-        (judgmentB : Result<DefinitiveType, TypeError>)
-        : Result<DefinitiveType, TypeError> =
-        match judgmentA, judgmentB with
-        | Ok a, Ok b -> unifyDefinitiveTypes a b
+//and unifyDefinitiveJudgments
+//    (judgmentA : Result<DefinitiveType, TypeError>)
+//    (judgmentB : Result<DefinitiveType, TypeError>)
+//    : Result<DefinitiveType, TypeError> =
+//    match judgmentA, judgmentB with
+//    | Ok a, Ok b -> unifyDefinitiveTypes a b
 
-        | Ok a, Error e
-        | Error e, Ok a -> addDefToTypeError a e |> Error
+//    | Ok a, Error e
+//    | Error e, Ok a -> addDefToTypeError a e |> Error
 
-        | Error a, Error b -> unifyTypeErrors a b |> Error
+//    | Error a, Error b -> unifyTypeErrors a b |> Error
 
 
-    let addConstraint (newConstraint : RefConstr) (constraints : TypeConstraints) : TypeConstraints =
-        match constraints with
-        | Constrained (def, cnstrnts) -> Constrained (def, Set.add newConstraint cnstrnts)
-    //| Recursive ->
-    //    // This tries to represent the logic for a recursive function that contains a base case: i.e. if one branch calls the function recursively but the other branch returns a non-recursive value with a type that can be inferred concretely, then the inferred type is that of the base case and the recursive branch is irrelevant to the type of the expression.
-    //    //
-    //    // @TODO: However this probably does not work for non-function *values*, which unlike functions cannot be referenced recursively in their own definitions (unless it is referenced inside a function) because otherwise evaluating itself will instantly cause an infinite expansion and a stack overflow. So we probably need a different way to express recursiveness in a non-function value so that we do return an error, and don't just throw away the recursiveness information.
-    //    // We actually need to be able to represent 2 things:
-    //    // - The fact that an expression calls itself with no base case
-    //    // - The fact that an expression calls itself with no parameters in the middle to halt the immediate expansion
-    //    //
-    //    // But actually these two things are one and the same: the fact that an expression references itself without changing any of the parameters it feeds to itself! This is true not just for functions that do not have a base case at all, but even for functions that call themselves without changing any of their parameters – which would also result in an infinite loop – and also values that reference themselves without being functions with parameters in the middle – because those also technically have "no changed parameters" because a non-function value can still be thought of as a function, just with a list of parameters 0 items in length. And referencing itself therefore qualifies as "not changing the parameters it feeds itself" because every empty list is the same as any other!
+//let addConstraint (newConstraint : RefConstr) (constraints : TypeConstraints) : TypeConstraints =
+//    match constraints with
+//    | Constrained (def, cnstrnts) -> Constrained (def, Set.add newConstraint cnstrnts)
+////| Recursive ->
+////    // This tries to represent the logic for a recursive function that contains a base case: i.e. if one branch calls the function recursively but the other branch returns a non-recursive value with a type that can be inferred concretely, then the inferred type is that of the base case and the recursive branch is irrelevant to the type of the expression.
+////    //
+////    // @TODO: However this probably does not work for non-function *values*, which unlike functions cannot be referenced recursively in their own definitions (unless it is referenced inside a function) because otherwise evaluating itself will instantly cause an infinite expansion and a stack overflow. So we probably need a different way to express recursiveness in a non-function value so that we do return an error, and don't just throw away the recursiveness information.
+////    // We actually need to be able to represent 2 things:
+////    // - The fact that an expression calls itself with no base case
+////    // - The fact that an expression calls itself with no parameters in the middle to halt the immediate expansion
+////    //
+////    // But actually these two things are one and the same: the fact that an expression references itself without changing any of the parameters it feeds to itself! This is true not just for functions that do not have a base case at all, but even for functions that call themselves without changing any of their parameters – which would also result in an infinite loop – and also values that reference themselves without being functions with parameters in the middle – because those also technically have "no changed parameters" because a non-function value can still be thought of as a function, just with a list of parameters 0 items in length. And referencing itself therefore qualifies as "not changing the parameters it feeds itself" because every empty list is the same as any other!
 
-    //    TypeConstraints.fromConstraint newConstraint
+////    TypeConstraints.fromConstraint newConstraint
 
 
-    let addDefinitiveType (newDef : DefinitiveType) (constraints : TypeConstraints) : TypeJudgment =
-        match constraints with
-        | Constrained (def, cnstrnts) ->
-            match def with
-            | None -> Constrained (Some newDef, cnstrnts) |> Ok
-            | Some def_ ->
-                let unifiedResult = unifyDefinitiveTypes def_ newDef
+//let addDefinitiveType (newDef : DefinitiveType) (constraints : TypeConstraints) : TypeJudgment =
+//    match constraints with
+//    | Constrained (def, cnstrnts) ->
+//        match def with
+//        | None -> Constrained (Some newDef, cnstrnts) |> Ok
+//        | Some def_ ->
+//            let unifiedResult = unifyDefinitiveTypes def_ newDef
 
-                unifiedResult
-                |> Result.map (fun unified -> Constrained (Some unified, cnstrnts))
+//            unifiedResult
+//            |> Result.map (fun unified -> Constrained (Some unified, cnstrnts))
 
 
 
@@ -2014,6 +2014,7 @@ module Accumulator2 =
                 (fun (snowballedAccIds, snowballedRefConstrs) accId refConstrs ->
                     if hasOverlap refConstrs snowballedRefConstrs then
                         Set.add accId snowballedAccIds, Set.union refConstrs snowballedRefConstrs
+
                     else
                         snowballedAccIds, snowballedRefConstrs)
                 startingState
@@ -2033,6 +2034,7 @@ module Accumulator2 =
 
         let accIdsToUnify, _ =
             runSingleRefConstrSetThroughAcc accIdsAndRefConstrs refConstrs
+
 
         // Note: This should be the thing that creates the new AccIds for the merged entries and sticks the old ones in the redirectMap so that we don't have to do it separately in this function
         unifyManyTypeConstraintIds accIdsToUnify accWithNewRefConstrsAdded
@@ -3083,53 +3085,6 @@ and getAccumulatorFromParam (param : AssignmentPattern) : AccAndTypeId =
 
 
     getInferredTypeFromAssignmentPattern param
-
-
-
-/// This gets the return type of the function, if we know that the function definitely has type Arrow. Otherwise it fails.
-/// @TODO: which, on second thought, is not quite right because then it will fail unless we already know that it is an Arrow type, whereas actually this should impose its own constraint.
-/// But I think the answer to the above is that this helper is only meant to be used after we've already tried to unify this with a definitive Arrow type, so any (compatible) function value should already have the definitive Arrow type by the time we get to this point.
-and private getFuncReturnType (tc : TypeConstraints) : TypeJudgment =
-    match tc with
-    | Constrained (Some (DtArrow (_, toType)), _) -> Ok toType
-
-    | Constrained _ ->
-        let paramGeneric = TypeConstraints.makeUnspecific ()
-        let returnGeneric = TypeConstraints.makeUnspecific ()
-
-        let defFuncRequirement = DtArrow (paramGeneric, returnGeneric)
-        Error (IncompatibleTypes [ defFuncRequirement ])
-
-
-//and addArrowConstraint
-//    (funcExprConstraint : TypeConstraints)
-//    (paramPattern : AssignmentPattern)
-//    (actualParamType : TypeConstraints)
-//    (acc : Accumulator)
-//    : AccumulatorAndOwnType =
-//    let paramAccAndOwn = getAccumulatorFromParam paramPattern
-
-//    match paramAccAndOwn.ownType with
-//    | Ok paramType ->
-//        let funcRequirementConstraint =
-//            DtArrow (paramType, TypeConstraints.makeUnspecific ())
-//            |> TypeConstraints.fromDefinitive
-
-//        let funcJudgment = unifyTypeConstraints funcRequirementConstraint funcExprConstraint
-//        let actualParamJudgment = unifyTypeConstraints paramType actualParamType
-
-//        let returnType = funcJudgment |> Result.bind getFuncReturnType
-
-//        let newAcc =
-//            acc
-//            |> Acc.addSingleTypeConstraint funcRequirementConstraint
-//            |> Acc.addSingleTypeJudgment actualParamJudgment
-//            |> Acc.combineAccumulators paramAccAndOwn.acc
-
-//        Aaot.make returnType newAcc
-
-//    | Error e -> Aaot.make (Error e) acc
-
 
 
 

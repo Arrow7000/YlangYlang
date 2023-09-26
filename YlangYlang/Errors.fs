@@ -7,4 +7,4 @@ type Errors =
     | LexingError of Lexer.LexingErrors
     | ParsingError of ExpressionParsing.ParserError list
     | CanonicalisationError of Lexer.Identifier list
-    | TypeError of TypedSyntaxTree.TypeError
+    | TypeError of TypedSyntaxTree.AccTypeError

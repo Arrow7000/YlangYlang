@@ -142,8 +142,6 @@ and TypeError =
 
 
 
-/// @TODO: this should really also contain the other `ConstrainType`s, in case some of them also get evaluated to incompatible definitive types
-and TypeJudgment = Result<TypeConstraints, TypeError>
 
 
 
@@ -189,6 +187,15 @@ type TypeJudgment2 = Result<RefDefType option, AccTypeError>
 
 
 
+
+/// @TODO: this should really also contain the other `ConstrainType`s, in case some of them also get evaluated to incompatible definitive types
+type TypeJudgment = Result<TypeConstraints, AccTypeError>
+
+
+
+
+
+
 /// Attempt at making accumulator working by using two internal maps, one where every single def type gets a guid assigned to it, and every ref constraint gets placed in a set with its others, which points to a guid, which in turn may have a def type assigned to it.
 type Accumulator2
 // electric boogaloo
@@ -224,15 +231,6 @@ type Accumulator2
         Accumulator2.getRealIdAndType accId acc |> snd
 
 
-    static member editRefConstraints
-        (accId : AccumulatorTypeId)
-        (refConstrUpdater : RefConstr set -> RefConstr set)
-        (acc : Accumulator2)
-        : Accumulator2 =
-        let realAccId, (result, refConstrs) = Accumulator2.getRealIdAndType accId acc
-
-        { acc with refConstraintsMap = Map.add realAccId (result, refConstrUpdater refConstrs) acc.refConstraintsMap }
-
 
 
     /// Use with caution! This literally just replaces entries and sticks the replaced keys in the redirect map. It does *not* unify the new entry with the rest of the reference constraints map!
@@ -249,7 +247,10 @@ type Accumulator2
 
           redirectMap =
               acc.redirectMap
-              |> Map.addBulk (Set.map (fun accId -> accId, newAccId) accIdsToReplace) }
+              |> Map.addBulk (
+                  accIdsToReplace
+                  |> Set.map (fun accId -> accId, newAccId)
+              ) }
 
 /// Since we're no longer using the old Accumulator we may as well make the original name an alias for the new one
 type Accumulator = Accumulator2
