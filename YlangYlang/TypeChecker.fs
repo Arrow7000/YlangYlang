@@ -1,4 +1,4 @@
-module TypeChecker
+﻿module TypeChecker
 
 
 open Lexer
@@ -2084,6 +2084,7 @@ module Accumulator2 =
         (refDefA : RefDefType)
         (accIdB : AccumulatorTypeId)
         (refDefB : RefDefType)
+        (refConstrs : RefConstr set)
         (acc : Accumulator2)
         : AccAndTypeId =
         let newKey = makeAccTypeId ()
@@ -2095,7 +2096,7 @@ module Accumulator2 =
 
         /// With the combined two AccIds, an empty set of RefConstrs, and the new key created above
         let replaceEntriesInAcc refDefResOpt acc =
-            Accumulator2.replaceEntries accIds newKey refDefResOpt Set.empty acc
+            Accumulator2.replaceEntries accIds newKey refDefResOpt refConstrs acc
 
 
         /// Returns an error with the lists so far if lists don't have the same length; which will be a list of n pairs, where n is the length of the shorter of the two input lists
@@ -2276,6 +2277,7 @@ module Accumulator2 =
         (refDefResOptA : Result<RefDefType, AccTypeError> option)
         (accIdB : AccumulatorTypeId)
         (refDefResOptB : Result<RefDefType, AccTypeError> option)
+        (refConstrs : RefConstr set)
         (acc : Accumulator2)
         =
         let newKey = makeAccTypeId ()
@@ -2283,12 +2285,12 @@ module Accumulator2 =
 
         match refDefResOptA, refDefResOptB with
         | None, None ->
-            Accumulator2.replaceEntries accIdsToReplace newKey None Set.empty acc
+            Accumulator2.replaceEntries accIdsToReplace newKey None refConstrs acc
             |> Aati.make newKey
 
         | Some x, None
         | None, Some x ->
-            Accumulator2.replaceEntries accIdsToReplace newKey (Some x) Set.empty acc
+            Accumulator2.replaceEntries accIdsToReplace newKey (Some x) refConstrs acc
             |> Aati.make newKey
 
         | Some refDefResA, Some refDefResB ->
@@ -2296,28 +2298,19 @@ module Accumulator2 =
             | Ok _, Error e
             | Error e, Ok _
             | Error e, Error _ ->
-                Accumulator2.replaceEntries accIdsToReplace newKey (Some (Error e)) Set.empty acc
+                Accumulator2.replaceEntries accIdsToReplace newKey (Some (Error e)) refConstrs acc
                 |> Aati.make newKey
 
-            | Ok refDefA, Ok refDefB -> unifyRefDefs accIdA refDefA accIdB refDefB acc
+            | Ok refDefA, Ok refDefB -> unifyRefDefs accIdA refDefA accIdB refDefB refConstrs acc
 
 
 
     and unifyTypeConstraintIds (idA : AccumulatorTypeId) (idB : AccumulatorTypeId) (acc : Accumulator2) : AccAndTypeId =
         let itemA, refConstrsA = Accumulator2.getTypeById idA acc
         let itemB, refConstrsB = Accumulator2.getTypeById idB acc
-        let combined = unifyRefDefResOpts idA itemA idB itemB acc
 
-        let combinedAccWithUpdatedRefConstrs =
-            Accumulator2.editRefConstraints
-                combined.typeId
-                (fun cnstrs ->
-                    Set.unionMany [ cnstrs
-                                    refConstrsA
-                                    refConstrsB ])
-                combined.acc
+        unifyRefDefResOpts idA itemA idB itemB (Set.union refConstrsA refConstrsB) acc
 
-        Aati.make combined.typeId combinedAccWithUpdatedRefConstrs
 
 
 
@@ -2325,7 +2318,17 @@ module Accumulator2 =
     /// @TODO: maybe do this using the more fundamental unifyTypeConstraintIds? idk tho
     and unifyManyTypeConstraintIds (ids : AccumulatorTypeId seq) (acc : Accumulator2) : AccAndTypeId =
         match Seq.toList ids with
-        | [] -> addRefConstraints Set.empty acc
+        | [] ->
+            let newKey = makeAccTypeId ()
+
+            let newAcc =
+                { acc with
+                    refConstraintsMap =
+                        acc.refConstraintsMap
+                        |> Map.add newKey (None, Set.empty) }
+
+            Aati.make newKey newAcc
+
         | single :: [] -> Aati.make single acc
         | head :: neck :: tail ->
             let firstMerged = unifyTypeConstraintIds head neck acc
@@ -2426,7 +2429,11 @@ module Accumulator2 =
 
     and convertTypeConstraints (tc : TypeConstraints) : AccAndTypeId =
         let (Constrained (defOpt, refConstrs)) = tc
-        let withRefConstrsAdded = addRefConstraints refConstrs Accumulator2.empty
+        //let withRefConstrsAdded = addRefConstraints refConstrs Accumulator2.empty
+        let newKey = makeAccTypeId ()
+
+        let withRefConstrsAdded =
+            { Accumulator2.empty with refConstraintsMap = Map.empty |> Map.add newKey (None, refConstrs) }
 
         match defOpt with
         | None -> withRefConstrsAdded
@@ -2436,6 +2443,18 @@ module Accumulator2 =
 
             unifyTypeConstraintIds defTypeAcc.typeId withRefConstrsAdded.typeId combinedAcc
 
+
+    and convertTypeJudgment (judgment : TypeJudgment) : AccAndTypeId =
+        let newKey = makeAccTypeId ()
+
+        match judgment with
+        | Ok tc -> convertTypeConstraints tc
+        | Error e ->
+            { Accumulator2.empty with
+                refConstraintsMap =
+                    Map.empty
+                    |> Map.add newKey (Some (Error e), Set.empty) }
+            |> Aati.make newKey
 
 
 
@@ -2454,26 +2473,28 @@ module Accumulator2 =
 
     let rec convertRefDefToTypeConstraints
         (refDef : RefDefType)
+        (refConstrsToAdd : RefConstr set)
         (acc : Accumulator2)
         : Result<TypeConstraints, AccTypeError> =
+        let fromDef def =
+            TypeConstraints.Constrained (Some def, refConstrsToAdd)
+            |> Ok
 
-        let fromDef = TypeConstraints.fromDefinitive >> Ok
+        /// Just a little helper where foundType is the last param, for easier use in `Result.bind`s
+        let convertType refConstrs foundType =
+            convertRefDefToTypeConstraints foundType refConstrs acc
 
         match refDef with
         | RefDtUnitType -> fromDef DtUnitType
         | RefDtPrimitiveType prim -> DtPrimitiveType prim |> fromDef
         | RefDtList constrId ->
-            let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+            let foundTypeResultOpt, refConstrs = Accumulator.getTypeById constrId acc
 
             match foundTypeResultOpt with
             | Some foundTypeResult ->
                 foundTypeResult
-                |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
-                |> Result.map (
-                    TypeConstraints.addRefConstraints refConstrs
-                    >> DtList
-                    >> TypeConstraints.fromDefinitive
-                )
+                |> Result.bind (convertType refConstrs)
+                |> Result.map (DtList >> TypeConstraints.fromDefinitive)
 
             | None -> Constrained (None, refConstrs) |> Ok
 
@@ -2481,13 +2502,12 @@ module Accumulator2 =
             let resultsTom =
                 constrTom
                 |> TOM.map (fun constrId ->
-                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+                    let foundTypeResultOpt, refConstrs = Accumulator.getTypeById constrId acc
 
                     match foundTypeResultOpt with
                     | Some foundTypeResult ->
                         foundTypeResult
-                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
-                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                        |> Result.bind (convertType refConstrs)
                     | None -> Constrained (None, refConstrs) |> Ok)
                 |> TOM.sequenceResult
 
@@ -2501,13 +2521,12 @@ module Accumulator2 =
             let resultsTom =
                 typeParams
                 |> List.map (fun constrId ->
-                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+                    let foundTypeResultOpt, refConstrs = Accumulator.getTypeById constrId acc
 
                     match foundTypeResultOpt with
                     | Some foundTypeResult ->
                         foundTypeResult
-                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
-                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                        |> Result.bind (convertType refConstrs)
                     | None -> Constrained (None, refConstrs) |> Ok)
                 |> Result.sequenceList
 
@@ -2521,13 +2540,12 @@ module Accumulator2 =
             let resultsPair =
                 (fromId, toId)
                 |> Tuple.map (fun constrId ->
-                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+                    let foundTypeResultOpt, refConstrs = Accumulator.getTypeById constrId acc
 
                     match foundTypeResultOpt with
                     | Some foundTypeResult ->
                         foundTypeResult
-                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
-                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                        |> Result.bind (convertType refConstrs)
                     | None -> Constrained (None, refConstrs) |> Ok)
                 |> Tuple.sequenceResult
 
@@ -2540,13 +2558,12 @@ module Accumulator2 =
             let resultsMap =
                 fields
                 |> Map.map (fun _ constrId ->
-                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+                    let foundTypeResultOpt, refConstrs = Accumulator.getTypeById constrId acc
 
                     match foundTypeResultOpt with
                     | Some foundTypeResult ->
                         foundTypeResult
-                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
-                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                        |> Result.bind (convertType refConstrs)
                     | None -> Constrained (None, refConstrs) |> Ok)
                 |> Map.sequenceResult
 
@@ -2559,13 +2576,12 @@ module Accumulator2 =
             let resultsMap =
                 fields
                 |> Map.map (fun _ constrId ->
-                    let foundTypeResultOpt, refConstrs = Map.find constrId acc.refConstraintsMap
+                    let foundTypeResultOpt, refConstrs = Accumulator.getTypeById constrId acc
 
                     match foundTypeResultOpt with
                     | Some foundTypeResult ->
                         foundTypeResult
-                        |> Result.bind (fun foundType -> convertRefDefToTypeConstraints foundType acc)
-                        |> Result.map (TypeConstraints.addRefConstraints refConstrs)
+                        |> Result.bind (convertType refConstrs)
                     | None -> Constrained (None, refConstrs) |> Ok)
                 |> Map.sequenceResult
 
@@ -2576,7 +2592,15 @@ module Accumulator2 =
 
 
 
+    let convertAccIdToTypeConstraints (accId : AccumulatorTypeId) (acc : Accumulator2) : TypeJudgment =
+        let foundType, refConstrs = Accumulator.getTypeById accId acc
 
+        match foundType with
+        | Some typeResult ->
+            match typeResult with
+            | Ok refDef -> convertRefDefToTypeConstraints refDef refConstrs acc
+            | Error e -> Error e
+        | None -> Constrained (None, refConstrs) |> Ok
 
 
 
@@ -2616,7 +2640,7 @@ module RefConstrToTypeConstraintsMap =
         |> Seq.map (fun (refDefResOpt, refConstrs) ->
             refConstrs,
             refDefResOpt
-            |> Option.map (Result.bind (fun refDef -> Acc2.convertRefDefToTypeConstraints refDef acc)))
+            |> Option.map (Result.bind (fun refDef -> Acc2.convertRefDefToTypeConstraints refDef refConstrs acc)))
         |> Seq.collect (fun (refConstrs, refDefResOpt) ->
             Set.toList refConstrs
             |> List.map (fun refConstr -> refConstr, refDefResOpt))
@@ -2970,7 +2994,9 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
 
             let funcExprAccAndSelf = getAccumulatorFromExpr funcExpr
 
-            Acc.combine paramsAcc funcExprAccAndSelf.acc
+            let combinedAcc = Acc.combine requiredFuncAccAndId.acc funcExprAccAndSelf.acc
+
+            combinedAcc
             |> Acc.unifyTypeConstraintIds funcExprAccAndSelf.typeId requiredFuncAccAndId.typeId
 
 
@@ -3187,54 +3213,32 @@ and replaceValueNamesWithGuidsInTypeJudgment
 
 
 
-
-and deleteGuidsFromRefConstraints guids refConstr =
+and private deleteAllBoundVarsFromRefConstraints (refConstr : RefConstr) =
     match refConstr with
-    | IsBoundVar tcId ->
-        if Set.contains tcId guids then
-            None
-        else
-            Some refConstr
-    //| HasTypeOfFirstParamOf constr' ->
-    //    match deleteGuidsFromRefConstraints guids constr' with
-    //    | Some constr'' -> Some (HasTypeOfFirstParamOf constr'')
-    //    | None -> None
-    //| IsOfTypeByName (name, typeParams) ->
-    //    IsOfTypeByName (name, List.map (deleteGuidsFromTypeConstraints guids) typeParams)
-    //    |> Some
+    | IsBoundVar _ -> None
     | _ -> Some refConstr
 
 
-and deleteGuidsFromDefType guids defType =
+and deleteGuidsFromDefType (defType : DefinitiveType) =
     match defType with
     | DtUnitType -> DtUnitType
     | DtPrimitiveType p -> DtPrimitiveType p
-    | DtTuple tom -> DtTuple (TOM.map (deleteGuidsFromTypeConstraints guids) tom)
-    | DtList tc -> DtList (deleteGuidsFromTypeConstraints guids tc)
-    | DtRecordWith fields -> DtRecordWith (Map.map (fun _ -> deleteGuidsFromTypeConstraints guids) fields)
-    | DtRecordExact fields -> DtRecordExact (Map.map (fun _ -> deleteGuidsFromTypeConstraints guids) fields)
-    | DtNewType (typeName, typeParams) ->
-        DtNewType (typeName, List.map (deleteGuidsFromTypeConstraints guids) typeParams)
+    | DtTuple tom -> DtTuple (TOM.map (deleteGuidsFromTypeConstraints) tom)
+    | DtList tc -> DtList (deleteGuidsFromTypeConstraints tc)
+    | DtRecordWith fields -> DtRecordWith (Map.map (fun _ -> deleteGuidsFromTypeConstraints) fields)
+    | DtRecordExact fields -> DtRecordExact (Map.map (fun _ -> deleteGuidsFromTypeConstraints) fields)
+    | DtNewType (typeName, typeParams) -> DtNewType (typeName, List.map (deleteGuidsFromTypeConstraints) typeParams)
     | DtArrow (fromType, toType) ->
-        DtArrow (deleteGuidsFromTypeConstraints guids fromType, deleteGuidsFromTypeConstraints guids toType)
+        DtArrow (deleteGuidsFromTypeConstraints fromType, deleteGuidsFromTypeConstraints toType)
 
 
 
-and deleteGuidsFromTypeConstraints guids tc =
+/// Delete bound vars with guids from TypeConstraints, for better test comparisons
+and deleteGuidsFromTypeConstraints (tc : TypeConstraints) =
     let (Constrained (defOpt, refs)) = tc
 
-    Constrained (
-        Option.map (deleteGuidsFromDefType guids) defOpt,
-        Set.choose (deleteGuidsFromRefConstraints guids) refs
-    )
+    Constrained (Option.map (deleteGuidsFromDefType) defOpt, Set.choose (deleteAllBoundVarsFromRefConstraints) refs)
 
-
-
-
-
-/// Denotes that a type judgment has another constraint upon it
-and addConstraintToJudgment (constr : TypeConstraints) (judgment : TypeJudgment) : Accumulator =
-    failwith "@TODO: implement addConstraintToJudgment"
 
 
 

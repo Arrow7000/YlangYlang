@@ -9,8 +9,9 @@ open TypeChecker
 open QualifiedSyntaxTree.Names
 open Errors
 
-module Acc = Accumulator
-module Aaot = AccumulatorAndOwnType
+module Acc = Accumulator2
+module Aaot = AccAndTypeId
+
 
 open Expecto
 
@@ -22,7 +23,10 @@ let private makeNumberExpression : S.NumberLiteralValue -> Cst.Expression =
     >> S.SingleValueExpression
 
 let private getType (expr : T.TypedExpr) : TypeJudgment =
-    getAccumulatorFromExpr expr |> Aaot.getSelf
+    let result = getAccumulatorFromExpr expr
+
+    Acc.convertAccIdToTypeConstraints result.typeId result.acc
+    |> Result.map deleteGuidsFromTypeConstraints
 
 
 
@@ -37,8 +41,7 @@ let private getTypeFromElmStr text : Result<TypeConstraints, Errors> =
     )
     |> Result.bind (
         typeCheckCstExpression List.empty
-        >> getAccumulatorFromExpr
-        >> Aaot.getSelf
+        >> getType
         >> Result.mapError TypeError
     )
 
@@ -131,7 +134,7 @@ module TypeDsl =
 
 
 
-
+    /// Make tuple
     let (=>) a b = a, b
 
 
