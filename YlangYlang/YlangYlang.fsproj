@@ -7,6 +7,7 @@
   <ItemGroup>
     <Compile Include="Helpers.fs" />
     <Compile Include="FileHelpers.fs" />
+    <Compile Include="DisjointSetForest.fs" />
     <Compile Include="Lexer.fs" />
     <Compile Include="SyntaxTree.fs" />
     <Compile Include="CST.fs" />
