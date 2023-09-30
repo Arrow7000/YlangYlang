@@ -141,6 +141,46 @@ type NonEmptyList<'a> =
                     tail)
             |> Error
 
+    static member minBy<'b when 'b : comparison> (projection : 'a -> 'b) (nel : 'a nel) =
+        let (NEL (head, tail)) = nel
+
+        tail
+        |> List.fold
+            (fun (currMin, currMinProjected) item ->
+                let itemProjected = projection item
+
+                if itemProjected < currMinProjected then
+                    (item, itemProjected)
+                else
+                    (currMin, currMinProjected))
+            (head, projection head)
+        |> fst
+
+    static member min<'T when 'T : comparison> (nel : 'T nel) = NEL.minBy<'T> id nel
+
+
+    static member distinctBy<'b when 'b : equality> (projection : 'a -> 'b) (nel : 'a nel) : 'a nel =
+        let (NEL (head, tail)) = nel
+
+        tail
+        |> List.fold
+            (fun hashMap item ->
+                let itemHash = hash (projection item)
+
+                match Map.tryFind itemHash hashMap with
+                | None -> hashMap |> Map.add itemHash item
+                | Some _ -> hashMap)
+            (Map.add (hash (projection head)) head Map.empty)
+
+        |> Map.values
+        |> Seq.toList
+        |> function
+            | [] -> NEL.make head // although it shouldn't be possible for this to be empty
+            | h :: t -> NEL.new_ h t
+
+
+    static member distinct<'T when 'T : equality> (nel : 'T nel) = NEL.distinctBy<'T> id nel
+
 
     static member traverseResult (f : 'a -> Result<'b, 'err>) = NEL.map f >> NEL.sequenceResult
 
@@ -465,6 +505,14 @@ module List =
                 | Choice5Of5 e -> firsts, seconds, thirds, fourths, e :: fifths)
             list
             (List.empty, List.empty, List.empty, List.empty, List.empty)
+
+
+    let minBySafe projection list =
+        match list with
+        | [] -> None
+        | _ :: _ -> List.minBy projection list |> Some
+
+    let minSafe list = minBySafe id list
 
 
 module Map =

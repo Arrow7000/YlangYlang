@@ -1930,7 +1930,7 @@ let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.E
 /// Basically the same as the AccumulatorAndOwnType
 type AccAndTypeId =
     { typeId : AccumulatorTypeId
-      acc : Accumulator2 }
+      acc : Accumulator }
 
 
 module AccAndTypeId =
@@ -1942,7 +1942,7 @@ module AccAndTypeId =
 
 
 
-module Accumulator2 =
+module Accumulator =
 
     (*
         Helpers for the accumulator
@@ -1962,7 +1962,7 @@ module Accumulator2 =
         Set.intersect setA setB |> Set.isNotEmpty
 
 
-    let empty = Accumulator2.empty
+    let empty = Accumulator.empty
 
     (*
         Combine and implement `AccModificationsToMake`
@@ -1972,12 +1972,12 @@ module Accumulator2 =
     /// Merges two accumulators. No IDs should be lost, refDefs should be unified according to reference constraint overlaps. And resulting combined IDs should be unified also.
     ///
     /// There should be no entities from one Acc referencing IDs in the other.
-    let rec combine (acc1 : Accumulator2) (acc2 : Accumulator2) : Accumulator2 =
+    let rec combine (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
         // I think do a naive merge of the maps first, and then hunt down for duplicates I think... don't think there's really any other way of doing that without running into the issue of new RefDefs containing references from the old map and not the new one.
         // Unless... we only add the entries in from the old map on an as-needed basis? (in addition to adding them one by one to make sure we've covered them all, even the ones that weren't referenced by other types added previously)
 
         // We need to do a naive merge first because otherwise the things we're unifying are going to be referencing AccIds that haven't been added to this map yet, which will therefore not be able to be unified because they will not be found. So we just mash everything together naively first, and *then* we unify those entries that we've worked out need to be unified because of their RefConstr overlap.
-        let naivelyMergedAcc : Accumulator2 =
+        let naivelyMergedAcc : Accumulator =
             { refConstraintsMap = Map.merge acc1.refConstraintsMap acc2.refConstraintsMap
               redirectMap = Map.merge acc1.redirectMap acc2.redirectMap }
 
@@ -1991,8 +1991,7 @@ module Accumulator2 =
 
 
 
-    and combineMany (accs : Accumulator2 seq) : Accumulator2 =
-        Seq.fold combine Accumulator2.empty accs
+    and combineMany (accs : Accumulator seq) : Accumulator = Seq.fold combine Accumulator.empty accs
 
     /// Combine Accumulators from a seq of `AccAndTypeId`s
     and combineAccsFromAatis (aatis : AccAndTypeId seq) =
@@ -2002,7 +2001,7 @@ module Accumulator2 =
 
 
     /// Unifies all the entries in Acc based on the new information about the given RefConstrs all having to have the exact same type
-    and addRefConstraints (refConstrs : RefConstr set) (acc : Accumulator2) : AccAndTypeId =
+    and addRefConstraints (refConstrs : RefConstr set) (acc : Accumulator) : AccAndTypeId =
         let runSingleRefConstrSetThroughAcc
             (accIdsAndRefConstrs : Map<AccumulatorTypeId, RefConstr set>)
             (newRefConstrs : RefConstr set)
@@ -2045,7 +2044,7 @@ module Accumulator2 =
     and addRefDefConstraintForAccId
         (refDefResOpt : Result<RefDefType, AccTypeError> option)
         (accId : AccumulatorTypeId)
-        (acc : Accumulator2)
+        (acc : Accumulator)
         : AccAndTypeId =
         let newKey = makeAccTypeId ()
 
@@ -2066,14 +2065,14 @@ module Accumulator2 =
     and addRefDefResOptWithRefConstrs
         (refDefResOpt : Result<RefDefType, AccTypeError> option)
         (refConstrs : RefConstr set)
-        (acc : Accumulator2)
+        (acc : Accumulator)
         : AccAndTypeId =
         let withRefConstrsAdded = addRefConstraints refConstrs acc
         addRefDefConstraintForAccId refDefResOpt withRefConstrsAdded.typeId withRefConstrsAdded.acc
 
 
     /// Adds a new RefDef (without any accompanying reference constraints) into the map
-    and addRefDefResOpt (refDefResOpt : Result<RefDefType, AccTypeError> option) (acc : Accumulator2) =
+    and addRefDefResOpt (refDefResOpt : Result<RefDefType, AccTypeError> option) (acc : Accumulator) =
         addRefDefResOptWithRefConstrs refDefResOpt Set.empty acc
 
 
@@ -2085,7 +2084,7 @@ module Accumulator2 =
         (accIdB : AccumulatorTypeId)
         (refDefB : RefDefType)
         (refConstrs : RefConstr set)
-        (acc : Accumulator2)
+        (acc : Accumulator)
         : AccAndTypeId =
         let newKey = makeAccTypeId ()
         let accIds = Set.ofList [ accIdA; accIdB ]
@@ -2096,7 +2095,7 @@ module Accumulator2 =
 
         /// With the combined two AccIds, an empty set of RefConstrs, and the new key created above
         let replaceEntriesInAcc refDefResOpt acc =
-            Accumulator2.replaceEntries accIds newKey refDefResOpt refConstrs acc
+            Accumulator.replaceEntries accIds newKey refDefResOpt refConstrs acc
 
 
         /// Returns an error with the lists so far if lists don't have the same length; which will be a list of n pairs, where n is the length of the shorter of the two input lists
@@ -2147,7 +2146,7 @@ module Accumulator2 =
                 let combinedAccs =
                     tomResults
                     |> TOM.map Aati.getAcc
-                    |> TOM.fold combine Accumulator2.empty
+                    |> TOM.fold combine Accumulator.empty
 
                 replaceEntriesInAcc (makeOkType tupleType) combinedAccs
                 |> Aati.make newKey
@@ -2163,7 +2162,7 @@ module Accumulator2 =
                 let combinedAccs =
                     tomResults
                     |> TOM.map Aati.getAcc
-                    |> TOM.fold combine Accumulator2.empty
+                    |> TOM.fold combine Accumulator.empty
 
                 replaceEntriesInAcc (makeErrType refDefA refDefB) combinedAccs
                 |> Aati.make newKey
@@ -2186,7 +2185,7 @@ module Accumulator2 =
             | Ok mergedMap ->
                 let combinedAcc =
                     mergedMap
-                    |> Map.fold (fun state _ aati -> combine aati.acc state) Accumulator2.empty
+                    |> Map.fold (fun state _ aati -> combine aati.acc state) Accumulator.empty
 
                 let mapType =
                     mergedMap
@@ -2213,7 +2212,7 @@ module Accumulator2 =
             | Ok mergedMap ->
                 let combinedAcc =
                     mergedMap
-                    |> Map.fold (fun state _ aati -> combine aati.acc state) Accumulator2.empty
+                    |> Map.fold (fun state _ aati -> combine aati.acc state) Accumulator.empty
 
                 let mapType =
                     mergedMap
@@ -2278,19 +2277,19 @@ module Accumulator2 =
         (accIdB : AccumulatorTypeId)
         (refDefResOptB : Result<RefDefType, AccTypeError> option)
         (refConstrs : RefConstr set)
-        (acc : Accumulator2)
+        (acc : Accumulator)
         =
         let newKey = makeAccTypeId ()
         let accIdsToReplace = Set.ofList [ accIdA; accIdB ]
 
         match refDefResOptA, refDefResOptB with
         | None, None ->
-            Accumulator2.replaceEntries accIdsToReplace newKey None refConstrs acc
+            Accumulator.replaceEntries accIdsToReplace newKey None refConstrs acc
             |> Aati.make newKey
 
         | Some x, None
         | None, Some x ->
-            Accumulator2.replaceEntries accIdsToReplace newKey (Some x) refConstrs acc
+            Accumulator.replaceEntries accIdsToReplace newKey (Some x) refConstrs acc
             |> Aati.make newKey
 
         | Some refDefResA, Some refDefResB ->
@@ -2298,16 +2297,16 @@ module Accumulator2 =
             | Ok _, Error e
             | Error e, Ok _
             | Error e, Error _ ->
-                Accumulator2.replaceEntries accIdsToReplace newKey (Some (Error e)) refConstrs acc
+                Accumulator.replaceEntries accIdsToReplace newKey (Some (Error e)) refConstrs acc
                 |> Aati.make newKey
 
             | Ok refDefA, Ok refDefB -> unifyRefDefs accIdA refDefA accIdB refDefB refConstrs acc
 
 
 
-    and unifyTypeConstraintIds (idA : AccumulatorTypeId) (idB : AccumulatorTypeId) (acc : Accumulator2) : AccAndTypeId =
-        let itemA, refConstrsA = Accumulator2.getTypeById idA acc
-        let itemB, refConstrsB = Accumulator2.getTypeById idB acc
+    and unifyTypeConstraintIds (idA : AccumulatorTypeId) (idB : AccumulatorTypeId) (acc : Accumulator) : AccAndTypeId =
+        let itemA, refConstrsA = Accumulator.getTypeById idA acc
+        let itemB, refConstrsB = Accumulator.getTypeById idB acc
 
         unifyRefDefResOpts idA itemA idB itemB (Set.union refConstrsA refConstrsB) acc
 
@@ -2316,7 +2315,7 @@ module Accumulator2 =
 
 
     /// @TODO: maybe do this using the more fundamental unifyTypeConstraintIds? idk tho
-    and unifyManyTypeConstraintIds (ids : AccumulatorTypeId seq) (acc : Accumulator2) : AccAndTypeId =
+    and unifyManyTypeConstraintIds (ids : AccumulatorTypeId seq) (acc : Accumulator) : AccAndTypeId =
         match Seq.toList ids with
         | [] ->
             let newKey = makeAccTypeId ()
@@ -2350,8 +2349,8 @@ module Accumulator2 =
         let makeOkType : RefDefType -> Result<RefDefType, AccTypeError> option = Ok >> Some
         let makeErrType a b : Result<RefDefType, AccTypeError> option = DefTypeClash (a, b) |> Error |> Some
 
-        let makeSingletonAcc (refDefResOpt : Result<RefDefType, AccTypeError> option) : Accumulator2 =
-            { Accumulator2.empty with refConstraintsMap = Map.ofList [ newKey, (refDefResOpt, Set.empty) ] }
+        let makeSingletonAcc (refDefResOpt : Result<RefDefType, AccTypeError> option) : Accumulator =
+            { Accumulator.empty with refConstraintsMap = Map.ofList [ newKey, (refDefResOpt, Set.empty) ] }
 
         //let addToAcc (refDefResOpt : Result<RefDefType, AccTypeError> option) (acc:Accumulator2) : Accumulator2 =
 
@@ -2377,7 +2376,7 @@ module Accumulator2 =
             let combinedAccs =
                 resultsTom
                 |> TOM.map Aati.getAcc
-                |> TOM.fold combine Accumulator2.empty
+                |> TOM.fold combine Accumulator.empty
 
             let tupleType = RefDtTuple (TOM.map Aati.getId resultsTom)
 
@@ -2400,7 +2399,7 @@ module Accumulator2 =
 
             let combinedAcc =
                 resultsMap
-                |> Map.fold (fun state _ thisAati -> combine thisAati.acc state) Accumulator2.empty
+                |> Map.fold (fun state _ thisAati -> combine thisAati.acc state) Accumulator.empty
 
             addRefDefResOptWithRefConstrs (makeOkType mapType) Set.empty combinedAcc
 
@@ -2411,7 +2410,7 @@ module Accumulator2 =
 
             let combinedAcc =
                 resultsMap
-                |> Map.fold (fun state _ thisAati -> combine thisAati.acc state) Accumulator2.empty
+                |> Map.fold (fun state _ thisAati -> combine thisAati.acc state) Accumulator.empty
 
             addRefDefResOptWithRefConstrs (makeOkType mapType) Set.empty combinedAcc
 
@@ -2432,8 +2431,7 @@ module Accumulator2 =
         //let withRefConstrsAdded = addRefConstraints refConstrs Accumulator2.empty
         let newKey = makeAccTypeId ()
 
-        let withRefConstrsAdded =
-            { Accumulator2.empty with refConstraintsMap = Map.empty |> Map.add newKey (None, refConstrs) }
+        let withRefConstrsAdded = addRefConstraints refConstrs Accumulator.empty
 
         match defOpt with
         | None -> withRefConstrsAdded
@@ -2450,7 +2448,7 @@ module Accumulator2 =
         match judgment with
         | Ok tc -> convertTypeConstraints tc
         | Error e ->
-            { Accumulator2.empty with
+            { Accumulator.empty with
                 refConstraintsMap =
                     Map.empty
                     |> Map.add newKey (Some (Error e), Set.empty) }
@@ -2474,7 +2472,7 @@ module Accumulator2 =
     let rec convertRefDefToTypeConstraints
         (refDef : RefDefType)
         (refConstrsToAdd : RefConstr set)
-        (acc : Accumulator2)
+        (acc : Accumulator)
         : Result<TypeConstraints, AccTypeError> =
         let fromDef def =
             TypeConstraints.Constrained (Some def, refConstrsToAdd)
@@ -2592,7 +2590,7 @@ module Accumulator2 =
 
 
 
-    let convertAccIdToTypeConstraints (accId : AccumulatorTypeId) (acc : Accumulator2) : TypeJudgment =
+    let convertAccIdToTypeConstraints (accId : AccumulatorTypeId) (acc : Accumulator) : TypeJudgment =
         let foundType, refConstrs = Accumulator.getTypeById accId acc
 
         match foundType with
@@ -2606,12 +2604,12 @@ module Accumulator2 =
 
 
 
-    let addTypeConstraintsToAcc (typeConstraints : TypeConstraints) (acc : Accumulator2) : AccAndTypeId =
+    let addTypeConstraintsToAcc (typeConstraints : TypeConstraints) (acc : Accumulator) : AccAndTypeId =
         let result = convertTypeConstraints typeConstraints
         Aati.make result.typeId (combine result.acc acc)
 
 
-    let addTypeConstraintForName (name : RefConstr) (tc : TypeConstraints) (acc : Accumulator2) : AccAndTypeId =
+    let addTypeConstraintForName (name : RefConstr) (tc : TypeConstraints) (acc : Accumulator) : AccAndTypeId =
         let (Constrained (defOpt, refs)) = tc
         let tcWithName = Constrained (defOpt, Set.add name refs)
 
@@ -2630,17 +2628,17 @@ type RefConstrToTypeConstraintsMap =
 
 module RefConstrToTypeConstraintsMap =
 
-    module Acc2 = Accumulator2
+    module Accumulator = Accumulator
 
 
 
     /// Makes a new map from an Accumulator2
-    let fromAcc2 (acc : Accumulator2) : RefConstrToTypeConstraintsMap =
+    let fromAcc2 (acc : Accumulator) : RefConstrToTypeConstraintsMap =
         Map.values acc.refConstraintsMap
         |> Seq.map (fun (refDefResOpt, refConstrs) ->
             refConstrs,
             refDefResOpt
-            |> Option.map (Result.bind (fun refDef -> Acc2.convertRefDefToTypeConstraints refDef refConstrs acc)))
+            |> Option.map (Result.bind (fun refDef -> Accumulator.convertRefDefToTypeConstraints refDef refConstrs acc)))
         |> Seq.collect (fun (refConstrs, refDefResOpt) ->
             Set.toList refConstrs
             |> List.map (fun refConstr -> refConstr, refDefResOpt))
@@ -2667,22 +2665,11 @@ module RefConstrToTypeConstraintsMap =
 
 
 
-module Acc = Accumulator2
-module Acc2 = Accumulator2
 module Aati = AccAndTypeId
 module TC = TypeConstraints
 
 
 
-
-
-type AccumulatorAndOwnType =
-    { acc : Accumulator2
-      ownTypeId : AccumulatorTypeId }
-
-    member this.ownType =
-        Map.tryFind this.ownTypeId this.acc.refConstraintsMap
-        |> Option.defaultValue (None, Set.empty)
 
 
 
@@ -2698,7 +2685,7 @@ let rec makeAccIdDestType ((NEL (first, rest)) : AccumulatorTypeId nel) (acc : A
         let tailResult = makeAccIdDestType (NEL.new_ head tail) acc
         let refDefType = RefDtArrow (first, tailResult.typeId)
 
-        Acc2.addRefDefResOpt (Ok refDefType |> Some) tailResult.acc
+        Accumulator.addRefDefResOpt (Ok refDefType |> Some) tailResult.acc
 
 
 
@@ -2708,11 +2695,11 @@ let rec makeAccIdFuncApplicationType ((NEL (first, rest)) : AccumulatorTypeId ne
 
     let makeArrowType (aati : AccAndTypeId) =
         let refDefType = RefDtArrow (first, aati.typeId)
-        Acc.addRefDefResOpt (Some (Ok refDefType)) aati.acc
+        Accumulator.addRefDefResOpt (Some (Ok refDefType)) aati.acc
 
     match rest with
     | [] ->
-        let unspecific = Acc.addRefDefResOpt None acc
+        let unspecific = Accumulator.addRefDefResOpt None acc
         makeArrowType unspecific
 
     | head :: tail ->
@@ -2727,11 +2714,11 @@ let rec makeDottedSeqImpliedType (fields : RecordFieldName nel) acc =
 
     let makeDotRecord fieldName aati =
         let refDefType = RefDtRecordWith ([ fieldName, aati.typeId ] |> Map.ofSeq)
-        Acc.addRefDefResOpt (Some (Ok refDefType)) aati.acc
+        Accumulator.addRefDefResOpt (Some (Ok refDefType)) aati.acc
 
     match rest with
     | [] ->
-        let unspecific = Acc.addRefDefResOpt None acc
+        let unspecific = Accumulator.addRefDefResOpt None acc
         makeDotRecord first unspecific
 
     | head :: tail ->
@@ -2759,14 +2746,14 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
             match explicit with
             | T.Primitive primitive ->
                 let refDefType = refDeftypeOfPrimitiveLiteral primitive
-                Acc2.addRefDefResOpt (makeOkType refDefType) Acc2.empty
+                Accumulator.addRefDefResOpt (makeOkType refDefType) Accumulator.empty
 
 
             | T.DotGetter dotGetter ->
                 let fields = Map.ofList [ dotGetter, TC.any () ]
                 let defType = DtArrow (DtRecordWith fields |> TC.fromDef, TC.any ())
 
-                Acc2.convertDefinitiveType defType
+                Accumulator.convertDefinitiveType defType
 
 
             | T.Compound compound ->
@@ -2774,23 +2761,23 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
                 | T.CompoundValues.List list ->
                     let typedList = List.map getAccumulatorFromExpr list
 
-                    let combinedAcc = typedList |> Acc.combineAccsFromAatis
+                    let combinedAcc = typedList |> Accumulator.combineAccsFromAatis
 
                     let combinedAati =
-                        Acc.unifyManyTypeConstraintIds (List.map Aati.getId typedList) combinedAcc
+                        Accumulator.unifyManyTypeConstraintIds (List.map Aati.getId typedList) combinedAcc
 
                     let refDefType = RefDtList combinedAati.typeId
-                    Acc2.addRefDefResOpt (makeOkType refDefType) combinedAati.acc
+                    Accumulator.addRefDefResOpt (makeOkType refDefType) combinedAati.acc
 
 
 
                 | T.CompoundValues.Tuple tuple ->
                     let typedTom = TOM.map getAccumulatorFromExpr tuple
 
-                    let combinedAcc = typedTom |> Acc.combineAccsFromAatis
+                    let combinedAcc = typedTom |> Accumulator.combineAccsFromAatis
 
                     let refDefType = RefDtTuple (TOM.map Aati.getId typedTom)
-                    Acc2.addRefDefResOpt (makeOkType refDefType) combinedAcc
+                    Accumulator.addRefDefResOpt (makeOkType refDefType) combinedAcc
 
 
                 | T.CompoundValues.Record record ->
@@ -2801,7 +2788,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
                     let combinedAcc =
                         typedKeyVals
                         |> List.map (snd >> Aati.getAcc)
-                        |> Acc.combineMany
+                        |> Accumulator.combineMany
 
                     let refDefType =
                         typedKeyVals
@@ -2809,7 +2796,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
                         |> Map.ofList
                         |> RefDtRecordExact
 
-                    Acc2.addRefDefResOpt (makeOkType refDefType) combinedAcc
+                    Accumulator.addRefDefResOpt (makeOkType refDefType) combinedAcc
 
 
                 | T.CompoundValues.RecordExtension (extended, additions) ->
@@ -2820,7 +2807,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
                     let combinedAcc =
                         typedKeyVals
                         |> NEL.map (snd >> Aati.getAcc)
-                        |> Acc.combineMany
+                        |> Accumulator.combineMany
 
                     let refDefType =
                         typedKeyVals
@@ -2829,7 +2816,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
                         // I think this needs to be exact because extending a record results in a record with exactly the same type as the record it's extending
                         |> RefDtRecordExact
 
-                    Acc2.addRefDefResOptWithRefConstrs
+                    Accumulator.addRefDefResOptWithRefConstrs
                         (makeOkType refDefType)
                         (LocalLower extended |> ByValue |> Set.singleton)
                         combinedAcc
@@ -2855,7 +2842,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
                 /// Acc that combines the gleaned information about params from their shape and also from the body of the function
                 let combinedAcc =
                     funcParamsAccumulators
-                    |> Seq.fold Acc.combine typeOfBody.acc
+                    |> Seq.fold Accumulator.combine typeOfBody.acc
 
 
                 let paramsAndReturnTypeNel = NEL.appendList funcParamTypes [ typeOfBody.typeId ]
@@ -2874,10 +2861,11 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
 
 
 
-        | T.UpperIdentifier name -> Acc.addRefConstraints (Set.singleton (ByConstructorType name)) Acc.empty
+        | T.UpperIdentifier name ->
+            Accumulator.addRefConstraints (Set.singleton (ByConstructorType name)) Accumulator.empty
 
 
-        | T.LowerIdentifier name -> Acc.addRefConstraints (Set.singleton (ByValue name)) Acc.empty
+        | T.LowerIdentifier name -> Accumulator.addRefConstraints (Set.singleton (ByValue name)) Accumulator.empty
 
 
 
@@ -2893,13 +2881,16 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
                     let assignedExprAccAndSelf = getAccumulatorFromExpr binding.assignedExpression
 
                     let combinedAcc =
-                        Acc.combineAccsFromAatis [ bindingAccAndSelf
-                                                   assignedExprAccAndSelf ]
+                        Accumulator.combineAccsFromAatis [ bindingAccAndSelf
+                                                           assignedExprAccAndSelf ]
 
-                    Acc.unifyTypeConstraintIds bindingAccAndSelf.typeId assignedExprAccAndSelf.typeId combinedAcc)
+                    Accumulator.unifyTypeConstraintIds
+                        bindingAccAndSelf.typeId
+                        assignedExprAccAndSelf.typeId
+                        combinedAcc)
 
 
-            let combinedAcc = Acc.combineAccsFromAatis typedDeclarations
+            let combinedAcc = Accumulator.combineAccsFromAatis typedDeclarations
 
             /// This contains all the names defined from each param
             let combinedNamesDefinedHere = getLocalValueNames combinedAcc
@@ -2918,17 +2909,20 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
                 let boolRefDef = RefDtPrimitiveType BuiltInPrimitiveTypes.Bool
 
                 let withBoolConstrAdded =
-                    Acc.addRefDefConstraintForAccId (makeOkType boolRefDef) condAccAndOwn.typeId condAccAndOwn.acc
+                    Accumulator.addRefDefConstraintForAccId
+                        (makeOkType boolRefDef)
+                        condAccAndOwn.typeId
+                        condAccAndOwn.acc
 
                 let ifTrueAccAndOwn = getAccumulatorFromExpr ifTrue
                 let ifFalseAccAndOwn = getAccumulatorFromExpr ifFalse
 
                 let combinedAcc =
-                    Acc.combineMany [ withBoolConstrAdded.acc
-                                      ifTrueAccAndOwn.acc
-                                      ifFalseAccAndOwn.acc ]
+                    Accumulator.combineMany [ withBoolConstrAdded.acc
+                                              ifTrueAccAndOwn.acc
+                                              ifFalseAccAndOwn.acc ]
 
-                Acc.unifyTypeConstraintIds ifTrueAccAndOwn.typeId ifFalseAccAndOwn.typeId combinedAcc
+                Accumulator.unifyTypeConstraintIds ifTrueAccAndOwn.typeId ifFalseAccAndOwn.typeId combinedAcc
 
 
 
@@ -2956,13 +2950,13 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
 
                 let combinedAcc =
                     accsAndSelvesOfPatterns
-                    |> NEL.map (fun pattern -> Acc.combine pattern.patternAccAndId.acc pattern.bodyAccAndId.acc)
-                    |> Acc.combineMany
-                    |> Acc.combine matchExprAccAndSelf.acc
+                    |> NEL.map (fun pattern -> Accumulator.combine pattern.patternAccAndId.acc pattern.bodyAccAndId.acc)
+                    |> Accumulator.combineMany
+                    |> Accumulator.combine matchExprAccAndSelf.acc
 
                 let withMatchExprAndPatternsCombined =
                     combinedAcc
-                    |> Acc.unifyManyTypeConstraintIds (
+                    |> Accumulator.unifyManyTypeConstraintIds (
                         accsAndSelvesOfPatterns
                         |> NEL.map (fun pattern -> pattern.patternAccAndId.typeId)
                         |> Set.ofSeq
@@ -2971,7 +2965,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
 
                 let withReturnTypesCombined =
                     withMatchExprAndPatternsCombined.acc
-                    |> Acc.unifyManyTypeConstraintIds (
+                    |> Accumulator.unifyManyTypeConstraintIds (
                         accsAndSelvesOfPatterns
                         |> NEL.map (fun pattern -> pattern.bodyAccAndId.typeId)
                         |> Set.ofSeq
@@ -2986,7 +2980,10 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
         match compExpr with
         | T.FunctionApplication (funcExpr, params_) ->
             let paramsAccAndSelves = params_ |> NEL.map getAccumulatorFromExpr
-            let paramsAcc = paramsAccAndSelves |> Acc.combineAccsFromAatis
+
+            let paramsAcc =
+                paramsAccAndSelves
+                |> Accumulator.combineAccsFromAatis
 
             /// The Acc based on the parameters and the type that the function must be compatible with based on the parameters that have been applied to the function
             let requiredFuncAccAndId =
@@ -2994,10 +2991,11 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
 
             let funcExprAccAndSelf = getAccumulatorFromExpr funcExpr
 
-            let combinedAcc = Acc.combine requiredFuncAccAndId.acc funcExprAccAndSelf.acc
+            let combinedAcc =
+                Accumulator.combine requiredFuncAccAndId.acc funcExprAccAndSelf.acc
 
             combinedAcc
-            |> Acc.unifyTypeConstraintIds funcExprAccAndSelf.typeId requiredFuncAccAndId.typeId
+            |> Accumulator.unifyTypeConstraintIds funcExprAccAndSelf.typeId requiredFuncAccAndId.typeId
 
 
         | T.DotAccess (dottedExpr, dotSequence) ->
@@ -3005,7 +3003,10 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
 
             let withImpliedRecordType = makeDottedSeqImpliedType dotSequence exprAccAndSelf.acc
 
-            Acc.unifyTypeConstraintIds exprAccAndSelf.typeId withImpliedRecordType.typeId withImpliedRecordType.acc
+            Accumulator.unifyTypeConstraintIds
+                exprAccAndSelf.typeId
+                withImpliedRecordType.typeId
+                withImpliedRecordType.acc
 
 
         | T.Operator (left, op, right) ->
@@ -3023,11 +3024,15 @@ and getAccumulatorFromParam (param : AssignmentPattern) : AccAndTypeId =
     /// This *only* gets the inferred type based on the destructuring pattern, not based on usage or anything else.
     let rec getInferredTypeFromAssignmentPattern (pattern : AssignmentPattern) : AccAndTypeId =
         match pattern with
-        | Named ident -> Acc.addRefDefResOptWithRefConstrs None (Set.singleton (ByValue (LocalLower ident))) Acc.empty
+        | Named ident ->
+            Accumulator.addRefDefResOptWithRefConstrs
+                None
+                (Set.singleton (ByValue (LocalLower ident)))
+                Accumulator.empty
 
-        | Ignored -> Acc.addRefDefResOpt None Acc.empty
+        | Ignored -> Accumulator.addRefDefResOpt None Accumulator.empty
 
-        | Unit -> Acc.addRefDefResOpt (Some (Ok RefDtUnitType)) Acc.empty
+        | Unit -> Accumulator.addRefDefResOpt (Some (Ok RefDtUnitType)) Accumulator.empty
 
         | DestructuredPattern destructured -> getInferredTypeFromDestructuredPattern destructured
 
@@ -3035,9 +3040,12 @@ and getAccumulatorFromParam (param : AssignmentPattern) : AccAndTypeId =
             let nestedAccAndType = getInferredTypeFromAssignmentPattern pattern_
 
             let withNameAdded =
-                Acc.addRefDefResOptWithRefConstrs None (Set.singleton (ByValue (LocalLower alias))) nestedAccAndType.acc
+                Accumulator.addRefDefResOptWithRefConstrs
+                    None
+                    (Set.singleton (ByValue (LocalLower alias)))
+                    nestedAccAndType.acc
 
-            Acc.unifyTypeConstraintIds nestedAccAndType.typeId withNameAdded.typeId withNameAdded.acc
+            Accumulator.unifyTypeConstraintIds nestedAccAndType.typeId withNameAdded.typeId withNameAdded.acc
 
 
     and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : AccAndTypeId =
@@ -3047,55 +3055,55 @@ and getAccumulatorFromParam (param : AssignmentPattern) : AccAndTypeId =
                 fieldNames
                 |> NEL.map (fun recFieldName ->
                     recFieldName,
-                    Acc.addRefDefResOptWithRefConstrs
+                    Accumulator.addRefDefResOptWithRefConstrs
                         None
                         (Set.singleton (ByValue (LocalLower (recFieldToLowerIdent recFieldName))))
-                        Acc.empty)
+                        Accumulator.empty)
                 |> Map.ofSeq
 
             let combinedAcc =
                 fields
-                |> Map.fold (fun state _ v -> Acc.combine v.acc state) Acc.empty
+                |> Map.fold (fun state _ v -> Accumulator.combine v.acc state) Accumulator.empty
 
             let refDefType =
                 fields
                 |> Map.map (fun _ v -> v.typeId)
                 |> RefDtRecordWith
 
-            Acc.addRefDefResOpt (Some (Ok refDefType)) combinedAcc
+            Accumulator.addRefDefResOpt (Some (Ok refDefType)) combinedAcc
 
 
         | DestructuredCons consItems ->
             let gatheredItems = TOM.map getInferredTypeFromAssignmentPattern consItems
-            let combinedAcc = Acc.combineAccsFromAatis gatheredItems
+            let combinedAcc = Accumulator.combineAccsFromAatis gatheredItems
 
             let unified =
                 combinedAcc
-                |> Acc.unifyManyTypeConstraintIds (TOM.map Aati.getId gatheredItems)
+                |> Accumulator.unifyManyTypeConstraintIds (TOM.map Aati.getId gatheredItems)
 
             let refDefType = RefDtList unified.typeId
-            Acc.addRefDefResOpt (Some (Ok refDefType)) unified.acc
+            Accumulator.addRefDefResOpt (Some (Ok refDefType)) unified.acc
 
 
         | DestructuredTuple tupleItems ->
             let gatheredItems = TOM.map getInferredTypeFromAssignmentPattern tupleItems
 
-            let combinedAcc = Acc.combineAccsFromAatis gatheredItems
+            let combinedAcc = Accumulator.combineAccsFromAatis gatheredItems
 
             let refDefType = RefDtTuple (TOM.map Aati.getId gatheredItems)
-            Acc.addRefDefResOpt (Some (Ok refDefType)) combinedAcc
+            Accumulator.addRefDefResOpt (Some (Ok refDefType)) combinedAcc
 
 
         | DestructuredTypeVariant (ctor, params_) ->
             let gatheredParams = List.map getInferredTypeFromAssignmentPattern params_
-            let combinedAcc = Acc.combineAccsFromAatis gatheredParams
+            let combinedAcc = Accumulator.combineAccsFromAatis gatheredParams
 
             let ctorType = ByConstructorType ctor
 
             match List.map Aati.getId gatheredParams with
             | [] ->
                 // I.e. there are no params
-                Acc.addRefDefResOptWithRefConstrs None (Set.singleton ctorType) combinedAcc
+                Accumulator.addRefDefResOptWithRefConstrs None (Set.singleton ctorType) combinedAcc
 
             | head :: tail ->
                 // I.e. there are params
@@ -3105,8 +3113,8 @@ and getAccumulatorFromParam (param : AssignmentPattern) : AccAndTypeId =
                 let withFuncRequirement =
                     makeAccIdFuncApplicationType (NEL.new_ head tail) combinedAcc
 
-                Acc.combine combinedAcc withFuncRequirement.acc
-                |> Acc.addRefDefResOptWithRefConstrs None (Set.singleton ctorType)
+                Accumulator.combine combinedAcc withFuncRequirement.acc
+                |> Accumulator.addRefDefResOptWithRefConstrs None (Set.singleton ctorType)
 
 
 

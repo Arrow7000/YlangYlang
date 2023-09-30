@@ -195,9 +195,13 @@ type TypeJudgment = Result<TypeConstraints, AccTypeError>
 
 
 
+(* Name dictionaries *)
+
+
+
 
 /// Attempt at making accumulator working by using two internal maps, one where every single def type gets a guid assigned to it, and every ref constraint gets placed in a set with its others, which points to a guid, which in turn may have a def type assigned to it.
-type Accumulator2
+type Accumulator
 // electric boogaloo
  =
     { refConstraintsMap : Map<AccumulatorTypeId, Result<RefDefType, AccTypeError> option * RefConstr set>
@@ -212,23 +216,19 @@ type Accumulator2
 
     /// If the input AccId is a redirect, gets the actual live AccId that it points to (even after multiple redirects). Useful for editing the data in the refConstraintsMap
     static member getRealIdAndType
-        accId
-        acc
+        (accId : AccumulatorTypeId)
+        (acc : Accumulator)
         : AccumulatorTypeId * (Result<RefDefType, AccTypeError> option * RefConstr set) =
         match Map.tryFind accId acc.refConstraintsMap with
         | Some result -> accId, result
         | None ->
             match Map.tryFind accId acc.redirectMap with
-            | Some redirectId -> Accumulator2.getRealIdAndType redirectId acc
+            | Some redirectId -> Accumulator.getRealIdAndType redirectId acc
             | None ->
                 failwith $"It shouldn't be possible to not find an AccId in either the real or redirect maps: {accId}"
 
-    static member getRealId (accId : AccumulatorTypeId) (acc : Accumulator2) : AccumulatorTypeId =
-        Accumulator2.getRealIdAndType accId acc |> fst
-
-
-    static member getTypeById (accId : AccumulatorTypeId) (acc : Accumulator2) =
-        Accumulator2.getRealIdAndType accId acc |> snd
+    static member getTypeById (accId : AccumulatorTypeId) (acc : Accumulator) =
+        Accumulator.getRealIdAndType accId acc |> snd
 
 
 
@@ -239,7 +239,7 @@ type Accumulator2
         (newAccId : AccumulatorTypeId)
         (refDefResOpt : Result<RefDefType, AccTypeError> option)
         (refConstrs : RefConstr set)
-        (acc : Accumulator2)
+        (acc : Accumulator)
         =
         { refConstraintsMap =
             Map.removeKeys accIdsToReplace acc.refConstraintsMap
@@ -252,9 +252,6 @@ type Accumulator2
                   |> Set.map (fun accId -> accId, newAccId)
               ) }
 
-/// Since we're no longer using the old Accumulator we may as well make the original name an alias for the new one
-type Accumulator = Accumulator2
-(* Name dictionaries *)
 
 
 
