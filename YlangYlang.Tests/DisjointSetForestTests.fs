@@ -5,7 +5,7 @@ open DisjointSetForest
 open Expecto
 
 
-let fail = Expecto.Tests.failtest
+
 
 type Items =
     | A
@@ -88,67 +88,98 @@ type Name =
     | Xyzzy
     | Thud
 
+/// Simplified version of the Elm type system, for ease of testing
+type SimpleType =
+    | Str
+    | Int
+    | List of TypeOrNamedOrAny
+    | Pair of TypeOrNamedOrAny * TypeOrNamedOrAny
+
+
+
 /// Representing a type that's either constrained to be the same type as a particular named value or not constrained at all
-type NamedOrAny =
+and TypeOrNamedOrAny =
+    | Type of SimpleResult
     /// For types that are constrained to be the same type as some name
     | Named of Name
     /// For types that are not constrained to any name
     | Any
 
 
-/// Simplified version of the Elm type system, for ease of testing
-type SimpleType =
-    | Str
-    | Int
-    | List of NamedOrAny
-    | Pair of NamedOrAny * NamedOrAny
 
 
 and SimpleResult = Result<SimpleType, unit>
-and SimpleResultAndItems = SimpleResult * NamedOrAny set
+and SimpleResultAndItems = SimpleResult * TypeOrNamedOrAny set
 
 
 
 /// Simplified type unification logic to be used in DSFC tests
 let unifySimpleTypes
-    (typeResultA : Result<SimpleType, unit>)
-    (typeResultB : Result<SimpleType, unit>)
-    : SimpleResult * Name seq =
-    let rec unifyTypes typeResultA typeResultB =
+    (typeResultA : SimpleResult)
+    (typeResultB : SimpleResult)
+    (dsf : DSFC<Name, SimpleResult>)
+    : SimpleResult * Name seq * DSFC<Name, SimpleResult> =
+    let rec unifyTypes
+        (typeResultA : SimpleResult)
+        (typeResultB : SimpleResult)
+        : SimpleResult * Name seq * DSFC<Name, SimpleResult> =
         match typeResultA, typeResultB with
         | Ok typeA, Ok typeB ->
             match typeA, typeB with
-            | Str, Str -> Ok Str, Seq.empty
-            | Int, Int -> Ok Int, Seq.empty
+            | Str, Str -> Ok Str, Seq.empty, dsf
+            | Int, Int -> Ok Int, Seq.empty, dsf
             | List typeParamA, List typeParamB ->
-                let unifiedNamedsOrAnys, names = unifyNamedOrAnys typeParamA typeParamB
-                Ok (List unifiedNamedsOrAnys), names
+                let unifiedNamedsOrAnys, names, dsf = unifyNamedOrAnys typeParamA typeParamB
+                Ok (List unifiedNamedsOrAnys), names, dsf
 
             | Pair (fstA, sndA), Pair (fstB, sndB) ->
-                let unifiedNamedsOrAnysFst, namesFst = unifyNamedOrAnys fstA fstB
-                let unifiedNamedsOrAnysSnd, namesSnd = unifyNamedOrAnys sndA sndB
+                let unifiedNamedsOrAnysFst, namesFst, dsf = unifyNamedOrAnys fstA fstB
+                let unifiedNamedsOrAnysSnd, namesSnd, dsf = unifyNamedOrAnys sndA sndB
 
-                Ok (Pair (unifiedNamedsOrAnysFst, unifiedNamedsOrAnysSnd)), Seq.append namesFst namesSnd
+                Ok (Pair (unifiedNamedsOrAnysFst, unifiedNamedsOrAnysSnd)), Seq.append namesFst namesSnd, dsf
 
-            | _, _ -> Error (), Seq.empty
+            | _, _ -> Error (), Seq.empty, dsf
 
         | Error e, _
-        | _, Error e -> Error e, Seq.empty
+        | _, Error e -> Error e, Seq.empty, dsf
 
-    and unifyNamedOrAnys typeParamA typeParamB =
+    and unifyNamedOrAnys
+        (typeParamA : TypeOrNamedOrAny)
+        (typeParamB : TypeOrNamedOrAny)
+        : TypeOrNamedOrAny * Name seq * DSFC<Name, SimpleResult> =
         match typeParamA, typeParamB with
         | Any, other
-        | other, Any -> other, Seq.empty
+        | other, Any -> other, Seq.empty, dsf
         | Named nameA, Named nameB ->
             // We pick one of the two names, but we bubble up the fact that both these names need to be unified by returning the seq containing both names to the caller
             Named nameA,
-            if nameA = nameB then
-                Seq.empty
-            else
-                seq {
-                    nameA
-                    nameB
-                }
+            (if nameA = nameB then
+                 Seq.empty
+             else
+                 seq {
+                     nameA
+                     nameB
+                 }),
+            dsf
+
+        | Named name, Type t
+        | Type t, Named name ->
+            let result = DSFC.findData name dsf
+
+            match result with
+            | None ->
+                let newDsf = DSFC.addSet t [ name ] dsf
+                Type t, Seq.empty, newDsf
+
+            | Some existingData ->
+                let unifyResult, names, newDsf = unifyTypes t existingData
+                let newNewDsf = DSFC.addSet unifyResult [ name ] newDsf
+
+                Type unifyResult, names, newNewDsf
+
+        | Type t1, Type t2 ->
+            let result, names, newDsf = unifyTypes t1 t2
+            Type result, names, newDsf
 
     unifyTypes typeResultA typeResultB
 

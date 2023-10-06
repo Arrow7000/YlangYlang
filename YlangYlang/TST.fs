@@ -235,7 +235,7 @@ type Accumulator
 
     /// Use with caution! This literally just replaces entries and sticks the replaced keys in the redirect map. It does *not* unify the new entry with the rest of the reference constraints map!
     static member replaceEntries
-        (accIdsToReplace : AccumulatorTypeId set)
+        (accIdsToReplace : AccumulatorTypeId seq)
         (newAccId : AccumulatorTypeId)
         (refDefResOpt : Result<RefDefType, AccTypeError> option)
         (refConstrs : RefConstr set)
@@ -249,7 +249,7 @@ type Accumulator
               acc.redirectMap
               |> Map.addBulk (
                   accIdsToReplace
-                  |> Set.map (fun accId -> accId, newAccId)
+                  |> Seq.map (fun accId -> accId, newAccId)
               ) }
 
 

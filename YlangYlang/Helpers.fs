@@ -550,7 +550,11 @@ module Map =
 
 
     /// Merges two maps that have exactly the same keys. Returns an error result if they don't.
-    let mergeExact (merger : 'Key -> 'a -> 'b -> 'c) map1 map2 =
+    let mergeExact
+        (merger : 'Key -> 'a -> 'b -> 'c)
+        (map1 : Map<'Key, 'a> when 'Key : comparison)
+        (map2 : Map<'Key, 'b> when 'Key : comparison)
+        =
         let keys1 = Map.keys map1 |> Set.ofSeq
         let keys2 = Map.keys map2 |> Set.ofSeq
 

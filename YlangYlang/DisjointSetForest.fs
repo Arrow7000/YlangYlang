@@ -306,5 +306,5 @@ type DisjointSetForestWithContent<'T, 'U when 'T : comparison and 'U : equality>
             | furtherElsToMerge_ -> DSFC.unionSetsMany furtherElsToMerge_ dsfWithUnifiedData
 
 
-
+/// Alias for DisjointSetForestWithContent
 and DSFC<'T, 'U when 'T : comparison and 'U : equality> = DisjointSetForestWithContent<'T, 'U>
