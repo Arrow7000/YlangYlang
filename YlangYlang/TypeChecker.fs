@@ -2191,20 +2191,89 @@ module Accumulator =
         (acc : Accumulator)
         : UnifyRefDefPassResult =
 
-        let unifyTwoRefDefs
+        let rec unifyTwoRefDefs
             (a : AccumulatorTypeId * RefDefType)
             (b : AccumulatorTypeId * RefDefType)
             (acc : Accumulator)
             : UnifyRefDefPassResult =
             // @TODO: So I think this will be the longer one with the lengthy logic for how to merge two RefDefTypes with all their intricate little details
-            failwith "@TODO: implement"
+            //failwith "@TODO: implement"
+            let makeOkType : RefDefType -> Result<RefDefType, AccTypeError> option = Ok >> Some
+
+            let makeErrType a' b' : Result<RefDefType, AccTypeError> option = DefTypeClash (a', b') |> Error |> Some
+
+
+            let accIdA, refDefA = a
+            let refConstrsA : RefConstr set = Accumulator.getTypeById accIdA acc |> snd
+
+            let accIdB, refDefB = b
+            let refConstrsB : RefConstr set = Accumulator.getTypeById accIdB acc |> snd
+
+            let newKey = makeAccTypeId ()
+            let accIdsToReplace = Set.ofList [ accIdA; accIdB ]
+            let combinedRefConstrs = Set.union refConstrsA refConstrsB
+
+            /// For this level/pass of unification
+            let refConstrsToUnify =
+                TOM.make (accIdA, refConstrsA) (accIdB, refConstrsB)
+                |> Seq.singleton
+
+            match refDefA, refDefB with
+            | RefDtUnitType, RefDtUnitType ->
+                let updatedAcc =
+                    Accumulator.replaceEntries accIdsToReplace newKey (makeOkType RefDtUnitType) combinedRefConstrs acc
+
+                { refConstrsToUnify = refConstrsToUnify
+                  accAndTypeId = Aati.make newKey updatedAcc }
+
+
+            | RefDtPrimitiveType primA, RefDtPrimitiveType primB ->
+                let typeResult =
+                    if primA = primB then
+                        makeOkType (RefDtPrimitiveType primA)
+                    else
+                        makeErrType refDefA refDefB
+
+                let updatedAcc =
+                    Accumulator.replaceEntries accIdsToReplace newKey typeResult combinedRefConstrs acc
+
+                { refConstrsToUnify = refConstrsToUnify
+                  accAndTypeId = Aati.make newKey updatedAcc }
+
+
+            | RefDtList paramA, RefDtList paramB ->
+                let innerRefDefResOptA, innerRefConstrsA = Accumulator.getTypeById paramA acc
+                let innerRefDefResOptB, innerRefConstrsB = Accumulator.getTypeById paramB acc
+
+                let unifiedInnerResult : UnifyRefDefPassResult =
+                    unifyTwoRefDefResOpts (paramA, innerRefDefResOptA) (paramB, innerRefDefResOptB) acc
+
+                let listType : RefDefType = RefDtList unifiedInnerResult.accAndTypeId.typeId
+
+                let updatedAcc =
+                    Accumulator.replaceEntries
+                        accIdsToReplace
+                        newKey
+                        (makeOkType listType)
+                        combinedRefConstrs
+                        unifiedInnerResult.accAndTypeId.acc
+
+                let innerRefConstrsToUnify =
+                    TOM.make (paramA, innerRefConstrsA) (paramB, innerRefConstrsB)
+
+                let allRefConstrsToUnify =
+                    innerRefConstrsToUnify
+                    :: (Seq.toList
+                        <| Seq.append refConstrsToUnify unifiedInnerResult.refConstrsToUnify)
+
+                { refConstrsToUnify = allRefConstrsToUnify
+                  accAndTypeId = Aati.make newKey updatedAcc }
 
 
 
 
 
-
-        let unifyTwoRefDefResults
+        and unifyTwoRefDefResults
             (a : AccumulatorTypeId * Result<RefDefType, AccTypeError>)
             (b : AccumulatorTypeId * Result<RefDefType, AccTypeError>)
             (acc : Accumulator)
@@ -2226,9 +2295,7 @@ module Accumulator =
                 let updatedAcc =
                     Accumulator.replaceEntries accIdsToReplace newKey (Some (Error e)) mergedRefConstrs acc
 
-                let aati = Aati.make newKey updatedAcc
-
-                { accAndTypeId = aati
+                { accAndTypeId = Aati.make newKey updatedAcc
                   refConstrsToUnify =
                     TOM.make (accIdA, refConstrsA) (accIdB, refConstrsB)
                     |> Seq.singleton }
@@ -2238,7 +2305,7 @@ module Accumulator =
 
 
         /// This is the function that should be folded over all the `refDefsWithIds` in the input
-        let unifyTwoRefDefResOpts
+        and unifyTwoRefDefResOpts
             (a : AccumulatorTypeId * Result<RefDefType, AccTypeError> option)
             (b : AccumulatorTypeId * Result<RefDefType, AccTypeError> option)
             (acc : Accumulator)
@@ -2260,9 +2327,7 @@ module Accumulator =
                 let updatedAcc =
                     Accumulator.replaceEntries accIdsToReplace newKey None mergedRefConstrs acc
 
-                let aati = Aati.make newKey updatedAcc
-
-                { accAndTypeId = aati
+                { accAndTypeId = Aati.make newKey updatedAcc
                   refConstrsToUnify =
                     TOM.make (accIdA, refConstrsA) (accIdB, refConstrsB)
                     |> Seq.singleton }
@@ -2272,9 +2337,7 @@ module Accumulator =
                 let updatedAcc =
                     Accumulator.replaceEntries accIdsToReplace newKey (Some x) mergedRefConstrs acc
 
-                let aati = Aati.make newKey updatedAcc
-
-                { accAndTypeId = aati
+                { accAndTypeId = Aati.make newKey updatedAcc
                   refConstrsToUnify =
                     TOM.make (accIdA, refConstrsA) (accIdB, refConstrsB)
                     |> Seq.singleton }
@@ -2289,6 +2352,7 @@ module Accumulator =
         tail
         |> List.fold
             (fun state (accId, refDefResOpt) ->
+                /// We retrieve the item whose ID is in the state because that's the one that the current item needs to be merged with
                 let toMergeWith =
                     Accumulator.getTypeById state.accAndTypeId.typeId state.accAndTypeId.acc
 
