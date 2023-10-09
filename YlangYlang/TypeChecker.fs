@@ -2112,17 +2112,25 @@ module Accumulator =
         System.Guid.NewGuid () |> AccumulatorTypeId
 
 
-    let private hasOverlap setA setB =
-        Set.intersect setA setB |> Set.isNotEmpty
 
 
     let empty = Accumulator.empty
 
 
 
+    type private UnifyRefDefPassResult =
+        { refConstrsToUnify : (AccumulatorTypeId * RefConstr set) tom seq
+          accAndTypeId : AccAndTypeId }
+
+
+
+
 
     /// This returns the Accumulator resulting from unifying the two RefDefs at the given AccIds
-    let rec unifyRefDefs (refDefsWithIds : (AccumulatorTypeId * RefDefType) tom) (acc : Accumulator) =
+    let rec unifyRefDefs
+        (refDefsWithIds : (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom)
+        (acc : Accumulator)
+        =
         /// Ok so what do we expect this thing to return? Well...
         /// - if there are refConstrsToUnify, that it will only have unified the RefDefs into a new entry (and set the old IDs to redirect to the new ones), but any RefConstrs that are implied to be unified from the RefDefs that have been unified, are merely returned to be unified by its specialised function. It will not unify RefConstrs itself.
         /// - if there are no refConstrsToUnify, that must mean that the only thing to do was unifying the RefDefs, and so that's all that needs to be done. Because it can unify its own RefDefs, even nested ones. And it knows how to integrate its own nested merged RefDefs itself. It's only RefConstrs that it defers to the calling function, to be done elsewhere. For a nice clean separation of concerns.
@@ -2143,41 +2151,252 @@ module Accumulator =
         ///
         let firstPassResult = unifyRefDefsSinglePass refDefsWithIds acc
 
-        match firstPassResult.refConstrsToUnify with
-        | None -> firstPassResult.accAndTypeId
-        | Some refConstrsToUnify -> unifyRefConstrs refConstrsToUnify firstPassResult.accAndTypeId.acc
+        match Seq.toList firstPassResult.refConstrsToUnify with
+        | [] -> firstPassResult.accAndTypeId
+        | refConstrsToUnifyList ->
+            let combinedAcc =
+                refConstrsToUnifyList
+                |> List.fold
+                    (fun acc refConstrsToUnify ->
+                        unifyRefConstrs refConstrsToUnify acc
+                        |> Aati.getAcc)
+                    firstPassResult.accAndTypeId.acc
+
+            Aati.make firstPassResult.accAndTypeId.typeId combinedAcc
 
 
     /// This returns the Accumulator resulting from unifying the two RefDefs at the given AccIds
     and unifyRefConstrs (refConstrsWithIds : (AccumulatorTypeId * RefConstr set) tom) (acc : Accumulator) =
-        /// Ok so what do we expect this thing to return? Well...
-        /// - if there are no refDefsToUnify, that merging
         let firstPassResult = unifyRefConstrsSinglePass refConstrsWithIds acc
 
         match firstPassResult.refDefsToUnify with
         | None -> firstPassResult.accAndTypeId
-        | Some refDefsToUnify -> unifyRefDefs refDefsToUnify firstPassResult.accAndTypeId.acc
+        | Some refDefsToUnifyTom ->
+            //let combinedAcc =
+            //    refDefsToUnifyTom
+            //    |> TOM.fold
+            //        (fun acc refDefsToUnify -> unifyRefDefs refDefsToUnify acc |> Aati.getAcc)
+            //        firstPassResult.accAndTypeId.acc
+            //Aati.make firstPassResult.accAndTypeId.typeId combinedAcc
+            unifyRefDefs refDefsToUnifyTom firstPassResult.accAndTypeId.acc
 
 
 
 
 
 
-
+    /// This should unify all the RefDefs and return a list of RefConstr sets that each need to be unified
     and unifyRefDefsSinglePass
-        (refDefsWithIds : (AccumulatorTypeId * RefDefType) tom)
+        (refDefsWithIds : (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom)
         (acc : Accumulator)
-        : {| refConstrsToUnify : (AccumulatorTypeId * RefConstr set) tom option
-             accAndTypeId : AccAndTypeId |} =
-        failwith "@TODO: implement"
+        : UnifyRefDefPassResult =
 
+        let unifyTwoRefDefs
+            (a : AccumulatorTypeId * RefDefType)
+            (b : AccumulatorTypeId * RefDefType)
+            (acc : Accumulator)
+            : UnifyRefDefPassResult =
+            // @TODO: So I think this will be the longer one with the lengthy logic for how to merge two RefDefTypes with all their intricate little details
+            failwith "@TODO: implement"
+
+
+
+
+
+
+        let unifyTwoRefDefResults
+            (a : AccumulatorTypeId * Result<RefDefType, AccTypeError>)
+            (b : AccumulatorTypeId * Result<RefDefType, AccTypeError>)
+            (acc : Accumulator)
+            : UnifyRefDefPassResult =
+            let accIdA, refDefResA = a
+            let refConstrsA : RefConstr set = Accumulator.getTypeById accIdA acc |> snd
+
+            let accIdB, refDefResB = b
+            let refConstrsB : RefConstr set = Accumulator.getTypeById accIdB acc |> snd
+
+            match refDefResA, refDefResB with
+            | Ok _, Error e
+            | Error e, Ok _
+            | Error e, Error _ ->
+                let newKey = makeAccTypeId ()
+                let accIdsToReplace = Set.ofList [ accIdA; accIdB ]
+                let mergedRefConstrs = Set.union refConstrsA refConstrsB
+
+                let updatedAcc =
+                    Accumulator.replaceEntries accIdsToReplace newKey (Some (Error e)) mergedRefConstrs acc
+
+                let aati = Aati.make newKey updatedAcc
+
+                { accAndTypeId = aati
+                  refConstrsToUnify =
+                    TOM.make (accIdA, refConstrsA) (accIdB, refConstrsB)
+                    |> Seq.singleton }
+
+            | Ok refDefA, Ok refDefB -> unifyTwoRefDefs (accIdA, refDefA) (accIdB, refDefB) acc
+
+
+
+        /// This is the function that should be folded over all the `refDefsWithIds` in the input
+        let unifyTwoRefDefResOpts
+            (a : AccumulatorTypeId * Result<RefDefType, AccTypeError> option)
+            (b : AccumulatorTypeId * Result<RefDefType, AccTypeError> option)
+            (acc : Accumulator)
+            : UnifyRefDefPassResult =
+
+            let accIdA, refDefResOptA = a
+            let refConstrsA : RefConstr set = Accumulator.getTypeById accIdA acc |> snd
+
+            let accIdB, refDefResOptB = b
+            let refConstrsB : RefConstr set = Accumulator.getTypeById accIdB acc |> snd
+
+
+            let newKey = makeAccTypeId ()
+            let accIdsToReplace = Set.ofList [ accIdA; accIdB ]
+            let mergedRefConstrs = Set.union refConstrsA refConstrsB
+
+            match refDefResOptA, refDefResOptB with
+            | None, None ->
+                let updatedAcc =
+                    Accumulator.replaceEntries accIdsToReplace newKey None mergedRefConstrs acc
+
+                let aati = Aati.make newKey updatedAcc
+
+                { accAndTypeId = aati
+                  refConstrsToUnify =
+                    TOM.make (accIdA, refConstrsA) (accIdB, refConstrsB)
+                    |> Seq.singleton }
+
+            | Some x, None
+            | None, Some x ->
+                let updatedAcc =
+                    Accumulator.replaceEntries accIdsToReplace newKey (Some x) mergedRefConstrs acc
+
+                let aati = Aati.make newKey updatedAcc
+
+                { accAndTypeId = aati
+                  refConstrsToUnify =
+                    TOM.make (accIdA, refConstrsA) (accIdB, refConstrsB)
+                    |> Seq.singleton }
+
+            | Some refDefResA, Some refDefResB -> unifyTwoRefDefResults (accIdA, refDefResA) (accIdB, refDefResB) acc
+
+
+
+        let (TOM (head, neck, tail)) = refDefsWithIds
+        let firstResult = unifyTwoRefDefResOpts head neck acc
+
+        tail
+        |> List.fold
+            (fun state (accId, refDefResOpt) ->
+                let toMergeWith =
+                    Accumulator.getTypeById state.accAndTypeId.typeId state.accAndTypeId.acc
+
+                let refDefToMergeWith : Result<RefDefType, AccTypeError> option = fst toMergeWith
+                // // I don't think there was anything to do with this set, because this unifyRefDefsSinglePass function should only be responsible for unifying the RefDefs it was given, not the RefConstrs I think.
+                //let refConstrsToMergeWith : RefConstr set = snd toMergeWith
+
+                let unifyResult =
+                    unifyTwoRefDefResOpts
+                        (accId, refDefResOpt)
+                        (state.accAndTypeId.typeId, refDefToMergeWith)
+                        state.accAndTypeId.acc
+
+                /// I think this is correct, we need to combine the refConstrs to unify from this particular result with the results from the previous things.
+                /// @TODO: only thing I'm not sure about is if this logic is indeed correct, whether we do indeed need to maintain separate sets of RefConstrs to combine individually, or if in here we will only ever have a single set of RefConstrs to combine... tzorich biyur. I think once all the logic is complete, we'll have to see if there is actually ever any place where we want to return multiple sets of RefConstrs to unify. If yes, great, we've already accounted for it with our great prescience; if not, great, we can simplify the logic here so that we're only carrying one set of RefConstrs to unify around.
+                let combinedUnificationResult =
+                    { unifyResult with
+                        refConstrsToUnify = Seq.append unifyResult.refConstrsToUnify state.refConstrsToUnify }
+
+                combinedUnificationResult)
+            firstResult
+
+
+
+
+
+
+
+
+
+
+
+
+    /// This should unify all the RefConstr sets and return a list of RefDef groups that each need to be unified
     and unifyRefConstrsSinglePass
         (refConstrsWithIds : (AccumulatorTypeId * RefConstr set) tom)
         (acc : Accumulator)
-        : {| refDefsToUnify : (AccumulatorTypeId * RefDefType) tom option
+        : {| refDefsToUnify : (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom option
              accAndTypeId : AccAndTypeId |} =
-        failwith "@TODO: implement"
+        let initialSet = Seq.map snd refConstrsWithIds |> Set.unionMany
 
+        let toBeMerged =
+            acc.refConstraintsMap
+            |> Map.choose (fun _ (refDefOpt, refConstrs) ->
+                if Set.hasOverlap refConstrs initialSet then
+                    let refConstrsUnion = Set.union refConstrs initialSet
+                    Some (refDefOpt, refConstrsUnion)
+                else
+                    None)
+            |> Map.toList
+
+        match toBeMerged with
+        | [] ->
+            // Just add the set into the Acc
+
+            let newKey = makeAccTypeId ()
+
+            let updatedAcc =
+                { acc with
+                    refConstraintsMap =
+                        acc.refConstraintsMap
+                        |> Map.add newKey (None, initialSet) }
+
+            let aati = Aati.make newKey updatedAcc
+
+            {| refDefsToUnify = None
+               accAndTypeId = aati |}
+
+        | onlyOne :: [] ->
+            // Just add the thing into the Acc without unifying anything
+
+            let accId, (refDefResOpt, refConstrsUnion) = onlyOne
+
+            let updatedAcc =
+                { acc with
+                    refConstraintsMap =
+                        acc.refConstraintsMap
+                        |> Map.add accId (refDefResOpt, refConstrsUnion) }
+
+            let aati = Aati.make accId updatedAcc
+
+            {| refDefsToUnify = None
+               accAndTypeId = aati |}
+
+        | head :: neck :: tail ->
+            let toBeMergedTom = TOM.new_ head neck tail
+
+            let newKey = makeAccTypeId ()
+
+            /// This contains all the RefConstrs to put in the new entry
+            let fullRefConstrUnion =
+                TOM.map (snd >> snd) toBeMergedTom
+                |> Set.unionMany
+
+            let idsToMerge = TOM.map fst toBeMergedTom
+
+            let refDefsToUnify =
+                TOM.map (fun (accId, (refDefResOpt, _)) -> accId, refDefResOpt) toBeMergedTom
+
+            /// I think this could just be any of the RefDefs, because this should be replaced anyway when we hand this over to the refDef unification function
+            let tempRefDefToPutInAcc = fst (snd head)
+
+            let updatedAcc =
+                acc
+                |> Accumulator.replaceEntries idsToMerge newKey tempRefDefToPutInAcc fullRefConstrUnion
+
+            {| refDefsToUnify = Some refDefsToUnify
+               accAndTypeId = Aati.make newKey updatedAcc |}
 
 
 
@@ -2233,7 +2452,7 @@ module Accumulator =
             accIdsAndRefConstrs
             |> Map.fold
                 (fun (snowballedAccIds, snowballedRefConstrs) accId refConstrs ->
-                    if hasOverlap refConstrs snowballedRefConstrs then
+                    if Set.hasOverlap refConstrs snowballedRefConstrs then
                         Set.add accId snowballedAccIds, Set.union refConstrs snowballedRefConstrs
 
                     else
@@ -2336,8 +2555,9 @@ module Accumulator =
                 |> Seq.append changes }
 
 
-        /// Returns an error with the lists so far if lists don't have the same length; which will be a list of n pairs, where n is the length of the shorter of the two input lists
-        let zipList a b : Result<('a * 'b) list, ('a * 'b) list> =
+        /// Returns an error with the lists so far if lists don't have the same length; which will be a list of n pairs, where n is the length of the shorter of the two input lists.
+        /// If the lists are not the same length, the Error will contain the combined lists so far. This is useful so that we can do some type checking on those bits that do overlap.
+        let zipList listA listB : Result<('a * 'b) list, ('a * 'b) list> =
             let rec zipList_ combinedSoFar a b =
                 match a, b with
                 | [], [] -> Ok (List.rev combinedSoFar)
@@ -2345,7 +2565,7 @@ module Accumulator =
                 | [], _ :: _
                 | _ :: _, [] -> Error (List.rev combinedSoFar)
 
-            zipList_ List.empty a b
+            zipList_ List.empty listA listB
 
 
 
