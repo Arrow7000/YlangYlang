@@ -170,8 +170,8 @@ type AccumulatorTypeId = | AccumulatorTypeId of System.Guid
 type RefDefType =
     | RefDtUnitType
     | RefDtPrimitiveType of BuiltInPrimitiveTypes
-    | RefDtTuple of AccumulatorTypeId tom
     | RefDtList of AccumulatorTypeId
+    | RefDtTuple of AccumulatorTypeId tom
     | RefDtRecordWith of referencedFields : Map<RecordFieldName, AccumulatorTypeId>
     | RefDtRecordExact of Map<RecordFieldName, AccumulatorTypeId>
     | RefDtNewType of typeName : UpperNameValue * typeParams : AccumulatorTypeId list

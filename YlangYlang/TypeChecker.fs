@@ -2119,66 +2119,13 @@ module Accumulator =
 
 
     type private UnifyRefDefPassResult =
-        { refConstrsToUnify : (AccumulatorTypeId * RefConstr set) tom seq
+        { refConstrsToUnify : RefConstr set seq
           accAndTypeId : AccAndTypeId }
 
 
 
 
 
-    /// This returns the Accumulator resulting from unifying the two RefDefs at the given AccIds
-    let rec unifyRefDefs
-        (refDefsWithIds : (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom)
-        (acc : Accumulator)
-        =
-        /// Ok so what do we expect this thing to return? Well...
-        /// - if there are refConstrsToUnify, that it will only have unified the RefDefs into a new entry (and set the old IDs to redirect to the new ones), but any RefConstrs that are implied to be unified from the RefDefs that have been unified, are merely returned to be unified by its specialised function. It will not unify RefConstrs itself.
-        /// - if there are no refConstrsToUnify, that must mean that the only thing to do was unifying the RefDefs, and so that's all that needs to be done. Because it can unify its own RefDefs, even nested ones. And it knows how to integrate its own nested merged RefDefs itself. It's only RefConstrs that it defers to the calling function, to be done elsewhere. For a nice clean separation of concerns.
-        ///     Although... maybe that last part is wrong actually. Maybe it should return both RefConstrs to merge *and* nested RefDefs to merge... So that this really only executes one level of operations. Which might make the logic cleaner to reason about... Because then the "single pass" functions truly only make one single pass of things, and then defer to their callers, which might be better than the single pass function trying to do nested things all on its own and accumulate a bunch of RefConstrs to merge from different levels.. AHA! Okay I think that may be why I ended up stuck and wrong the first few times maybe... because there are multiple levels of RefConstrs to merge.... but *not with each other*! Just with themselves! So... maybe it *is* right to only let these funcs only do one level of things...
-        ///     But on the other hand, maybe the single pass functions should be executing a single pass merge only for their own type of things, but for the other thing call the other (non-single-pass) unifier function...? Hm. So maybe actually this does point towards each single pass function really only doing a single level pass merge. In which case it will need to return not only which of the *other* type of thing still need to be merged, but also which of its *own* type need to be merged in the next pass! But then... Ok that may all be fine... I think... as long as we don't get stuck in a problem of which one do we do first... Although tbh I think maybe the logic should be something like:
-        ///     - unifyRefDefs -> gives us both refConstrs and the next refDefs to merge
-        ///     - unifyRefConstrs -> gives us refDefs to merge and the next refConstrs also
-        ///     - we call unifyRefDefs again, for each of the separate sets of refDefs to unify; taken from both the initial unifyRefDefs *and* the unifyRefConstrs
-        ///     - Each of these unify operations could result in yet more things to unify, so we try to unify all of those too...
-        ///     - But each time we do a unification we need to feed in the latest Accumulator, which incoroprates all the information we have gleaned so far
-        ///     - Which means we need to be able to merge Accumulators simply, without exposing the "here's more stuff to unify" here... Otherwise it's just a complete infinite recursion of unifiers returning more unifiers, and nobody actually doing the work.
-        ///     - Unless... idk, if each single-pass unifier/merging function does one bit of the work, reducing the unification work to do for the next function it passes it to? idk tbh. That's going to be very hard to figure out by just thinking about it without actually running some tests on it.
-        ///     - Because what may end up happening is an infinite cascade of things to unify, with each unifier pass returning more and more things to unify, and so the amount of work to do grows far faster than it reduces... plus maybe this results in a On^n time complexity, since each tuple and record type could potentially have infinitely many members? But then tbh that would be appropriate for the amount of type information they have. But if they are not in fact infinitely deeply nested, then this all _should_ return in reasonable time I think?
-        ///     - But what you do risk happening, is if the code we've parsed does have some infinite recursion in its type signature? E.g. something like... `f = f f` or something? Ok idk if that is a case that would actually give rise to the problem, but you could potentially have the case where a refConstr has to be equal to itself? Then maybe we end up with an infinite amount of merging work to do? Either way, I can imagine there being some pathological case where the amount of unification work to do grows and grows and grows, and never gets a chance to reduce down to something smaller. Not sure yet exactly what kind of case could give rise to that, but that's the thing I'm worried about and unsure if my proposed unification logic can handle.
-        ///     - So... okay, maybe I just need to implement it and see?
-        ///
-        ///
-        ///
-        let firstPassResult = unifyRefDefsSinglePass refDefsWithIds acc
-
-        match Seq.toList firstPassResult.refConstrsToUnify with
-        | [] -> firstPassResult.accAndTypeId
-        | refConstrsToUnifyList ->
-            let combinedAcc =
-                refConstrsToUnifyList
-                |> List.fold
-                    (fun acc refConstrsToUnify ->
-                        unifyRefConstrs refConstrsToUnify acc
-                        |> Aati.getAcc)
-                    firstPassResult.accAndTypeId.acc
-
-            Aati.make firstPassResult.accAndTypeId.typeId combinedAcc
-
-
-    /// This returns the Accumulator resulting from unifying the two RefDefs at the given AccIds
-    and unifyRefConstrs (refConstrsWithIds : (AccumulatorTypeId * RefConstr set) tom) (acc : Accumulator) =
-        let firstPassResult = unifyRefConstrsSinglePass refConstrsWithIds acc
-
-        match firstPassResult.refDefsToUnify with
-        | None -> firstPassResult.accAndTypeId
-        | Some refDefsToUnifyTom ->
-            //let combinedAcc =
-            //    refDefsToUnifyTom
-            //    |> TOM.fold
-            //        (fun acc refDefsToUnify -> unifyRefDefs refDefsToUnify acc |> Aati.getAcc)
-            //        firstPassResult.accAndTypeId.acc
-            //Aati.make firstPassResult.accAndTypeId.typeId combinedAcc
-            unifyRefDefs refDefsToUnifyTom firstPassResult.accAndTypeId.acc
 
 
 
@@ -2186,7 +2133,7 @@ module Accumulator =
 
 
     /// This should unify all the RefDefs and return a list of RefConstr sets that each need to be unified
-    and unifyRefDefsSinglePass
+    let private unifyRefDefsSinglePass
         (refDefsWithIds : (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom)
         (acc : Accumulator)
         : UnifyRefDefPassResult =
@@ -2197,7 +2144,6 @@ module Accumulator =
             (acc : Accumulator)
             : UnifyRefDefPassResult =
             // @TODO: So I think this will be the longer one with the lengthy logic for how to merge two RefDefTypes with all their intricate little details
-            //failwith "@TODO: implement"
             let makeOkType : RefDefType -> Result<RefDefType, AccTypeError> option = Ok >> Some
 
             let makeErrType a' b' : Result<RefDefType, AccTypeError> option = DefTypeClash (a', b') |> Error |> Some
@@ -2223,7 +2169,7 @@ module Accumulator =
                 let updatedAcc =
                     Accumulator.replaceEntries accIdsToReplace newKey (makeOkType RefDtUnitType) combinedRefConstrs acc
 
-                { refConstrsToUnify = refConstrsToUnify
+                { refConstrsToUnify = Seq.singleton combinedRefConstrs
                   accAndTypeId = Aati.make newKey updatedAcc }
 
 
@@ -2237,7 +2183,7 @@ module Accumulator =
                 let updatedAcc =
                     Accumulator.replaceEntries accIdsToReplace newKey typeResult combinedRefConstrs acc
 
-                { refConstrsToUnify = refConstrsToUnify
+                { refConstrsToUnify = Seq.singleton combinedRefConstrs
                   accAndTypeId = Aati.make newKey updatedAcc }
 
 
@@ -2259,12 +2205,13 @@ module Accumulator =
                         unifiedInnerResult.accAndTypeId.acc
 
                 let innerRefConstrsToUnify =
-                    TOM.make (paramA, innerRefConstrsA) (paramB, innerRefConstrsB)
+                    //TOM.make (paramA, innerRefConstrsA) (paramB, innerRefConstrsB)
+                    combinedRefConstrs
 
                 let allRefConstrsToUnify =
                     innerRefConstrsToUnify
                     :: (Seq.toList
-                        <| Seq.append refConstrsToUnify unifiedInnerResult.refConstrsToUnify)
+                        <| Seq.append (Seq.singleton combinedRefConstrs) unifiedInnerResult.refConstrsToUnify)
 
                 { refConstrsToUnify = allRefConstrsToUnify
                   accAndTypeId = Aati.make newKey updatedAcc }
@@ -2297,8 +2244,8 @@ module Accumulator =
 
                 { accAndTypeId = Aati.make newKey updatedAcc
                   refConstrsToUnify =
-                    TOM.make (accIdA, refConstrsA) (accIdB, refConstrsB)
-                    |> Seq.singleton }
+                    //TOM.make (accIdA, refConstrsA) (accIdB, refConstrsB)
+                    Seq.singleton mergedRefConstrs }
 
             | Ok refDefA, Ok refDefB -> unifyTwoRefDefs (accIdA, refDefA) (accIdB, refDefB) acc
 
@@ -2328,9 +2275,10 @@ module Accumulator =
                     Accumulator.replaceEntries accIdsToReplace newKey None mergedRefConstrs acc
 
                 { accAndTypeId = Aati.make newKey updatedAcc
-                  refConstrsToUnify =
-                    TOM.make (accIdA, refConstrsA) (accIdB, refConstrsB)
-                    |> Seq.singleton }
+                  refConstrsToUnify = Seq.singleton mergedRefConstrs
+                //TOM.make (accIdA, refConstrsA) (accIdB, refConstrsB)
+                //|> Seq.singleton
+                }
 
             | Some x, None
             | None, Some x ->
@@ -2338,9 +2286,10 @@ module Accumulator =
                     Accumulator.replaceEntries accIdsToReplace newKey (Some x) mergedRefConstrs acc
 
                 { accAndTypeId = Aati.make newKey updatedAcc
-                  refConstrsToUnify =
-                    TOM.make (accIdA, refConstrsA) (accIdB, refConstrsB)
-                    |> Seq.singleton }
+                  refConstrsToUnify = Seq.singleton mergedRefConstrs
+                //TOM.make (accIdA, refConstrsA) (accIdB, refConstrsB)
+                //|> Seq.singleton
+                }
 
             | Some refDefResA, Some refDefResB -> unifyTwoRefDefResults (accIdA, refDefResA) (accIdB, refDefResB) acc
 
@@ -2387,12 +2336,14 @@ module Accumulator =
 
 
     /// This should unify all the RefConstr sets and return a list of RefDef groups that each need to be unified
-    and unifyRefConstrsSinglePass
-        (refConstrsWithIds : (AccumulatorTypeId * RefConstr set) tom)
+    let private unifyRefConstrsSinglePass
+        //(refConstrsWithIds : (AccumulatorTypeId * RefConstr set) tom)
+        (refConstrsWithIds : RefConstr set)
         (acc : Accumulator)
         : {| refDefsToUnify : (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom option
              accAndTypeId : AccAndTypeId |} =
-        let initialSet = Seq.map snd refConstrsWithIds |> Set.unionMany
+        //let initialSet = Seq.map snd refConstrsWithIds |> Set.unionMany
+        let initialSet = refConstrsWithIds
 
         let toBeMerged =
             acc.refConstraintsMap
@@ -2464,6 +2415,57 @@ module Accumulator =
 
 
 
+    /// This returns the Accumulator resulting from unifying the two RefDefs at the given AccIds
+    let rec unifyRefDefs
+        (refDefsWithIds : (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom)
+        (acc : Accumulator)
+        =
+        /// Ok so what do we expect this thing to return? Well...
+        /// - if there are refConstrsToUnify, that it will only have unified the RefDefs into a new entry (and set the old IDs to redirect to the new ones), but any RefConstrs that are implied to be unified from the RefDefs that have been unified, are merely returned to be unified by its specialised function. It will not unify RefConstrs itself.
+        /// - if there are no refConstrsToUnify, that must mean that the only thing to do was unifying the RefDefs, and so that's all that needs to be done. Because it can unify its own RefDefs, even nested ones. And it knows how to integrate its own nested merged RefDefs itself. It's only RefConstrs that it defers to the calling function, to be done elsewhere. For a nice clean separation of concerns.
+        ///     Although... maybe that last part is wrong actually. Maybe it should return both RefConstrs to merge *and* nested RefDefs to merge... So that this really only executes one level of operations. Which might make the logic cleaner to reason about... Because then the "single pass" functions truly only make one single pass of things, and then defer to their callers, which might be better than the single pass function trying to do nested things all on its own and accumulate a bunch of RefConstrs to merge from different levels.. AHA! Okay I think that may be why I ended up stuck and wrong the first few times maybe... because there are multiple levels of RefConstrs to merge.... but *not with each other*! Just with themselves! So... maybe it *is* right to only let these funcs only do one level of things...
+        ///     But on the other hand, maybe the single pass functions should be executing a single pass merge only for their own type of things, but for the other thing call the other (non-single-pass) unifier function...? Hm. So maybe actually this does point towards each single pass function really only doing a single level pass merge. In which case it will need to return not only which of the *other* type of thing still need to be merged, but also which of its *own* type need to be merged in the next pass! But then... Ok that may all be fine... I think... as long as we don't get stuck in a problem of which one do we do first... Although tbh I think maybe the logic should be something like:
+        ///     - unifyRefDefs -> gives us both refConstrs and the next refDefs to merge
+        ///     - unifyRefConstrs -> gives us refDefs to merge and the next refConstrs also
+        ///     - we call unifyRefDefs again, for each of the separate sets of refDefs to unify; taken from both the initial unifyRefDefs *and* the unifyRefConstrs
+        ///     - Each of these unify operations could result in yet more things to unify, so we try to unify all of those too...
+        ///     - But each time we do a unification we need to feed in the latest Accumulator, which incoroprates all the information we have gleaned so far
+        ///     - Which means we need to be able to merge Accumulators simply, without exposing the "here's more stuff to unify" here... Otherwise it's just a complete infinite recursion of unifiers returning more unifiers, and nobody actually doing the work.
+        ///     - Unless... idk, if each single-pass unifier/merging function does one bit of the work, reducing the unification work to do for the next function it passes it to? idk tbh. That's going to be very hard to figure out by just thinking about it without actually running some tests on it.
+        ///     - Because what may end up happening is an infinite cascade of things to unify, with each unifier pass returning more and more things to unify, and so the amount of work to do grows far faster than it reduces... plus maybe this results in a On^n time complexity, since each tuple and record type could potentially have infinitely many members? But then tbh that would be appropriate for the amount of type information they have. But if they are not in fact infinitely deeply nested, then this all _should_ return in reasonable time I think?
+        ///     - But what you do risk happening, is if the code we've parsed does have some infinite recursion in its type signature? E.g. something like... `f = f f` or something? Ok idk if that is a case that would actually give rise to the problem, but you could potentially have the case where a refConstr has to be equal to itself? Then maybe we end up with an infinite amount of merging work to do? Either way, I can imagine there being some pathological case where the amount of unification work to do grows and grows and grows, and never gets a chance to reduce down to something smaller. Not sure yet exactly what kind of case could give rise to that, but that's the thing I'm worried about and unsure if my proposed unification logic can handle.
+        ///     - So... okay, maybe I just need to implement it and see?
+        ///
+        ///
+        ///
+        let firstPassResult = unifyRefDefsSinglePass refDefsWithIds acc
+
+        match Seq.toList firstPassResult.refConstrsToUnify with
+        | [] -> firstPassResult.accAndTypeId
+        | refConstrsToUnifyList ->
+            let combinedAcc =
+                refConstrsToUnifyList
+                |> List.fold
+                    (fun acc refConstrsToUnify ->
+                        unifyRefConstrs refConstrsToUnify acc
+                        |> Aati.getAcc)
+                    firstPassResult.accAndTypeId.acc
+
+            Aati.make firstPassResult.accAndTypeId.typeId combinedAcc
+
+
+    /// This returns the Accumulator resulting from unifying the two RefDefs at the given AccIds
+    and unifyRefConstrs (refConstrsWithIds : RefConstr set) (acc : Accumulator) =
+        let firstPassResult = unifyRefConstrsSinglePass refConstrsWithIds acc
+
+        match firstPassResult.refDefsToUnify with
+        | None -> firstPassResult.accAndTypeId
+        | Some refDefsToUnifyTom -> unifyRefDefs refDefsToUnifyTom firstPassResult.accAndTypeId.acc
+
+
+
+
+
 
 
 
@@ -2474,25 +2476,124 @@ module Accumulator =
     ///
     /// There should be no entities from one Acc referencing IDs in the other.
     let rec combine (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
-        // I think do a naive merge of the maps first, and then hunt down for duplicates I think... don't think there's really any other way of doing that without running into the issue of new RefDefs containing references from the old map and not the new one.
-        // Unless... we only add the entries in from the old map on an as-needed basis? (in addition to adding them one by one to make sure we've covered them all, even the ones that weren't referenced by other types added previously)
+        // I think the way to do this is by inserting the items without any dependencies on other AccIds first, e.g. those entries which are None or Unit or PrimitiveType. Once those are done, then get their IDs and we can insert the next batch of types, namely those which reference (only) those IDs we've just inserted (or that reference any IDs we've inserted already, even if those were partly in a previous batch).
+        // That way we can add one RefDefType (with accompanying RefConstrs) at a time, whilst still ensuring we never end up in a place where the Acc contains references to AccIds it does not contain!
+        // Note: we add the items in acc1 to acc2, as per the convention where the last parameter is the data type being modified
 
-        // We need to do a naive merge first because otherwise the things we're unifying are going to be referencing AccIds that haven't been added to this map yet, which will therefore not be able to be unified because they will not be found. So we just mash everything together naively first, and *then* we unify those entries that we've worked out need to be unified because of their RefConstr overlap.
-        let naivelyMergedAcc : Accumulator =
-            { refConstraintsMap = Map.merge acc1.refConstraintsMap acc2.refConstraintsMap
-              redirectMap = Map.merge acc1.redirectMap acc2.redirectMap }
+        let isRefDefWithAllowedAccIdDep (addedDepAccIds : AccumulatorTypeId set) (refDef : RefDefType) =
+            let hasId accId = Set.contains accId addedDepAccIds
 
-        let entriesToAdd : RefConstr set list =
-            acc1.refConstraintsMap
-            |> Map.toList
-            |> List.map (fun (_, (_, refConstrs)) -> refConstrs)
+            match refDef with
+            | RefDtUnitType -> true
+            | RefDtPrimitiveType _ -> true
+            | RefDtList accId -> hasId accId
+            | RefDtTuple accIdTom -> accIdTom |> TOM.map hasId |> TOM.fold (&&) true
+            | RefDtRecordWith fields ->
+                Map.values fields
+                |> Seq.map hasId
+                |> Seq.fold (&&) true
+            | RefDtRecordExact fields ->
+                Map.values fields
+                |> Seq.map hasId
+                |> Seq.fold (&&) true
+            | RefDtNewType (_, typeParams) -> typeParams |> Seq.map hasId |> Seq.fold (&&) true
+            | RefDtArrow (fromType, toType) -> hasId fromType && hasId toType
 
-        entriesToAdd
-        |> List.fold
-            (fun state refConstrs ->
-                addRefConstraintsChanges refConstrs state
-                |> Aati.getAcc)
-            naivelyMergedAcc
+
+        /// Gets all the AccIds that redirect to a set of other AccIds, recursively
+        let rec getAllRedirectsPointingTo (accIds : AccumulatorTypeId set) redirectsMap =
+            let thisBatchResults =
+                redirectsMap
+                |> Map.filter (fun _ dest -> Set.contains dest accIds)
+                |> Map.keys
+                |> Seq.toList
+
+            match thisBatchResults with
+            | [] -> accIds
+            | _ -> getAllRedirectsPointingTo (Set.union accIds (Set.ofSeq thisBatchResults)) redirectsMap
+
+
+
+        /// Recursive function that plucks the types from the source Acc and moves them over to the destination Acc one at a time, ensuring it's only moving the ones that either have no dependencies on other AccIds, or whose dependencies have already been moved over!
+        /// The base case is when there are no more new entries able to be moved over, which should occur only when the sourceAcc has been plucked empty – and therefore it's probably worth making it throw an error if only one but not both of those conditions are true!
+        /// And at the base case, we return the destinationAcc, which should at that point be the fully merged Acc containing all the items from acc1 (and of course acc2 which is what it started out as)
+        let rec getItemsWithAllowedDependencies
+            (addedDepAccIds : AccumulatorTypeId set)
+            (sourceAcc : Accumulator)
+            (destinationAcc : Accumulator)
+            : Accumulator =
+            let allDepAccIds = getAllRedirectsPointingTo addedDepAccIds sourceAcc.redirectMap
+
+            let entriesAllowedNow =
+                sourceAcc.refConstraintsMap
+                |> Map.filter (fun _ (refDefResOpt, _) ->
+                    match refDefResOpt with
+                    | None -> true
+                    | Some refDefRes ->
+                        match refDefRes with
+                        | Ok refDef -> isRefDefWithAllowedAccIdDep allDepAccIds refDef
+                        | Error (DefTypeClash (refDefA, refDefB)) ->
+                            isRefDefWithAllowedAccIdDep allDepAccIds refDefA
+                            && isRefDefWithAllowedAccIdDep allDepAccIds refDefB)
+
+
+            if Map.isEmpty entriesAllowedNow then
+                destinationAcc
+
+            else
+                let nextAddedDepAccIds =
+                    Map.keys entriesAllowedNow
+                    |> Set.ofSeq
+                    |> Set.union allDepAccIds
+                    |> flip getAllRedirectsPointingTo sourceAcc.redirectMap
+
+
+                /// This expects that the thing we're adding does not depend on any AccIds that aren't already in the map
+                let addSingleThingToDestMap
+                    (singleThing : AccumulatorTypeId * (Result<RefDefType, AccTypeError> option * RefConstr set))
+                    (acc : Accumulator)
+                    : AccAndTypeId =
+                    let key, (refDefResOpt, refConstrs) = singleThing
+
+                    let refConstrsToMergeTogether =
+                        acc.refConstraintsMap
+                        |> Map.values
+                        |> Seq.map snd
+                        |> Seq.filter (fun thisRefConstrs -> Set.hasOverlap refConstrs thisRefConstrs)
+                        |> Set.unionMany
+
+                    let accWithThingAdded =
+                        { acc with
+                            refConstraintsMap =
+                                acc.refConstraintsMap
+                                |> Map.add key (refDefResOpt, refConstrs) }
+
+                    unifyRefConstrs refConstrsToMergeTogether accWithThingAdded
+
+                let accWithEntriesAllowedNowAdded =
+                    entriesAllowedNow
+                    |> Map.toList
+                    |> List.fold
+                        (fun state thisEntry ->
+                            addSingleThingToDestMap thisEntry state
+                            |> Aati.getAcc)
+                        destinationAcc
+
+
+                let updatedDestAcc = accWithEntriesAllowedNowAdded
+
+                getItemsWithAllowedDependencies nextAddedDepAccIds sourceAcc updatedDestAcc
+
+
+        // @TODO: need to stick all of this stuff in the destination Acc now, and then check if there's any more work left to do, and if not, return the destAcc
+        //match Seq.toList nextAddedDepAccIds with
+        //| [] -> destinationAcc
+
+        getItemsWithAllowedDependencies Set.empty acc1 acc2
+
+
+
+
 
 
 
