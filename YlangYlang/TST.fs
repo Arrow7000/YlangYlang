@@ -230,6 +230,8 @@ type Accumulator
     static member getTypeById (accId : AccumulatorTypeId) (acc : Accumulator) =
         Accumulator.getRealIdAndType accId acc |> snd
 
+    static member getRealId (accId : AccumulatorTypeId) (acc : Accumulator) =
+        Accumulator.getRealIdAndType accId acc |> fst
 
 
 
