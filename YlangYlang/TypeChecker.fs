@@ -2123,7 +2123,13 @@ module Accumulator =
           accAndTypeId : AccAndTypeId }
 
 
-
+    type private UnifyRefConstrsPassResult =
+        /// The added refConstrs are not present in the Acc at all, so just create a new entry with only these RefConstrs and call it a day
+        | NotCurrentlyInAcc
+        /// The added refConstrs overlap with exactly one Acc entry, so all you need to do is replace that ID's existing RefConstrs with this one and call it a day
+        | InOneEntry of accId : AccumulatorTypeId * combinedRefConstrs : RefConstr set
+        /// The added refConstrs overlap with two or more Acc entries, so the RefDefs need to be unified, and they all need to have their refConstrs set to this unified set
+        | InMultipleEntries of accIds : AccumulatorTypeId tom * allUnifiedRefConstrs : RefConstr set
 
 
 
@@ -2499,80 +2505,43 @@ module Accumulator =
 
 
 
-    /// This should unify all the RefConstr sets and return a list of RefDef groups that each need to be unified
-    and private unifyRefConstrsSinglePass
+    /// Given a set of RefConstrs to add into the Acc, this tells us whether they are either:
+    ///     a) not in the Acc at all – so only one new entry with only these RefConstrs needs to be added
+    ///     b) only present in one entry in the Acc – so we only need to add the combined RefConstrs (the existing ones for that entry + the ones provided here) to the existing entry in the Acc
+    ///     c) present in multiple entries in the Acc – so those RefDefs in those entries need to be unified, and have its RefConstrs set as the union of both all the refConstrs in the unified entries + the ones provided here
+    and private getRefConstrAddOrUnifyInfo
         (refConstrsToAddOrUnify : RefConstr set)
         (acc : Accumulator)
-        : {| refDefsToUnify : (AccumulatorTypeId * (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom) option
-             accAndTypeId : AccAndTypeId |} =
+        : UnifyRefConstrsPassResult =
         let toBeMerged =
             acc.refConstraintsMap
-            |> Map.choose (fun _ (refDefOpt, refConstrs) ->
+            |> Map.choose (fun _ (_, refConstrs) ->
                 if Set.hasOverlap refConstrs refConstrsToAddOrUnify then
                     let refConstrsUnion = Set.union refConstrs refConstrsToAddOrUnify
 
-                    Some (refDefOpt, refConstrsUnion)
+                    Some refConstrsUnion
                 else
                     None)
             |> Map.toList
 
         match toBeMerged with
-        | [] ->
-            // Just add the set into the Acc
-
-            let newKey = makeAccTypeId ()
-
-            let updatedAcc =
-                { acc with
-                    refConstraintsMap =
-                        acc.refConstraintsMap
-                        |> Map.add newKey (None, refConstrsToAddOrUnify) }
-
-            let aati = Aati.make newKey updatedAcc
-
-            {| refDefsToUnify = None
-               accAndTypeId = aati |}
+        | [] -> NotCurrentlyInAcc
 
         | onlyOne :: [] ->
-            // Just add the thing into the Acc without unifying anything
 
-            let accId, (refDefResOpt, refConstrsUnion) = onlyOne
-
-            let updatedAcc =
-                { acc with
-                    refConstraintsMap =
-                        acc.refConstraintsMap
-                        |> Map.add accId (refDefResOpt, refConstrsUnion) }
-
-            let aati = Aati.make accId updatedAcc
-
-            {| refDefsToUnify = None
-               accAndTypeId = aati |}
+            let accId, refConstrsUnion = onlyOne
+            InOneEntry (accId, refConstrsUnion)
 
         | head :: neck :: tail ->
             let toBeMergedTom = TOM.new_ head neck tail
 
-            let newKey = makeAccTypeId ()
-
             /// This contains all the RefConstrs to put in the new entry
-            let fullRefConstrUnion =
-                TOM.map (snd >> snd) toBeMergedTom
-                |> Set.unionMany
+            let fullRefConstrUnion = TOM.map snd toBeMergedTom |> Set.unionMany
 
             let idsToMerge = TOM.map fst toBeMergedTom
 
-            let refDefsToUnify =
-                TOM.map (fun (accId, (refDefResOpt, _)) -> accId, refDefResOpt) toBeMergedTom
+            InMultipleEntries (idsToMerge, fullRefConstrUnion)
 
-            /// I think this could just be any of the RefDefs, because this should be replaced anyway when we hand this over to the refDef unification function
-            let tempRefDefToPutInAcc = fst (snd head)
-
-            let updatedAcc =
-                acc
-                |> Accumulator.replaceEntries idsToMerge newKey tempRefDefToPutInAcc fullRefConstrUnion
-
-            {| refDefsToUnify = Some refDefsToUnify
-               accAndTypeId = Aati.make newKey updatedAcc |}
 
 
 
@@ -2604,12 +2573,79 @@ module Accumulator =
 
 
     /// This returns the Accumulator resulting from unifying the RefDefs that have the given RefConstrs
-    and unifyRefConstrs (refConstrs : RefConstr set) (acc : Accumulator) =
-        let firstPassResult = unifyRefConstrsSinglePass refConstrs acc
+    and unifyRefConstrs
+        (keyOpt : AccumulatorTypeId option)
+        (newRefDefResOpt : Result<RefDefType, AccTypeError> option)
+        (refConstrs : RefConstr set)
+        (acc : Accumulator)
+        : AccAndTypeId =
+        let newKey =
+            match keyOpt with
+            | Some key -> key
+            | None -> makeAccTypeId ()
 
-        match firstPassResult.refDefsToUnify with
-        | None -> firstPassResult.accAndTypeId
-        | Some refDefsToUnifyTom -> unifyRefDefResOptsTom refDefsToUnifyTom firstPassResult.accAndTypeId.acc
+        let firstPassResult = getRefConstrAddOrUnifyInfo refConstrs acc
+
+        match firstPassResult with
+        | NotCurrentlyInAcc ->
+            // Add the refConstrs to the Acc
+
+            //let newKey = makeAccTypeId ()
+
+            { acc with
+                refConstraintsMap =
+                    acc.refConstraintsMap
+                    |> Map.add newKey (newRefDefResOpt, refConstrs) }
+            |> Aati.make newKey
+
+        | InOneEntry (accId, combinedRefConstrs) ->
+            // Add the refConstrs to this accId's item in the Acc
+
+            //let newKey = makeAccTypeId ()
+
+            let realAccId, (refDefResOpt, _) = Accumulator.getRealIdAndType accId acc
+
+            let accWithTwoNewOnes =
+                { acc with
+                    refConstraintsMap =
+                        acc.refConstraintsMap
+                        |> Map.add realAccId (refDefResOpt, combinedRefConstrs)
+                        |> Map.add newKey (newRefDefResOpt, combinedRefConstrs) }
+
+            let unificationResult = unifyTwoAccTypeIds realAccId newKey accWithTwoNewOnes
+            unificationResult
+
+        | InMultipleEntries (accIds, allUnifiedRefConstrs) ->
+            // Merge all the RefDefs at the given IDs and insert the full unified RefConstrs into its slot in the Acc
+            //let newKey = makeAccTypeId ()
+
+
+            let realAccIdsAndRefDefs =
+                accIds
+                |> TOM.map (fun accId -> Accumulator.getRealIdAndType accId acc)
+                |> TOM.map (fun (realAccId, (refDefResOpt, _)) -> realAccId, refDefResOpt)
+                |> TOM.cons (newKey, newRefDefResOpt)
+
+            let accWithNewItemAdded =
+                { acc with
+                    refConstraintsMap =
+                        acc.refConstraintsMap
+                        |> Map.add newKey (newRefDefResOpt, allUnifiedRefConstrs) }
+
+            let unifiedResult = unifyRefDefResOptsTom realAccIdsAndRefDefs accWithNewItemAdded
+
+            let unifiedRealId, (unifiedRefDef, _) =
+                Accumulator.getRealIdAndType unifiedResult.typeId unifiedResult.acc
+
+            let accWithRefConstrsReplaced =
+                { unifiedResult.acc with
+                    refConstraintsMap =
+                        unifiedResult.acc.refConstraintsMap
+                        |> Map.add unifiedRealId (unifiedRefDef, allUnifiedRefConstrs) }
+
+            accWithRefConstrsReplaced
+            |> Aati.make unifiedRealId
+
 
 
     /// Just a wrapper for unifyRefDefResOptsTom that handles all lists
@@ -2647,15 +2683,17 @@ module Accumulator =
         //let withRefConstrsAdded = addRefConstraints refConstrs acc
 
         //addRefDefConstraintForAccId refDefResOpt withRefConstrsAdded.typeId withRefConstrsAdded.acc
-        let newKey = makeAccTypeId ()
+        //let newKey = makeAccTypeId ()
 
-        let accWithRefDefAdded =
-            { acc with
-                refConstraintsMap =
-                    acc.refConstraintsMap
-                    |> Map.add newKey (refDefResOpt, refConstrs) }
+        //let accWithRefDefAdded =
+        //    { acc with
+        //        refConstraintsMap =
+        //            acc.refConstraintsMap
+        //            |> Map.add newKey (refDefResOpt, refConstrs) }
 
-        unifyRefConstrs refConstrs accWithRefDefAdded
+        let unificationResult = unifyRefConstrs None refDefResOpt refConstrs acc
+
+        unificationResult
 
 
 
@@ -2737,8 +2775,18 @@ module Accumulator =
                             && isRefDefWithAllowedAccIdDep allDepAccIds refDefB)
 
 
-            if Map.isEmpty entriesAllowedNow then
+            let noMoreEntriesToAdd = Map.isEmpty entriesAllowedNow
+            let sourceAccConstrsAreEmpty = Map.isEmpty sourceAcc.refConstraintsMap
+
+            if noMoreEntriesToAdd && sourceAccConstrsAreEmpty then
                 destinationAcc
+
+            else if noMoreEntriesToAdd && not sourceAccConstrsAreEmpty then
+                failwith
+                    "Shouldn't be possible for there to be no more entries to add but the source Acc to not be empty"
+
+            else if not noMoreEntriesToAdd && sourceAccConstrsAreEmpty then
+                failwith "Shouldn't be possible for there to still be entries to add but the source Acc to be empty"
 
             else
                 /// This expects that the thing we're adding does not depend on any AccIds that aren't already in the map
@@ -2755,7 +2803,9 @@ module Accumulator =
                                 acc.refConstraintsMap
                                 |> Map.add key (refDefResOpt, refConstrs) }
 
-                    unifyRefConstrs refConstrs accWithRefDefAdded
+                    // @TODO: this right here is causing the stack overflow!
+                    // We don't actually need to use this function to unify from a RefDef aspect, we just unify the RefDefs and do a simple merge on the RefConstrs, that's it. So in other words to add a thing into an Acc we just add the thing in simply, and then do a quick single-layer snowball of the RefConstrs and unification for the RefDefs caught up in the snowball. And that's it. No need to call the RefConstr unification function from it.
+                    unifyRefConstrs (Some key) refDefResOpt refConstrs accWithRefDefAdded
                     |> Aati.getAcc
 
 
@@ -2793,7 +2843,7 @@ module Accumulator =
 
     /// Unifies all the entries in Acc based on the new information about the given RefConstrs all having to have the exact same type
     and addRefConstraints (refConstrs : RefConstr set) (acc : Accumulator) : AccAndTypeId =
-        unifyRefConstrs refConstrs acc
+        unifyRefConstrs None None refConstrs acc
     //let runSingleRefConstrSetThroughAcc
     //    (accIdsAndRefConstrs : Map<AccumulatorTypeId, RefConstr set>)
     //    (newRefConstrs : RefConstr set)
@@ -3218,7 +3268,10 @@ module Accumulator =
 
             let arrowType = RefDtArrow (fromResult.typeId, toResult.typeId)
 
-            addRefDefResOptWithRefConstrs (makeOkType arrowType) Set.empty fromAndToAcc
+            let result =
+                addRefDefResOptWithRefConstrs (makeOkType arrowType) Set.empty fromAndToAcc
+
+            result
 
         | DtRecordExact map ->
             let resultsMap = Map.map (fun _ tc -> convertTypeConstraints tc) map

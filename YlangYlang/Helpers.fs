@@ -676,6 +676,7 @@ module Set =
 
     let isNotEmpty<'a when 'a : comparison> : 'a set -> bool = Set.isEmpty >> not
 
+    let hasOverlap a b = Set.intersect a b |> isNotEmpty
 
     let choose<'a, 'b when 'a : comparison and 'b : comparison> (map : 'a -> 'b option) (set : Set<'a>) =
         Set.fold
