@@ -2135,16 +2135,16 @@ module Accumulator =
     /// This should unify all the RefDefs and return a list of RefConstr sets that each need to be unified
     ///
     /// @TODO: I think... unifying RefDefs should never ever need to return the "refConstrs to unify", because since the sets of RefConstrs should be completely disjoint... if we're unifying refdefs all we need to do is store a simple union of the refconstrs and that should never ever have any further ramifications... the only thing is if we're introducing a new refconstr set that combines a bunch of them, that could entail merging more than one thing... but even then, all we need to do then is a snowballing of those RefDefs into a single type result/judgment, but the refconstraints..? they're still only ever going to be a single fucking union. With never any further ramifications after unifying the refdefs... so... i think perhaps this whole symmetric single pass thing has been a bit of a red herring and maybe it's only the refConstr unification that can result in refDefs to unify, but once that's done... the refDef unification can do a simple unification of its own RefConstrs and call it a day... wahoooowww.
-    let private unifyRefDefsSinglePass
+    let rec private unifyRefDefsSinglePass
         (refDefsWithIds : (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom)
         (acc : Accumulator)
-        : UnifyRefDefPassResult =
+        : AccAndTypeId =
 
         let rec unifyTwoRefDefs
             (a : AccumulatorTypeId * RefDefType)
             (b : AccumulatorTypeId * RefDefType)
             (acc : Accumulator)
-            : UnifyRefDefPassResult =
+            : AccAndTypeId =
             // @TODO: So I think this will be the longer one with the lengthy logic for how to merge two RefDefTypes with all their intricate little details
             let makeOkType : RefDefType -> Result<RefDefType, AccTypeError> option = Ok >> Some
 
@@ -2163,14 +2163,26 @@ module Accumulator =
             /// For this level/pass of unification
             let combinedRefConstrs = Set.union refConstrsA refConstrsB
 
+            /// Returns an error with the lists so far if lists don't have the same length; which will be a list of n pairs, where n is the length of the shorter of the two input lists.
+            /// If the lists are not the same length, the Error will contain the combined lists so far. This is useful so that we can do some type checking on those bits that do overlap.
+            let zipList listA listB : Result<('a * 'b) list, ('a * 'b) list> =
+                let rec zipList_ combinedSoFar a b =
+                    match a, b with
+                    | [], [] -> Ok (List.rev combinedSoFar)
+                    | headA :: tailA, headB :: tailB -> zipList_ ((headA, headB) :: combinedSoFar) tailA tailB
+                    | [], _ :: _
+                    | _ :: _, [] -> Error (List.rev combinedSoFar)
+
+                zipList_ List.empty listA listB
+
+
 
             match refDefA, refDefB with
             | RefDtUnitType, RefDtUnitType ->
                 let updatedAcc =
                     Accumulator.replaceEntries accIdsToReplace newKey (makeOkType RefDtUnitType) combinedRefConstrs acc
 
-                { refConstrsToUnify = Seq.singleton combinedRefConstrs
-                  accAndTypeId = Aati.make newKey updatedAcc }
+                Aati.make newKey updatedAcc
 
 
             | RefDtPrimitiveType primA, RefDtPrimitiveType primB ->
@@ -2183,18 +2195,13 @@ module Accumulator =
                 let updatedAcc =
                     Accumulator.replaceEntries accIdsToReplace newKey typeResult combinedRefConstrs acc
 
-                { refConstrsToUnify = Seq.singleton combinedRefConstrs
-                  accAndTypeId = Aati.make newKey updatedAcc }
+                Aati.make newKey updatedAcc
 
 
             | RefDtList paramA, RefDtList paramB ->
-                let innerRefDefResOptA, _ = Accumulator.getTypeById paramA acc
-                let innerRefDefResOptB, _ = Accumulator.getTypeById paramB acc
+                let unifiedInnerResult = unifyTwoAccTypeIds paramA paramB acc
 
-                let unifiedInnerResult : UnifyRefDefPassResult =
-                    unifyTwoRefDefResOpts (paramA, innerRefDefResOptA) (paramB, innerRefDefResOptB) acc
-
-                let listType : RefDefType = RefDtList unifiedInnerResult.accAndTypeId.typeId
+                let listType : RefDefType = RefDtList unifiedInnerResult.typeId
 
                 let updatedAcc =
                     Accumulator.replaceEntries
@@ -2202,15 +2209,197 @@ module Accumulator =
                         newKey
                         (makeOkType listType)
                         combinedRefConstrs
-                        unifiedInnerResult.accAndTypeId.acc
+                        unifiedInnerResult.acc
 
-                let allRefConstrsToUnify =
-                    [ combinedRefConstrs ]
-                    @ Seq.toList unifiedInnerResult.refConstrsToUnify
+                Aati.make newKey updatedAcc
 
-                { refConstrsToUnify = allRefConstrsToUnify
-                  accAndTypeId = Aati.make newKey updatedAcc }
 
+            | RefDtTuple (TOM (headA, neckA, tailA)), RefDtTuple (TOM (headB, neckB, tailB)) ->
+                /// This ensures the two lists of AccIds have the same length, it doesn't try to unify them yet
+                let combinedListResult = zipList tailA tailB
+
+                match combinedListResult with
+                | Ok combinedList ->
+                    let combinedTom = TOM.new_ (headA, headB) (neckA, neckB) combinedList
+
+                    let tomResults =
+                        combinedTom
+                        // I think this could be improved by using a TOM.mapFold (or TOM.mapFoldBack); that way we could feed in the already updated Acc for each iteration instead of having to make each thing use the original acc and then combine them all later
+                        |> TOM.map (fun (idA, idB) -> unifyTwoAccTypeIds idA idB acc)
+
+                    let tupleType = RefDtTuple (TOM.map Aati.getId tomResults)
+
+                    let combinedAccs =
+                        tomResults
+                        |> TOM.map Aati.getAcc
+                        |> TOM.fold combine Accumulator.empty
+
+                    Accumulator.replaceEntries
+                        accIdsToReplace
+                        newKey
+                        (makeOkType tupleType)
+                        combinedRefConstrs
+                        combinedAccs
+                    |> Aati.make newKey
+
+                | Error combinedListSoFar ->
+                    let combinedTom = TOM.new_ (headA, headB) (neckA, neckB) combinedListSoFar
+
+                    let tomResults =
+                        combinedTom
+                        |> TOM.map (fun (idA, idB) -> unifyTwoAccTypeIds idA idB acc)
+
+                    let combinedAccs =
+                        tomResults
+                        |> TOM.map Aati.getAcc
+                        |> TOM.fold combine Accumulator.empty
+
+                    Accumulator.replaceEntries
+                        accIdsToReplace
+                        newKey
+                        (makeErrType refDefA refDefB)
+                        combinedRefConstrs
+                        combinedAccs
+                    |> Aati.make newKey
+
+
+            | RefDtRecordExact mapA, RefDtRecordExact mapB ->
+                let mergeResults =
+                    // @TODO: Actually ideally we should get the results of unifying the constraints and then separately get whether it's a non-exact merge or not, so that we don't lose the type information from the values of the two different maps
+                    Map.mergeExact (fun _ valA valB -> unifyTwoAccTypeIds valA valB acc) mapA mapB
+
+                match mergeResults with
+                | Ok mergedMap ->
+                    let combinedAcc =
+                        mergedMap
+                        |> Map.fold (fun state _ aati -> combine aati.acc state) Accumulator.empty
+
+                    let mapType =
+                        mergedMap
+                        |> Map.map (fun _ -> Aati.getId)
+                        |> RefDtRecordExact
+
+                    Accumulator.replaceEntries
+                        accIdsToReplace
+                        newKey
+                        (makeOkType mapType)
+                        combinedRefConstrs
+                        combinedAcc
+                    |> Aati.make newKey
+
+                | Error _ ->
+                    Accumulator.replaceEntries
+                        accIdsToReplace
+                        newKey
+                        (makeErrType refDefA refDefB)
+                        combinedRefConstrs
+                        acc
+                    |> Aati.make newKey
+
+            | RefDtRecordWith mapA, RefDtRecordWith mapB ->
+                // @TODO: actually the logic here should be very different to that of exact maps!
+                // @TODO: and actually there should also be compatible cases where one is exact and one is "with"!
+
+
+                let mergeResults =
+                    // @TODO: Actually ideally we should get the results of unifying the constraints and then separately get whether it's a non-exact merge or not, so that we don't lose the type information from the values of the two different maps
+                    Map.mergeExact (fun _ valA valB -> unifyTwoAccTypeIds valA valB acc) mapA mapB
+
+                match mergeResults with
+                | Ok mergedMap ->
+                    let combinedAcc =
+                        mergedMap
+                        |> Map.fold (fun state _ aati -> combine aati.acc state) Accumulator.empty
+
+                    let mapType =
+                        mergedMap
+                        |> Map.map (fun _ -> Aati.getId)
+                        |> RefDtRecordWith
+
+                    Accumulator.replaceEntries
+                        accIdsToReplace
+                        newKey
+                        (makeOkType mapType)
+                        combinedRefConstrs
+                        combinedAcc
+                    |> Aati.make newKey
+
+                | Error _ ->
+                    Accumulator.replaceEntries
+                        accIdsToReplace
+                        newKey
+                        (makeErrType refDefA refDefB)
+                        combinedRefConstrs
+                        acc
+                    |> Aati.make newKey
+
+            | RefDtNewType (nameA, typeParamsA), RefDtNewType (nameB, typeParamsB) ->
+                if nameA = nameB then
+                    let zippedLists = zipList typeParamsA typeParamsB
+
+                    match zippedLists with
+                    | Ok combinedList ->
+                        let resultsList =
+                            combinedList
+                            |> List.map (fun (idA, idB) -> unifyTwoAccTypeIds idA idB acc)
+
+                        let typeConstraintIdList = resultsList |> List.map Aati.getId
+                        let newType = RefDtNewType (nameA, typeConstraintIdList)
+
+                        let combinedAccs = resultsList |> List.map Aati.getAcc |> combineMany
+
+                        Accumulator.replaceEntries
+                            accIdsToReplace
+                            newKey
+                            (makeOkType newType)
+                            combinedRefConstrs
+                            combinedAccs
+                        |> Aati.make newKey
+
+                    | Error combinedListSoFar ->
+                        let resultsList =
+                            combinedListSoFar
+                            |> List.map (fun (idA, idB) -> unifyTwoAccTypeIds idA idB acc)
+
+                        let combinedAccs =
+                            resultsList
+                            |> List.map Aati.getAcc
+                            |> List.fold combine Accumulator.empty
+
+                        Accumulator.replaceEntries
+                            accIdsToReplace
+                            newKey
+                            (makeErrType refDefA refDefB)
+                            combinedRefConstrs
+                            combinedAccs
+                        |> Aati.make newKey
+
+                else
+                    Accumulator.replaceEntries
+                        accIdsToReplace
+                        newKey
+                        (makeErrType refDefA refDefB)
+                        combinedRefConstrs
+                        acc
+                    |> Aati.make newKey
+
+
+            | RefDtArrow (fromTypeA, toTypeA), RefDtArrow (fromTypeB, toTypeB) ->
+                let unifiedFroms = unifyTwoAccTypeIds fromTypeA fromTypeB acc
+                let unifiedTos = unifyTwoAccTypeIds toTypeA toTypeB acc
+
+                let arrowType = RefDtArrow (unifiedFroms.typeId, unifiedTos.typeId)
+
+                let combinedAccs = combine unifiedFroms.acc unifiedTos.acc
+
+                Accumulator.replaceEntries accIdsToReplace newKey (makeOkType arrowType) combinedRefConstrs combinedAccs
+                |> Aati.make newKey
+
+
+            | _, _ ->
+                // @TODO: Fill in the case where the types are not compatible
+                Accumulator.replaceEntries accIdsToReplace newKey (makeErrType refDefA refDefB) combinedRefConstrs acc
+                |> Aati.make newKey
 
 
 
@@ -2219,7 +2408,7 @@ module Accumulator =
             (a : AccumulatorTypeId * Result<RefDefType, AccTypeError>)
             (b : AccumulatorTypeId * Result<RefDefType, AccTypeError>)
             (acc : Accumulator)
-            : UnifyRefDefPassResult =
+            : AccAndTypeId =
             let accIdA, refDefResA = a
             let refConstrsA : RefConstr set = Accumulator.getTypeById accIdA acc |> snd
 
@@ -2237,8 +2426,7 @@ module Accumulator =
                 let updatedAcc =
                     Accumulator.replaceEntries accIdsToReplace newKey (Some (Error e)) mergedRefConstrs acc
 
-                { accAndTypeId = Aati.make newKey updatedAcc
-                  refConstrsToUnify = Seq.singleton mergedRefConstrs }
+                Aati.make newKey updatedAcc
 
             | Ok refDefA, Ok refDefB -> unifyTwoRefDefs (accIdA, refDefA) (accIdB, refDefB) acc
 
@@ -2249,7 +2437,7 @@ module Accumulator =
             (a : AccumulatorTypeId * Result<RefDefType, AccTypeError> option)
             (b : AccumulatorTypeId * Result<RefDefType, AccTypeError> option)
             (acc : Accumulator)
-            : UnifyRefDefPassResult =
+            : AccAndTypeId =
 
             let accIdA, refDefResOptA = a
             let refConstrsA : RefConstr set = Accumulator.getTypeById accIdA acc |> snd
@@ -2267,16 +2455,14 @@ module Accumulator =
                 let updatedAcc =
                     Accumulator.replaceEntries accIdsToReplace newKey None mergedRefConstrs acc
 
-                { accAndTypeId = Aati.make newKey updatedAcc
-                  refConstrsToUnify = Seq.singleton mergedRefConstrs }
+                Aati.make newKey updatedAcc
 
             | Some x, None
             | None, Some x ->
                 let updatedAcc =
                     Accumulator.replaceEntries accIdsToReplace newKey (Some x) mergedRefConstrs acc
 
-                { accAndTypeId = Aati.make newKey updatedAcc
-                  refConstrsToUnify = Seq.singleton mergedRefConstrs }
+                Aati.make newKey updatedAcc
 
             | Some refDefResA, Some refDefResB -> unifyTwoRefDefResults (accIdA, refDefResA) (accIdB, refDefResB) acc
 
@@ -2289,26 +2475,17 @@ module Accumulator =
         |> List.fold
             (fun state (accId, refDefResOpt) ->
                 /// We retrieve the item whose ID is in the state because that's the one that the current item needs to be merged with
-                let toMergeWith =
-                    Accumulator.getTypeById state.accAndTypeId.typeId state.accAndTypeId.acc
+                let toMergeWith = Accumulator.getTypeById state.typeId state.acc
 
                 let refDefToMergeWith : Result<RefDefType, AccTypeError> option = fst toMergeWith
                 // // I don't think there was anything to do with this set, because this unifyRefDefsSinglePass function should only be responsible for unifying the RefDefs it was given, not the RefConstrs I think.
                 //let refConstrsToMergeWith : RefConstr set = snd toMergeWith
 
                 let unifyResult =
-                    unifyTwoRefDefResOpts
-                        (accId, refDefResOpt)
-                        (state.accAndTypeId.typeId, refDefToMergeWith)
-                        state.accAndTypeId.acc
+                    unifyTwoRefDefResOpts (accId, refDefResOpt) (state.typeId, refDefToMergeWith) state.acc
 
-                /// I think this is correct, we need to combine the refConstrs to unify from this particular result with the results from the previous things.
-                /// @TODO: only thing I'm not sure about is if this logic is indeed correct, whether we do indeed need to maintain separate sets of RefConstrs to combine individually, or if in here we will only ever have a single set of RefConstrs to combine... tzorich biyur. I think once all the logic is complete, we'll have to see if there is actually ever any place where we want to return multiple sets of RefConstrs to unify. If yes, great, we've already accounted for it with our great prescience; if not, great, we can simplify the logic here so that we're only carrying one set of RefConstrs to unify around.
-                let combinedUnificationResult =
-                    { unifyResult with
-                        refConstrsToUnify = Seq.append unifyResult.refConstrsToUnify state.refConstrsToUnify }
 
-                combinedUnificationResult)
+                unifyResult)
             firstResult
 
 
@@ -2323,18 +2500,17 @@ module Accumulator =
 
 
     /// This should unify all the RefConstr sets and return a list of RefDef groups that each need to be unified
-    let private unifyRefConstrsSinglePass
+    and private unifyRefConstrsSinglePass
         (refConstrsToAddOrUnify : RefConstr set)
         (acc : Accumulator)
-        : {| refDefsToUnify : (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom option
+        : {| refDefsToUnify : (AccumulatorTypeId * (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom) option
              accAndTypeId : AccAndTypeId |} =
-        //let initialSet = Seq.map snd refConstrsWithIds |> Set.unionMany
-
         let toBeMerged =
             acc.refConstraintsMap
             |> Map.choose (fun _ (refDefOpt, refConstrs) ->
                 if Set.hasOverlap refConstrs refConstrsToAddOrUnify then
                     let refConstrsUnion = Set.union refConstrs refConstrsToAddOrUnify
+
                     Some (refDefOpt, refConstrsUnion)
                 else
                     None)
@@ -2401,46 +2577,30 @@ module Accumulator =
 
 
     /// This returns the Accumulator resulting from unifying the two RefDefs at the given AccIds
-    let rec unifyRefDefResOptsTom
+    and unifyRefDefResOptsTom
         (refDefsWithIds : (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom)
         (acc : Accumulator)
         : AccAndTypeId =
-        /// Ok so what do we expect this thing to return? Well...
-        /// - if there are refConstrsToUnify, that it will only have unified the RefDefs into a new entry (and set the old IDs to redirect to the new ones), but any RefConstrs that are implied to be unified from the RefDefs that have been unified, are merely returned to be unified by its specialised function. It will not unify RefConstrs itself.
-        /// - if there are no refConstrsToUnify, that must mean that the only thing to do was unifying the RefDefs, and so that's all that needs to be done. Because it can unify its own RefDefs, even nested ones. And it knows how to integrate its own nested merged RefDefs itself. It's only RefConstrs that it defers to the calling function, to be done elsewhere. For a nice clean separation of concerns.
-        ///     Although... maybe that last part is wrong actually. Maybe it should return both RefConstrs to merge *and* nested RefDefs to merge... So that this really only executes one level of operations. Which might make the logic cleaner to reason about... Because then the "single pass" functions truly only make one single pass of things, and then defer to their callers, which might be better than the single pass function trying to do nested things all on its own and accumulate a bunch of RefConstrs to merge from different levels.. AHA! Okay I think that may be why I ended up stuck and wrong the first few times maybe... because there are multiple levels of RefConstrs to merge.... but *not with each other*! Just with themselves! So... maybe it *is* right to only let these funcs only do one level of things...
-        ///     But on the other hand, maybe the single pass functions should be executing a single pass merge only for their own type of things, but for the other thing call the other (non-single-pass) unifier function...? Hm. So maybe actually this does point towards each single pass function really only doing a single level pass merge. In which case it will need to return not only which of the *other* type of thing still need to be merged, but also which of its *own* type need to be merged in the next pass! But then... Ok that may all be fine... I think... as long as we don't get stuck in a problem of which one do we do first... Although tbh I think maybe the logic should be something like:
-        ///     - unifyRefDefs -> gives us both refConstrs and the next refDefs to merge
-        ///     - unifyRefConstrs -> gives us refDefs to merge and the next refConstrs also
-        ///     - we call unifyRefDefs again, for each of the separate sets of refDefs to unify; taken from both the initial unifyRefDefs *and* the unifyRefConstrs
-        ///     - Each of these unify operations could result in yet more things to unify, so we try to unify all of those too...
-        ///     - But each time we do a unification we need to feed in the latest Accumulator, which incoroprates all the information we have gleaned so far
-        ///     - Which means we need to be able to merge Accumulators simply, without exposing the "here's more stuff to unify" here... Otherwise it's just a complete infinite recursion of unifiers returning more unifiers, and nobody actually doing the work.
-        ///     - Unless... idk, if each single-pass unifier/merging function does one bit of the work, reducing the unification work to do for the next function it passes it to? idk tbh. That's going to be very hard to figure out by just thinking about it without actually running some tests on it.
-        ///     - Because what may end up happening is an infinite cascade of things to unify, with each unifier pass returning more and more things to unify, and so the amount of work to do grows far faster than it reduces... plus maybe this results in a On^n time complexity, since each tuple and record type could potentially have infinitely many members? But then tbh that would be appropriate for the amount of type information they have. But if they are not in fact infinitely deeply nested, then this all _should_ return in reasonable time I think?
-        ///     - But what you do risk happening, is if the code we've parsed does have some infinite recursion in its type signature? E.g. something like... `f = f f` or something? Ok idk if that is a case that would actually give rise to the problem, but you could potentially have the case where a refConstr has to be equal to itself? Then maybe we end up with an infinite amount of merging work to do? Either way, I can imagine there being some pathological case where the amount of unification work to do grows and grows and grows, and never gets a chance to reduce down to something smaller. Not sure yet exactly what kind of case could give rise to that, but that's the thing I'm worried about and unsure if my proposed unification logic can handle.
-        ///     - So... okay, maybe I just need to implement it and see?
-        ///
-        ///
-        ///
-        let firstPassResult = unifyRefDefsSinglePass refDefsWithIds acc
+        // Ok so what do we expect this thing to return? Well...
+        // - if there are refConstrsToUnify, that it will only have unified the RefDefs into a new entry (and set the old IDs to redirect to the new ones), but any RefConstrs that are implied to be unified from the RefDefs that have been unified, are merely returned to be unified by its specialised function. It will not unify RefConstrs itself.
+        // - if there are no refConstrsToUnify, that must mean that the only thing to do was unifying the RefDefs, and so that's all that needs to be done. Because it can unify its own RefDefs, even nested ones. And it knows how to integrate its own nested merged RefDefs itself. It's only RefConstrs that it defers to the calling function, to be done elsewhere. For a nice clean separation of concerns.
+        //     Although... maybe that last part is wrong actually. Maybe it should return both RefConstrs to merge *and* nested RefDefs to merge... So that this really only executes one level of operations. Which might make the logic cleaner to reason about... Because then the "single pass" functions truly only make one single pass of things, and then defer to their callers, which might be better than the single pass function trying to do nested things all on its own and accumulate a bunch of RefConstrs to merge from different levels.. AHA! Okay I think that may be why I ended up stuck and wrong the first few times maybe... because there are multiple levels of RefConstrs to merge.... but *not with each other*! Just with themselves! So... maybe it *is* right to only let these funcs only do one level of things...
+        //     But on the other hand, maybe the single pass functions should be executing a single pass merge only for their own type of things, but for the other thing call the other (non-single-pass) unifier function...? Hm. So maybe actually this does point towards each single pass function really only doing a single level pass merge. In which case it will need to return not only which of the *other* type of thing still need to be merged, but also which of its *own* type need to be merged in the next pass! But then... Ok that may all be fine... I think... as long as we don't get stuck in a problem of which one do we do first... Although tbh I think maybe the logic should be something like:
+        //     - unifyRefDefs -> gives us both refConstrs and the next refDefs to merge
+        //     - unifyRefConstrs -> gives us refDefs to merge and the next refConstrs also
+        //     - we call unifyRefDefs again, for each of the separate sets of refDefs to unify; taken from both the initial unifyRefDefs *and* the unifyRefConstrs
+        //     - Each of these unify operations could result in yet more things to unify, so we try to unify all of those too...
+        //     - But each time we do a unification we need to feed in the latest Accumulator, which incoroprates all the information we have gleaned so far
+        //     - Which means we need to be able to merge Accumulators simply, without exposing the "here's more stuff to unify" here... Otherwise it's just a complete infinite recursion of unifiers returning more unifiers, and nobody actually doing the work.
+        //     - Unless... idk, if each single-pass unifier/merging function does one bit of the work, reducing the unification work to do for the next function it passes it to? idk tbh. That's going to be very hard to figure out by just thinking about it without actually running some tests on it.
+        //     - Because what may end up happening is an infinite cascade of things to unify, with each unifier pass returning more and more things to unify, and so the amount of work to do grows far faster than it reduces... plus maybe this results in a On^n time complexity, since each tuple and record type could potentially have infinitely many members? But then tbh that would be appropriate for the amount of type information they have. But if they are not in fact infinitely deeply nested, then this all _should_ return in reasonable time I think?
+        //     - But what you do risk happening, is if the code we've parsed does have some infinite recursion in its type signature? E.g. something like... `f = f f` or something? Ok idk if that is a case that would actually give rise to the problem, but you could potentially have the case where a refConstr has to be equal to itself? Then maybe we end up with an infinite amount of merging work to do? Either way, I can imagine there being some pathological case where the amount of unification work to do grows and grows and grows, and never gets a chance to reduce down to something smaller. Not sure yet exactly what kind of case could give rise to that, but that's the thing I'm worried about and unsure if my proposed unification logic can handle.
+        //     - So... okay, maybe I just need to implement it and see?
+        //
+        //
+        //
+        unifyRefDefsSinglePass refDefsWithIds acc
 
-        match Seq.toList firstPassResult.refConstrsToUnify with
-        | [] -> firstPassResult.accAndTypeId
-        | refConstrsToUnifyList ->
-            let combinedAcc =
-                refConstrsToUnifyList
-                |> List.fold
-                    (fun acc refConstrsToUnify ->
-                        if Set.isEmpty refConstrsToUnify then
-                            acc
-
-                        else
-                            unifyRefConstrs refConstrsToUnify acc
-                            |> Aati.getAcc)
-                    firstPassResult.accAndTypeId.acc
-
-            Aati.make firstPassResult.accAndTypeId.typeId combinedAcc
 
 
     /// This returns the Accumulator resulting from unifying the RefDefs that have the given RefConstrs
@@ -2453,7 +2613,7 @@ module Accumulator =
 
 
     /// Just a wrapper for unifyRefDefResOptsTom that handles all lists
-    let unifyManyRefDefResOpts
+    and unifyManyRefDefResOpts
         (refDefsWithIds : (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) seq)
         (acc : Accumulator)
         : AccAndTypeId =
@@ -2479,7 +2639,7 @@ module Accumulator =
 
 
     /// Adds a new RefDef and its reference constraints into the map (including RefConstr overlap unification)
-    let addRefDefResOptWithRefConstrs
+    and addRefDefResOptWithRefConstrs
         (refDefResOpt : Result<RefDefType, AccTypeError> option)
         (refConstrs : RefConstr set)
         (acc : Accumulator)
@@ -2505,7 +2665,7 @@ module Accumulator =
     /// Merges two accumulators. No IDs should be lost, refDefs should be unified according to reference constraint overlaps. And resulting combined IDs should be unified also.
     ///
     /// There should be no entities from one Acc referencing IDs in the other.
-    let rec combine (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
+    and combine (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
         // I think the way to do this is by inserting the items without any dependencies on other AccIds first, e.g. those entries which are None or Unit or PrimitiveType. Once those are done, then get their IDs and we can insert the next batch of types, namely those which reference (only) those IDs we've just inserted (or that reference any IDs we've inserted already, even if those were partly in a previous batch).
         // That way we can add one RefDefType (with accompanying RefConstrs) at a time, whilst still ensuring we never end up in a place where the Acc contains references to AccIds it does not contain!
         // Note: we add the items in acc1 to acc2, as per the convention where the last parameter is the data type being modified
@@ -2701,7 +2861,7 @@ module Accumulator =
                     |> Map.add newKey (refDefResOpt, Set.empty) }
 
         accWithRefDefAdded
-        |> unifyTypeConstraintIds newKey accId
+        |> unifyTwoAccTypeIds newKey accId
 
 
 
@@ -2717,202 +2877,202 @@ module Accumulator =
 
 
 
-    /// This is the function that actually traverses AccumulatorTypeIds to check if types are actually compatible with one another!
-    and private unifyRefDefs
-        (accIdA : AccumulatorTypeId)
-        (refDefA : RefDefType)
-        (accIdB : AccumulatorTypeId)
-        (refDefB : RefDefType)
-        (refConstrs : RefConstr set)
-        (acc : Accumulator)
-        : AccAndTypeId =
-        let newKey = makeAccTypeId ()
-        let accIds = Set.ofList [ accIdA; accIdB ]
+    ///// This is the function that actually traverses AccumulatorTypeIds to check if types are actually compatible with one another!
+    //and private unifyRefDefs
+    //    (accIdA : AccumulatorTypeId)
+    //    (refDefA : RefDefType)
+    //    (accIdB : AccumulatorTypeId)
+    //    (refDefB : RefDefType)
+    //    (refConstrs : RefConstr set)
+    //    (acc : Accumulator)
+    //    : AccAndTypeId =
+    //    let newKey = makeAccTypeId ()
+    //    let accIds = Set.ofList [ accIdA; accIdB ]
 
-        /// From a RefDefType
-        let makeOkType : RefDefType -> Result<RefDefType, AccTypeError> option = Ok >> Some
-        let makeErrType a b : Result<RefDefType, AccTypeError> option = DefTypeClash (a, b) |> Error |> Some
+    //    /// From a RefDefType
+    //    let makeOkType : RefDefType -> Result<RefDefType, AccTypeError> option = Ok >> Some
+    //    let makeErrType a b : Result<RefDefType, AccTypeError> option = DefTypeClash (a, b) |> Error |> Some
 
-        /// With the combined two AccIds, an empty set of RefConstrs, and the new key created above
-        let replaceEntriesInAcc refDefResOpt acc =
-            Accumulator.replaceEntries accIds newKey refDefResOpt refConstrs acc
-
-
-
-        /// Returns an error with the lists so far if lists don't have the same length; which will be a list of n pairs, where n is the length of the shorter of the two input lists.
-        /// If the lists are not the same length, the Error will contain the combined lists so far. This is useful so that we can do some type checking on those bits that do overlap.
-        let zipList listA listB : Result<('a * 'b) list, ('a * 'b) list> =
-            let rec zipList_ combinedSoFar a b =
-                match a, b with
-                | [], [] -> Ok (List.rev combinedSoFar)
-                | headA :: tailA, headB :: tailB -> zipList_ ((headA, headB) :: combinedSoFar) tailA tailB
-                | [], _ :: _
-                | _ :: _, [] -> Error (List.rev combinedSoFar)
-
-            zipList_ List.empty listA listB
+    //    /// With the combined two AccIds, an empty set of RefConstrs, and the new key created above
+    //    let replaceEntriesInAcc refDefResOpt acc =
+    //        Accumulator.replaceEntries accIds newKey refDefResOpt refConstrs acc
 
 
 
-        match refDefA, refDefB with
-        | RefDtUnitType, RefDtUnitType ->
-            replaceEntriesInAcc (makeOkType RefDtUnitType) acc
-            |> Aati.make newKey
+    //    /// Returns an error with the lists so far if lists don't have the same length; which will be a list of n pairs, where n is the length of the shorter of the two input lists.
+    //    /// If the lists are not the same length, the Error will contain the combined lists so far. This is useful so that we can do some type checking on those bits that do overlap.
+    //    let zipList listA listB : Result<('a * 'b) list, ('a * 'b) list> =
+    //        let rec zipList_ combinedSoFar a b =
+    //            match a, b with
+    //            | [], [] -> Ok (List.rev combinedSoFar)
+    //            | headA :: tailA, headB :: tailB -> zipList_ ((headA, headB) :: combinedSoFar) tailA tailB
+    //            | [], _ :: _
+    //            | _ :: _, [] -> Error (List.rev combinedSoFar)
 
-
-        | RefDtPrimitiveType primA, RefDtPrimitiveType primB ->
-            let typeResult =
-                if primA = primB then
-                    makeOkType (RefDtPrimitiveType primA)
-                else
-                    makeErrType refDefA refDefB
-
-            replaceEntriesInAcc typeResult acc
-            |> Aati.make newKey
-
-
-        | RefDtTuple (TOM (headA, neckA, tailA)), RefDtTuple (TOM (headB, neckB, tailB)) ->
-            /// This ensures the two lists of AccIds have the same length, it doesn't try to unify them yet
-            let combinedListResult = zipList tailA tailB
-
-            match combinedListResult with
-            | Ok combinedList ->
-                let combinedTom = TOM.new_ (headA, headB) (neckA, neckB) combinedList
-
-                let tomResults =
-                    combinedTom
-                    // I think this could be improved by using a TOM.mapFold (or TOM.mapFoldBack); that way we could feed in the already updated Acc for each iteration instead of having to make each thing use the original acc and then combine them all later
-                    |> TOM.map (fun (idA, idB) -> unifyTypeConstraintIds idA idB acc)
-
-                let tupleType = tomResults |> TOM.map Aati.getId |> RefDtTuple
-
-                let combinedAccs =
-                    tomResults
-                    |> TOM.map Aati.getAcc
-                    |> TOM.fold combine Accumulator.empty
-
-                replaceEntriesInAcc (makeOkType tupleType) combinedAccs
-                |> Aati.make newKey
-
-
-            | Error combinedListSoFar ->
-                let combinedTom = TOM.new_ (headA, headB) (neckA, neckB) combinedListSoFar
-
-                let tomResults =
-                    combinedTom
-                    |> TOM.map (fun (idA, idB) -> unifyTypeConstraintIds idA idB acc)
-
-                let combinedAccs =
-                    tomResults
-                    |> TOM.map Aati.getAcc
-                    |> TOM.fold combine Accumulator.empty
-
-                replaceEntriesInAcc (makeErrType refDefA refDefB) combinedAccs
-                |> Aati.make newKey
-
-
-        | RefDtList paramA, RefDtList paramB ->
-            let unifiedResult = unifyTypeConstraintIds paramA paramB acc
-
-            let listType = RefDtList unifiedResult.typeId
-
-            replaceEntriesInAcc (makeOkType listType) unifiedResult.acc
-            |> Aati.make newKey
-
-
-        | RefDtRecordExact mapA, RefDtRecordExact mapB ->
-            let mergeResults =
-                // @TODO: Actually ideally we should get the results of unifying the constraints and then separately get whether it's a non-exact merge or not, so that we don't lose the type information from the values of the two different maps
-                Map.mergeExact (fun _ valA valB -> unifyTypeConstraintIds valA valB acc) mapA mapB
-
-            match mergeResults with
-            | Ok mergedMap ->
-                let combinedAcc =
-                    mergedMap
-                    |> Map.fold (fun state _ aati -> combine aati.acc state) Accumulator.empty
-
-                let mapType =
-                    mergedMap
-                    |> Map.map (fun _ -> Aati.getId)
-                    |> RefDtRecordExact
-
-                replaceEntriesInAcc (makeOkType mapType) combinedAcc
-                |> Aati.make newKey
-
-            | Error _ ->
-                replaceEntriesInAcc (makeErrType refDefA refDefB) acc
-                |> Aati.make newKey
-
-
-        | RefDtRecordWith mapA, RefDtRecordWith mapB ->
-            // @TODO: actually the logic here should be very different to that of exact maps!
-            // @TODO: and actually there should also be compatible cases where one is exact and one is "with"!
-
-
-            let mergeResults =
-                // @TODO: Actually ideally we should get the results of unifying the constraints and then separately get whether it's a non-exact merge or not, so that we don't lose the type information from the values of the two different maps
-                Map.mergeExact (fun _ valA valB -> unifyTypeConstraintIds valA valB acc) mapA mapB
-
-            match mergeResults with
-            | Ok mergedMap ->
-                let combinedAcc =
-                    mergedMap
-                    |> Map.fold (fun state _ aati -> combine aati.acc state) Accumulator.empty
-
-                let mapType =
-                    mergedMap
-                    |> Map.map (fun _ -> Aati.getId)
-                    |> RefDtRecordExact
-
-                replaceEntriesInAcc (makeOkType mapType) combinedAcc
-                |> Aati.make newKey
-
-            | Error _ ->
-                replaceEntriesInAcc (makeErrType refDefA refDefB) acc
-                |> Aati.make newKey
+    //        zipList_ List.empty listA listB
 
 
 
-
-        | RefDtNewType (nameA, typeParamsA), RefDtNewType (nameB, typeParamsB) ->
-            if nameA = nameB then
-                let zippedLists = zipList typeParamsA typeParamsB
-
-                match zippedLists with
-                | Ok combinedList ->
-                    let resultsList =
-                        combinedList
-                        |> List.map (fun (idA, idB) -> unifyTypeConstraintIds idA idB acc)
-
-                    let typeConstraintIdList = resultsList |> List.map Aati.getId
-                    let newType = RefDtNewType (nameA, typeConstraintIdList)
-
-                    let combinedAccs = resultsList |> List.map Aati.getAcc |> combineMany
-
-                    replaceEntriesInAcc (makeOkType newType) combinedAccs
-                    |> Aati.make newKey
-
-            else
-                replaceEntriesInAcc (makeErrType refDefA refDefB) acc
-                |> Aati.make newKey
+    //    match refDefA, refDefB with
+    //    | RefDtUnitType, RefDtUnitType ->
+    //        replaceEntriesInAcc (makeOkType RefDtUnitType) acc
+    //        |> Aati.make newKey
 
 
-        | RefDtArrow (fromTypeA, toTypeA), RefDtArrow (fromTypeB, toTypeB) ->
-            let unifiedFroms = unifyTypeConstraintIds fromTypeA fromTypeB acc
-            let unifiedTos = unifyTypeConstraintIds toTypeA toTypeB acc
+    //    | RefDtPrimitiveType primA, RefDtPrimitiveType primB ->
+    //        let typeResult =
+    //            if primA = primB then
+    //                makeOkType (RefDtPrimitiveType primA)
+    //            else
+    //                makeErrType refDefA refDefB
 
-            let arrowType = RefDtArrow (unifiedFroms.typeId, unifiedTos.typeId)
-
-            let combinedAccs = combine unifiedFroms.acc unifiedTos.acc
-
-            replaceEntriesInAcc (makeOkType arrowType) combinedAccs
-            |> Aati.make newKey
-
+    //        replaceEntriesInAcc typeResult acc
+    //        |> Aati.make newKey
 
 
-        | _, _ ->
-            // @TODO: Fill in the case where the types are not compatible
-            replaceEntriesInAcc (makeErrType refDefA refDefB) acc
-            |> Aati.make newKey
+    //    | RefDtTuple (TOM (headA, neckA, tailA)), RefDtTuple (TOM (headB, neckB, tailB)) ->
+    //        /// This ensures the two lists of AccIds have the same length, it doesn't try to unify them yet
+    //        let combinedListResult = zipList tailA tailB
+
+    //        match combinedListResult with
+    //        | Ok combinedList ->
+    //            let combinedTom = TOM.new_ (headA, headB) (neckA, neckB) combinedList
+
+    //            let tomResults =
+    //                combinedTom
+    //                // I think this could be improved by using a TOM.mapFold (or TOM.mapFoldBack); that way we could feed in the already updated Acc for each iteration instead of having to make each thing use the original acc and then combine them all later
+    //                |> TOM.map (fun (idA, idB) -> unifyTypeConstraintIds idA idB acc)
+
+    //            let tupleType = tomResults |> TOM.map Aati.getId |> RefDtTuple
+
+    //            let combinedAccs =
+    //                tomResults
+    //                |> TOM.map Aati.getAcc
+    //                |> TOM.fold combine Accumulator.empty
+
+    //            replaceEntriesInAcc (makeOkType tupleType) combinedAccs
+    //            |> Aati.make newKey
+
+
+    //        | Error combinedListSoFar ->
+    //            let combinedTom = TOM.new_ (headA, headB) (neckA, neckB) combinedListSoFar
+
+    //            let tomResults =
+    //                combinedTom
+    //                |> TOM.map (fun (idA, idB) -> unifyTypeConstraintIds idA idB acc)
+
+    //            let combinedAccs =
+    //                tomResults
+    //                |> TOM.map Aati.getAcc
+    //                |> TOM.fold combine Accumulator.empty
+
+    //            replaceEntriesInAcc (makeErrType refDefA refDefB) combinedAccs
+    //            |> Aati.make newKey
+
+
+    //    | RefDtList paramA, RefDtList paramB ->
+    //        let unifiedResult = unifyTypeConstraintIds paramA paramB acc
+
+    //        let listType = RefDtList unifiedResult.typeId
+
+    //        replaceEntriesInAcc (makeOkType listType) unifiedResult.acc
+    //        |> Aati.make newKey
+
+
+    //    | RefDtRecordExact mapA, RefDtRecordExact mapB ->
+    //        let mergeResults =
+    //            // @TODO: Actually ideally we should get the results of unifying the constraints and then separately get whether it's a non-exact merge or not, so that we don't lose the type information from the values of the two different maps
+    //            Map.mergeExact (fun _ valA valB -> unifyTypeConstraintIds valA valB acc) mapA mapB
+
+    //        match mergeResults with
+    //        | Ok mergedMap ->
+    //            let combinedAcc =
+    //                mergedMap
+    //                |> Map.fold (fun state _ aati -> combine aati.acc state) Accumulator.empty
+
+    //            let mapType =
+    //                mergedMap
+    //                |> Map.map (fun _ -> Aati.getId)
+    //                |> RefDtRecordExact
+
+    //            replaceEntriesInAcc (makeOkType mapType) combinedAcc
+    //            |> Aati.make newKey
+
+    //        | Error _ ->
+    //            replaceEntriesInAcc (makeErrType refDefA refDefB) acc
+    //            |> Aati.make newKey
+
+
+    //    | RefDtRecordWith mapA, RefDtRecordWith mapB ->
+    //        // @TODO: actually the logic here should be very different to that of exact maps!
+    //        // @TODO: and actually there should also be compatible cases where one is exact and one is "with"!
+
+
+    //        let mergeResults =
+    //            // @TODO: Actually ideally we should get the results of unifying the constraints and then separately get whether it's a non-exact merge or not, so that we don't lose the type information from the values of the two different maps
+    //            Map.mergeExact (fun _ valA valB -> unifyTypeConstraintIds valA valB acc) mapA mapB
+
+    //        match mergeResults with
+    //        | Ok mergedMap ->
+    //            let combinedAcc =
+    //                mergedMap
+    //                |> Map.fold (fun state _ aati -> combine aati.acc state) Accumulator.empty
+
+    //            let mapType =
+    //                mergedMap
+    //                |> Map.map (fun _ -> Aati.getId)
+    //                |> RefDtRecordWith
+
+    //            replaceEntriesInAcc (makeOkType mapType) combinedAcc
+    //            |> Aati.make newKey
+
+    //        | Error _ ->
+    //            replaceEntriesInAcc (makeErrType refDefA refDefB) acc
+    //            |> Aati.make newKey
+
+
+
+
+    //    | RefDtNewType (nameA, typeParamsA), RefDtNewType (nameB, typeParamsB) ->
+    //        if nameA = nameB then
+    //            let zippedLists = zipList typeParamsA typeParamsB
+
+    //            match zippedLists with
+    //            | Ok combinedList ->
+    //                let resultsList =
+    //                    combinedList
+    //                    |> List.map (fun (idA, idB) -> unifyTypeConstraintIds idA idB acc)
+
+    //                let typeConstraintIdList = resultsList |> List.map Aati.getId
+    //                let newType = RefDtNewType (nameA, typeConstraintIdList)
+
+    //                let combinedAccs = resultsList |> List.map Aati.getAcc |> combineMany
+
+    //                replaceEntriesInAcc (makeOkType newType) combinedAccs
+    //                |> Aati.make newKey
+
+    //        else
+    //            replaceEntriesInAcc (makeErrType refDefA refDefB) acc
+    //            |> Aati.make newKey
+
+
+    //    | RefDtArrow (fromTypeA, toTypeA), RefDtArrow (fromTypeB, toTypeB) ->
+    //        let unifiedFroms = unifyTypeConstraintIds fromTypeA fromTypeB acc
+    //        let unifiedTos = unifyTypeConstraintIds toTypeA toTypeB acc
+
+    //        let arrowType = RefDtArrow (unifiedFroms.typeId, unifiedTos.typeId)
+
+    //        let combinedAccs = combine unifiedFroms.acc unifiedTos.acc
+
+    //        replaceEntriesInAcc (makeOkType arrowType) combinedAccs
+    //        |> Aati.make newKey
+
+
+
+    //    | _, _ ->
+    //        // @TODO: Fill in the case where the types are not compatible
+    //        replaceEntriesInAcc (makeErrType refDefA refDefB) acc
+    //        |> Aati.make newKey
 
 
 
@@ -2932,7 +3092,7 @@ module Accumulator =
 
 
 
-    and unifyTypeConstraintIds (idA : AccumulatorTypeId) (idB : AccumulatorTypeId) (acc : Accumulator) : AccAndTypeId =
+    and unifyTwoAccTypeIds (idA : AccumulatorTypeId) (idB : AccumulatorTypeId) (acc : Accumulator) : AccAndTypeId =
         let itemA, _ = Accumulator.getTypeById idA acc
         let itemB, _ = Accumulator.getTypeById idB acc
 
@@ -2946,6 +3106,7 @@ module Accumulator =
             Seq.map (fun id -> id, Accumulator.getTypeById id acc |> fst) ids
 
         unifyManyRefDefResOpts refDefsWithIds acc
+
 
     //match Seq.toList ids with
     //| [] ->
@@ -3104,7 +3265,7 @@ module Accumulator =
             let defTypeAcc = convertDefinitiveType def
             let combinedAcc = combine withRefConstrsAdded.acc defTypeAcc.acc
 
-            unifyTypeConstraintIds defTypeAcc.typeId withRefConstrsAdded.typeId combinedAcc
+            unifyTwoAccTypeIds defTypeAcc.typeId withRefConstrsAdded.typeId combinedAcc
 
 
     and convertTypeJudgment (judgment : TypeJudgment) : AccAndTypeId =
@@ -3548,10 +3709,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
                         Accumulator.combineAccsFromAatis [ bindingAccAndSelf
                                                            assignedExprAccAndSelf ]
 
-                    Accumulator.unifyTypeConstraintIds
-                        bindingAccAndSelf.typeId
-                        assignedExprAccAndSelf.typeId
-                        combinedAcc)
+                    Accumulator.unifyTwoAccTypeIds bindingAccAndSelf.typeId assignedExprAccAndSelf.typeId combinedAcc)
 
 
             let combinedAcc = Accumulator.combineAccsFromAatis typedDeclarations
@@ -3587,7 +3745,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
                                               ifTrueAccAndOwn.acc
                                               ifFalseAccAndOwn.acc ]
 
-                Accumulator.unifyTypeConstraintIds ifTrueAccAndOwn.typeId ifFalseAccAndOwn.typeId combinedAcc
+                Accumulator.unifyTwoAccTypeIds ifTrueAccAndOwn.typeId ifFalseAccAndOwn.typeId combinedAcc
 
 
 
@@ -3660,7 +3818,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
                 Accumulator.combine requiredFuncAccAndId.acc funcExprAccAndSelf.acc
 
             combinedAcc
-            |> Accumulator.unifyTypeConstraintIds funcExprAccAndSelf.typeId requiredFuncAccAndId.typeId
+            |> Accumulator.unifyTwoAccTypeIds funcExprAccAndSelf.typeId requiredFuncAccAndId.typeId
 
 
         | T.DotAccess (dottedExpr, dotSequence) ->
@@ -3668,10 +3826,7 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
 
             let withImpliedRecordType = makeDottedSeqImpliedType dotSequence exprAccAndSelf.acc
 
-            Accumulator.unifyTypeConstraintIds
-                exprAccAndSelf.typeId
-                withImpliedRecordType.typeId
-                withImpliedRecordType.acc
+            Accumulator.unifyTwoAccTypeIds exprAccAndSelf.typeId withImpliedRecordType.typeId withImpliedRecordType.acc
 
 
         | T.Operator (left, op, right) ->
@@ -3710,7 +3865,7 @@ and getAccumulatorFromParam (param : AssignmentPattern) : AccAndTypeId =
                     (Set.singleton (ByValue (LocalLower alias)))
                     nestedAccAndType.acc
 
-            Accumulator.unifyTypeConstraintIds nestedAccAndType.typeId withNameAdded.typeId withNameAdded.acc
+            Accumulator.unifyTwoAccTypeIds nestedAccAndType.typeId withNameAdded.typeId withNameAdded.acc
 
 
     and getInferredTypeFromDestructuredPattern (pattern : DestructuredPattern) : AccAndTypeId =

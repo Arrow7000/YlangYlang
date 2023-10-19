@@ -207,7 +207,7 @@ let testAccumulatorLogic =
                                  |> Map.ofSeq }
 
 
-                     let unified = Acc.unifyTypeConstraintIds guid2 guid3 acc
+                     let unified = Acc.unifyTwoAccTypeIds guid2 guid3 acc
 
                      let returnedIdResult = Accumulator.getTypeById unified.typeId unified.acc
                      let guid2Result = Accumulator.getTypeById guid2 unified.acc
@@ -242,7 +242,7 @@ let testAccumulatorLogic =
                                  |> Map.ofSeq }
 
 
-                     let unified = Acc.unifyTypeConstraintIds guid3 guid5 acc
+                     let unified = Acc.unifyTwoAccTypeIds guid3 guid5 acc
                      let returnedIdResult = Accumulator.getTypeById unified.typeId unified.acc
                      let toTypeRealId, toTypeResult = Accumulator.getRealIdAndType guid4 unified.acc
 
@@ -272,7 +272,7 @@ let testAccumulatorLogic =
                                  |> Map.ofSeq }
 
 
-                     let unified = Acc.unifyTypeConstraintIds guid3 guid5 acc
+                     let unified = Acc.unifyTwoAccTypeIds guid3 guid5 acc
                      let returnedIdResult = Accumulator.getTypeById unified.typeId unified.acc
                      let toTypeRealId, toTypeResult = Accumulator.getRealIdAndType guid4 unified.acc
 
@@ -302,7 +302,7 @@ let testAccumulatorLogic =
                                  |> Map.ofSeq }
 
 
-                     let unified = Acc.unifyTypeConstraintIds guid3 guid5 acc
+                     let unified = Acc.unifyTwoAccTypeIds guid3 guid5 acc
                      let returnedIdResult = Accumulator.getTypeById unified.typeId unified.acc
                      let toTypeRealId, toTypeResult = Accumulator.getRealIdAndType guid4 unified.acc
 
