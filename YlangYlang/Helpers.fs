@@ -1,4 +1,4 @@
-﻿[<AutoOpen>]
+[<AutoOpen>]
 module Helpers
 
 open System
@@ -263,6 +263,19 @@ type TwoOrMore<'a> =
         |> fun result -> f result neck
         |> fun result -> List.fold f result tail
 
+
+    static member foldMap<'State, 'Result>
+        (f : 'State -> 'a -> 'Result * 'State)
+        state
+        (TOM (head, neck, tail) : 'a tom)
+        =
+        let headResult, headState = f state head
+        let neckResult, neckState = f headState neck
+        let tailResults, finalState = List.mapFold f neckState tail
+
+        TOM.new_ headResult neckResult tailResults, finalState
+
+
     static member foldBack<'State>
         (f : 'a -> 'State -> 'State)
         (state : 'State)
@@ -271,6 +284,7 @@ type TwoOrMore<'a> =
         f head state
         |> fun result -> f neck result
         |> fun result -> List.foldBack f tail result
+
 
     static member fromItemAndNel item (NEL (first, tail)) = TOM (item, first, tail)
 
@@ -667,7 +681,7 @@ module Map =
 
     let removeKeys (keys : 'Key seq) map =
         let keySet = Set.ofSeq keys
-        Map.filter (fun k _ -> Set.contains k keySet) map
+        Map.filter (fun k _ -> Set.contains k keySet |> not) map
 
 
 
