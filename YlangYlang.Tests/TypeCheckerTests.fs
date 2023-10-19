@@ -22,11 +22,13 @@ let private makeNumberExpression : S.NumberLiteralValue -> Cst.Expression =
     >> S.ExplicitValue
     >> S.SingleValueExpression
 
+
 let private getType (expr : T.TypedExpr) : TypeJudgment =
     let result = getAccumulatorFromExpr expr
 
     Accumulator.convertAccIdToTypeConstraints result.typeId result.acc
-    |> Result.map deleteGuidsFromTypeConstraints
+// @TODO: restore the below when we have a good way of checking/testing for type variable constants – probably by implementing substitution properly
+//|> Result.map deleteGuidsFromTypeConstraints
 
 
 
@@ -422,7 +424,24 @@ let typeCheckThings =
                     Expect.equal
                         exprType
                         (tuple [ def i; def s ] |> def |> Ok)
-                        "Generic func applied to two things results in those two things" ]
+                        "Generic func applied to two things results in those two things"
+
+                testCase "Function with destructured params applied to param"
+                <| fun () ->
+                    let str =
+                        """
+                        let
+                            getTestFieldOfFirstParam {test} () (first,_) =
+                                test
+                        in getTestFieldOfFirstParam { test = { inner = "hullo" } } () (1,2)
+                        """ in
+
+                    let exprType = getTypeFromElmStr str
+
+                    Expect.equal
+                        exprType
+                        (recExact [ kv "inner" (def s) ] |> def |> Ok)
+                        "Lambda expression with some destructured params returns one of its destructured fields's types" ]
 
           testList
               "Ensure constrained and inferred types of names work correctly"

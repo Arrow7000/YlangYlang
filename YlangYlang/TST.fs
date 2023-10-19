@@ -258,6 +258,72 @@ type Accumulator
 
 
 
+    /// Warning! It is on the caller to ensure that the refConstrs being added here don't have any overlap with any entries already present in the map, and to unify the entries accordingly if they do.
+    /// This will replace the entry at the _real_ AccId, so the caller doesn't have to worry about fetching the real AccId first. This function also returns the real AccId for good measure.
+    static member replaceEntry
+        (accId : AccumulatorTypeId)
+        (replacer : AccumulatorTypeId
+                        -> Result<RefDefType, AccTypeError> option
+                        -> RefConstr set
+                        -> Result<RefDefType, AccTypeError> option * RefConstr set)
+        (acc : Accumulator)
+        : AccumulatorTypeId * Accumulator =
+        let realAccId, (refDefResOpt, refConstrs) = Accumulator.getRealIdAndType accId acc
+        let replaced = replacer realAccId refDefResOpt refConstrs
+
+        realAccId,
+        { acc with
+            refConstraintsMap =
+                acc.refConstraintsMap
+                |> Map.add realAccId replaced }
+
+
+
+
+    /// Replace the entry without needing to look at its contents
+    ///
+    /// Warning! It is on the caller to ensure that the refConstrs being added here don't have any overlap with any entries already present in the map, and to unify the entries accordingly if they do.
+    /// This will replace the entry at the _real_ AccId, so the caller doesn't have to worry about fetching the real AccId first
+    static member simpleReplaceEntry
+        (accId : AccumulatorTypeId)
+        (refDefResOpt : Result<RefDefType, AccTypeError> option)
+        (refConstrs : RefConstr set)
+        (acc : Accumulator)
+        : Accumulator =
+        Accumulator.replaceEntry accId (fun _ _ _ -> refDefResOpt, refConstrs) acc
+        |> snd
+
+
+
+
+    /// This can always be added without any further unifications needed 🥳 so it can be a very simple function.
+    /// Of course note that any AccIds referenced in the RefDef being added have to already exist in the Acc.
+    /// It's on the caller to ensure that we are not overwriting an existing entry in the Acc!
+    static member addRefDefResOptUnderKey
+        (key : AccumulatorTypeId)
+        (refDefResOpt : Result<RefDefType, AccTypeError> option)
+        (acc : Accumulator)
+        : Accumulator =
+        { acc with
+            refConstraintsMap =
+                acc.refConstraintsMap
+                |> Map.add key (refDefResOpt, Set.empty) }
+
+    /// This can always be added without any further unifications needed 🥳 so it can be a very simple function.
+    /// Of course note that any AccIds referenced in the RefDef being added have to already exist in the Acc
+    static member addRefDefResOpt
+        (refDefResOpt : Result<RefDefType, AccTypeError> option)
+        (acc : Accumulator)
+        : AccumulatorTypeId * Accumulator =
+        let newKey = System.Guid.NewGuid () |> AccumulatorTypeId
+
+        newKey,
+        { acc with
+            refConstraintsMap =
+                acc.refConstraintsMap
+                |> Map.add newKey (refDefResOpt, Set.empty) }
+
+
 
 
 
