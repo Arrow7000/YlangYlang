@@ -1949,152 +1949,6 @@ module AccAndTypeId =
 
 
 
-type AccChangeToMake =
-    { idsToReplace : AccumulatorTypeId seq
-      /// So I guess this is also the ID that the thing has returned?
-      idToReplaceWith : AccumulatorTypeId
-      typeToInsertForId : Result<RefDefType, AccTypeError> option
-      refConstrsForId : RefConstr set }
-
-
-
-module AccChangeToMake =
-
-    type MultipleChanges = AccChangeToMake seq
-
-    type MultipleAndAccId =
-        { typeId : AccumulatorTypeId
-          changes : MultipleChanges }
-
-
-    let getId (actm : AccChangeToMake) : AccumulatorTypeId = actm.idToReplaceWith
-    let getIdFromMultiple (actms : MultipleAndAccId) = actms.typeId
-
-    let getChanges (actm : MultipleAndAccId) : MultipleChanges = actm.changes
-
-    /// Convert a single change to an Accumulator
-    let singleChangeToAcc (change : AccChangeToMake) : Accumulator =
-        { redirectMap =
-            change.idsToReplace
-            |> Seq.map (fun id -> id, change.idToReplaceWith)
-            |> Map.ofSeq
-          refConstraintsMap =
-            Map.empty
-            |> Map.add change.idToReplaceWith (change.typeToInsertForId, change.refConstrsForId) }
-
-    /// Convert multiple changes to an Accumulator
-    let multipleChangesToAcc (changes : MultipleChanges) : Accumulator =
-        { redirectMap =
-            changes
-            |> Seq.collect (fun change ->
-                change.idsToReplace
-                |> Seq.map (fun id -> id, change.idToReplaceWith))
-            |> Map.ofSeq
-          refConstraintsMap =
-            changes
-            |> Seq.map (fun change -> change.idToReplaceWith, (change.typeToInsertForId, change.refConstrsForId))
-            |> Map.ofSeq }
-
-    /// This intends to take a "newer" version of the Accumulator and returns a diff from the old Accumulator, i.e. the changes that would need to be applied to transform the old Acc to the new one
-    let getAccDifference (newAcc : Accumulator) (oldAcc : Accumulator) : MultipleChanges =
-        let redirectDiff =
-            let oldKeys = Map.keys oldAcc.redirectMap |> Set.ofSeq
-
-            newAcc.redirectMap
-            |> Map.filter (fun key _ -> not (Set.contains key oldKeys))
-
-        /// Newer Accs could have both more or less keys than the old one, depending on whether more things were added or if old entries were unified together. I think the only way to know which are meant to be there are to look at which ones are in the newer redirects and only include those. Or... actually just delete the ones from the new ones that are still present in the old one. I think that'll do it.
-        let refConstraintsDiff =
-            let oldKeys = Map.keys oldAcc.refConstraintsMap |> Set.ofSeq
-
-            newAcc.refConstraintsMap
-            |> Map.filter (fun key _ -> not (Set.contains key oldKeys))
-
-        refConstraintsDiff
-        |> Map.toSeq
-        |> Seq.map (fun (accId, (resultOpt, refConstrs)) ->
-            let idsToReplace =
-                redirectDiff
-                |> Map.toSeq
-                |> Seq.choose (fun (oldId, newId) ->
-                    if newId = accId then
-                        Some oldId
-                    else
-                        None)
-
-            { idsToReplace = idsToReplace
-              idToReplaceWith = accId
-              typeToInsertForId = resultOpt
-              refConstrsForId = refConstrs })
-
-
-    /// Take multiple sets of changes to make and return a single one.
-    ///
-    /// @TODO: I think this is dodgy tbh... because changes can't just be composed together on their own without being applied to an Accumulator to check if it results in unification cascades!
-    let combineFromActms (aatms : MultipleAndAccId seq) : MultipleChanges = aatms |> Seq.collect getChanges
-
-    /// Handy helper function to construct an AccChangeToMake
-    let makeChange
-        (idsToReplace : AccumulatorTypeId seq)
-        (idToReplaceWith : AccumulatorTypeId)
-        (typeToInsertForId : Result<RefDefType, AccTypeError> option)
-        (refConstrsForId : RefConstr set)
-        : AccChangeToMake =
-        { idsToReplace = idsToReplace
-          idToReplaceWith = idToReplaceWith
-          typeToInsertForId = typeToInsertForId
-          refConstrsForId = refConstrsForId }
-
-
-
-    let makeChangesSingleton
-        (idsToReplace : AccumulatorTypeId seq)
-        (idToReplaceWith : AccumulatorTypeId)
-        (typeToInsertForId : Result<RefDefType, AccTypeError> option)
-        (refConstrsForId : RefConstr set)
-        : MultipleAndAccId =
-        { typeId = idToReplaceWith
-          changes =
-            makeChange idsToReplace idToReplaceWith typeToInsertForId refConstrsForId
-            |> Seq.singleton }
-
-    /// @TODO: Hm I think this is dodgy too, because you can't just add a type without checking if it results in unification cascades! (said in the tone of that scene from Mean Girls)
-    let addTypeToChanges
-        (accIds : AccumulatorTypeId seq)
-        (newKey : AccumulatorTypeId)
-        (refDefResOpt : Result<RefDefType, AccTypeError> option)
-        (refConstrs : RefConstr set)
-        (changes : AccChangeToMake seq)
-        : MultipleAndAccId =
-        { typeId = newKey
-          changes =
-            [ makeChange accIds newKey refDefResOpt refConstrs ]
-            |> Seq.append changes }
-
-
-    let applyChanges (changes : MultipleChanges) (acc : Accumulator) : Accumulator =
-        let getRootKey key =
-            Accumulator.getRealIdAndType key acc |> fst
-
-        let applySingleChange (change : AccChangeToMake) (acc : Accumulator) : Accumulator =
-            let accIdsToReplace = change.idsToReplace |> Seq.map getRootKey
-            let accIdToReplaceWith = change.idToReplaceWith
-
-            { refConstraintsMap =
-                Map.removeKeys accIdsToReplace acc.refConstraintsMap
-                |> Map.add accIdToReplaceWith (change.typeToInsertForId, change.refConstrsForId)
-
-              redirectMap =
-                  acc.redirectMap
-                  |> Map.addBulk (
-                      accIdsToReplace
-                      |> Seq.map (fun accId -> accId, accIdToReplaceWith)
-                  ) }
-
-        changes |> Seq.fold (flip applySingleChange) acc
-
-
-
 
 
 
@@ -2107,7 +1961,6 @@ module Accumulator =
 
 
     module Aati = AccAndTypeId
-    module Actm = AccChangeToMake
 
 
 
@@ -3571,7 +3424,6 @@ module RefConstrToTypeConstraintsMap =
 
 module Acc = Accumulator
 module Aati = AccAndTypeId
-module Actm = AccChangeToMake
 module TC = TypeConstraints
 
 
