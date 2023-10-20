@@ -1,4 +1,4 @@
-﻿module TypedSyntaxTree
+module TypedSyntaxTree
 
 
 
@@ -401,7 +401,7 @@ and DeclaredInfixOp =
     { associativity : S.InfixOpAssociativity
       precedence : int
       /// The value should be a function taking exactly two parameters
-      value : TypedExpr }
+      value : Expression }
 
 
 and VariantConstructor =
@@ -416,7 +416,7 @@ and VariantConstructor =
 and LowerCaseName =
     | LocalName of LetBinding
     | Param of Param
-    | TopLevelName of TypedExpr // ValueDeclaration -- This really only carried a TypedExpr anyway, so why stick it in a special wrapper record type
+    | TopLevelName of Expression // ValueDeclaration -- This really only carried a TypedExpr anyway, so why stick it in a special wrapper record type
 
 
 
@@ -451,7 +451,7 @@ and LetBinding =
         a) we've only got one expression we're evaluating per binding (and so not doing the duplicate work of evaluating the expression once for every named value in the assignment pattern), and
         b) for each named value, what path to take in that expression to get the slice of the expression that should be assigned to it, e.g. a tuple, type destructuring, etc.
       *)
-      assignedExpression : TypedExpr
+      assignedExpression : Expression
 
     //combinedInferredType : TypeJudgment
      }
@@ -473,15 +473,15 @@ and FunctionOrCaseMatchParam =
 
 
 and CompoundValues =
-    | List of TypedExpr list
-    | Tuple of TypedExpr tom
-    | Record of (RecordFieldName * TypedExpr) list
-    | RecordExtension of recordToExtend : LowerIdent * additions : NEL<RecordFieldName * TypedExpr>
+    | List of Expression list
+    | Tuple of Expression tom
+    | Record of (RecordFieldName * Expression) list
+    | RecordExtension of recordToExtend : LowerIdent * additions : NEL<RecordFieldName * Expression>
 
 
 and FunctionValue =
     { params_ : FunctionOrCaseMatchParam nel
-      body : TypedExpr }
+      body : Expression }
 
 
 and ExplicitValue =
@@ -497,41 +497,37 @@ and ExplicitValue =
 
 
 and ControlFlowExpression =
-    | IfExpression of condition : TypedExpr * ifTrue : TypedExpr * ifFalse : TypedExpr
+    | IfExpression of condition : Expression * ifTrue : Expression * ifFalse : Expression
     /// A `case <expr> of` expression with one or more patterns
-    | CaseMatch of exprToMatch : TypedExpr * branches : CaseMatchBranch nel
+    | CaseMatch of exprToMatch : Expression * branches : CaseMatchBranch nel
 
 and SingleValueExpression =
     | ExplicitValue of ExplicitValue
     | UpperIdentifier of name : UpperNameValue
     | LowerIdentifier of name : LowerNameValue
-    | LetExpression of namedValues : LetBindings * expr : TypedExpr
+    | LetExpression of namedValues : LetBindings * expr : Expression
     | ControlFlowExpression of ControlFlowExpression
 
 
 
 
 and CompoundExpression =
-    | Operator of left : TypedExpr * op : OperatorIdent * right : TypedExpr
-    | FunctionApplication of funcExpr : TypedExpr * params' : NEL<TypedExpr>
-    | DotAccess of expr : TypedExpr * dotSequence : NEL<RecordFieldName>
+    | Operator of left : Expression * op : OperatorIdent * right : Expression
+    | FunctionApplication of funcExpr : Expression * params' : NEL<Expression>
+    | DotAccess of expr : Expression * dotSequence : NEL<RecordFieldName>
 
 
 and CaseMatchBranch =
     { matchPattern : FunctionOrCaseMatchParam
-      body : TypedExpr }
+      body : Expression }
 
 
-and SingleOrCompoundExpr =
+and Expression =
     | SingleValueExpression of SingleValueExpression
     | CompoundExpression of CompoundExpression
 
 
 /// A typed expression
-and TypedExpr = { expr : SingleOrCompoundExpr }
-
-
-
 and OperatorIdent =
     | BuiltInOp of Lexer.BuiltInOperator
     | OtherOp of ident : LowerIdent
@@ -563,5 +559,5 @@ and YlModule =
       imports : S.ImportDeclaration list
       types : TypeDeclarations
       valueTypes : ValueTypeDeclarations
-      values : Map<LowerIdent, SOD<TypedExpr>>
+      values : Map<LowerIdent, SOD<Expression>>
       infixOperators : Map<LowerIdent, SOD<DeclaredInfixOp>> }

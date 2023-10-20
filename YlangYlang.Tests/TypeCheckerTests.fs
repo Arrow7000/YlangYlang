@@ -1,4 +1,4 @@
-﻿module TypeCheckerTests
+module TypeCheckerTests
 
 module S = SyntaxTree
 module Cst = ConcreteSyntaxTree
@@ -23,7 +23,7 @@ let private makeNumberExpression : S.NumberLiteralValue -> Cst.Expression =
     >> S.SingleValueExpression
 
 
-let private getType (expr : T.TypedExpr) : TypeJudgment =
+let private getType (expr : T.Expression) : TypeJudgment =
     let result = getAccumulatorFromExpr expr
 
     Accumulator.convertAccIdToTypeConstraints result.typeId result.acc
@@ -33,7 +33,7 @@ let private getType (expr : T.TypedExpr) : TypeJudgment =
 
 
 /// Lex, parse, type check, and get the typed expression from a string containing an Elm expression!
-let private getTypedExprFromElmStr text : Result<TypedExpr, Errors> =
+let private getTypedExprFromElmStr text : Result<Expression, Errors> =
     Lexer.tokeniseString text
     |> Result.mapError LexingError
     |> Result.bind (

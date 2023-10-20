@@ -704,7 +704,7 @@ let refDeftypeOfPrimitiveLiteral (primitive : S.PrimitiveLiteralValue) : RefDefT
 
 
 
-let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.Expression) : TypedExpr =
+let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.Expression) : T.Expression =
 
     match expr with
     | S.SingleValueExpression singleVal ->
@@ -712,21 +712,17 @@ let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.E
         | S.ExplicitValue explicit ->
             match explicit with
             | S.Primitive primitive ->
-
-                { expr =
-                    Primitive primitive
-                    |> ExplicitValue
-                    |> SingleValueExpression }
+                Primitive primitive
+                |> ExplicitValue
+                |> SingleValueExpression
 
 
             | S.DotGetter dotGetter ->
                 let recFieldName = unqualValToRecField dotGetter
 
-
-                { expr =
-                    DotGetter recFieldName
-                    |> ExplicitValue
-                    |> SingleValueExpression }
+                DotGetter recFieldName
+                |> ExplicitValue
+                |> SingleValueExpression
 
             | S.Compound compound ->
                 match compound with
@@ -737,12 +733,11 @@ let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.E
                              >> typeCheckCstExpression resolutionChain)
                             list
 
-                    { expr =
-                        typedList
-                        |> T.List
-                        |> Compound
-                        |> ExplicitValue
-                        |> SingleValueExpression }
+                    typedList
+                    |> T.List
+                    |> Compound
+                    |> ExplicitValue
+                    |> SingleValueExpression
 
                 | S.CompoundValues.Tuple tuple ->
                     let typedList =
@@ -751,13 +746,11 @@ let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.E
                              >> typeCheckCstExpression resolutionChain)
                             tuple
 
-
-                    { expr =
-                        typedList
-                        |> CompoundValues.Tuple
-                        |> Compound
-                        |> ExplicitValue
-                        |> SingleValueExpression }
+                    typedList
+                    |> CompoundValues.Tuple
+                    |> Compound
+                    |> ExplicitValue
+                    |> SingleValueExpression
 
                 | S.CompoundValues.Record record ->
                     let typedList =
@@ -765,12 +758,11 @@ let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.E
                         |> List.map (fun (key, value) ->
                             unqualValToRecField key.node, typeCheckCstExpression resolutionChain value.node)
 
-                    { expr =
-                        typedList
-                        |> CompoundValues.Record
-                        |> Compound
-                        |> ExplicitValue
-                        |> SingleValueExpression }
+                    typedList
+                    |> CompoundValues.Record
+                    |> Compound
+                    |> ExplicitValue
+                    |> SingleValueExpression
 
                 | S.CompoundValues.RecordExtension (extended, additions) ->
 
@@ -779,11 +771,10 @@ let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.E
                         |> NEL.map (fun (key, value) ->
                             unqualValToRecField key.node, typeCheckCstExpression resolutionChain value.node)
 
-                    { expr =
-                        CompoundValues.RecordExtension (unqualValToLowerIdent extended.node, typedList)
-                        |> Compound
-                        |> ExplicitValue
-                        |> SingleValueExpression }
+                    CompoundValues.RecordExtension (unqualValToLowerIdent extended.node, typedList)
+                    |> Compound
+                    |> ExplicitValue
+                    |> SingleValueExpression
 
             | S.Function funcVal ->
                 // @TODO: we need to actually add the params to namesMaps before we can type check the expression
@@ -798,23 +789,21 @@ let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.E
                     { params_ = funcParams
                       body = typeOfBody }
 
-                { expr =
-                    Function funcVal
-                    |> ExplicitValue
-                    |> SingleValueExpression }
+                Function funcVal
+                |> ExplicitValue
+                |> SingleValueExpression
 
 
         | S.UpperIdentifier name ->
             let ctorName = typeOrModuleIdentToUpperNameVal name
 
-            { expr = UpperIdentifier ctorName |> SingleValueExpression }
+            UpperIdentifier ctorName |> SingleValueExpression
 
         | S.LowerIdentifier name ->
             let lowerNameVal = convertValueIdentifierToLowerName name
 
-            { expr =
-                LowerIdentifier lowerNameVal
-                |> SingleValueExpression }
+            LowerIdentifier lowerNameVal
+            |> SingleValueExpression
 
         | S.LetExpression (declarations, expr) ->
 
@@ -833,10 +822,8 @@ let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.E
                       namesMap = param.namesMap
                       assignedExpression = assignedExpr })
 
-
-            { expr =
-                LetExpression (typedDeclarations, bodyExpr)
-                |> SingleValueExpression }
+            LetExpression (typedDeclarations, bodyExpr)
+            |> SingleValueExpression
 
 
         | S.ControlFlowExpression controlFlow ->
@@ -853,11 +840,9 @@ let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.E
                 let unifiedTrue = typedIfTrueBranch
                 let unifiedFalse = typedIfFalseBranch
 
-
-                { expr =
-                    IfExpression (conditionalWithBoolConstraint, unifiedTrue, unifiedFalse)
-                    |> ControlFlowExpression
-                    |> SingleValueExpression }
+                IfExpression (conditionalWithBoolConstraint, unifiedTrue, unifiedFalse)
+                |> ControlFlowExpression
+                |> SingleValueExpression
 
 
             | S.CaseMatch (exprToMatch, branches) ->
@@ -869,11 +854,9 @@ let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.E
                         { matchPattern = typeFuncOrCaseMatchParam pattern.node
                           body = typeCheckCstExpression resolutionChain branchExpr.node })
 
-
-                { expr =
-                    CaseMatch (typedExprToMatch, typedBranches)
-                    |> ControlFlowExpression
-                    |> SingleValueExpression }
+                CaseMatch (typedExprToMatch, typedBranches)
+                |> ControlFlowExpression
+                |> SingleValueExpression
 
     | S.CompoundExpression compExpr ->
         match compExpr with
@@ -887,9 +870,8 @@ let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.E
                     >> typeCheckCstExpression resolutionChain
                 )
 
-            { expr =
-                FunctionApplication (typedFunc, typedParams)
-                |> CompoundExpression }
+            FunctionApplication (typedFunc, typedParams)
+            |> CompoundExpression
 
         | S.DotAccess (dottedExpr, dotSequence) ->
             let rec makeNestedMap (fieldSeq : RecordFieldName list) =
@@ -903,9 +885,8 @@ let rec typeCheckCstExpression (resolutionChain : LowerIdent list) (expr : Cst.E
 
             let typedExpr = typeCheckCstExpression resolutionChain dottedExpr.node
 
-            { expr =
-                DotAccess (typedExpr, dotSequence.node |> NEL.map unqualValToRecField)
-                |> CompoundExpression }
+            DotAccess (typedExpr, dotSequence.node |> NEL.map unqualValToRecField)
+            |> CompoundExpression
 
         | S.Operator (left, opSequence) ->
             failwith
@@ -1031,10 +1012,10 @@ module Accumulator =
             InMultipleEntries (idsToMerge, fullRefConstrUnion)
 
 
-    /// This should unify all the RefDefs and return a list of RefConstr sets that each need to be unified
+    /// This returns the Accumulator resulting from unifying the two or more AccIds and RefDefs
     ///
     /// @TODO: I think... unifying RefDefs should never ever need to return the "refConstrs to unify", because since the sets of RefConstrs should be completely disjoint... if we're unifying refdefs all we need to do is store a simple union of the refconstrs and that should never ever have any further ramifications... the only thing is if we're introducing a new refconstr set that combines a bunch of them, that could entail merging more than one thing... but even then, all we need to do then is a snowballing of those RefDefs into a single type result/judgment, but the refconstraints..? they're still only ever going to be a single fucking union. With never any further ramifications after unifying the refdefs... so... i think perhaps this whole symmetric single pass thing has been a bit of a red herring and maybe it's only the refConstr unification that can result in refDefs to unify, but once that's done... the refDef unification can do a simple unification of its own RefConstrs and call it a day... wahoooowww.
-    let rec private unifyRefDefsSinglePass
+    let rec private unifyRefDefResOptsTom
         (refDefsWithIds : (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom)
         (acc : Accumulator)
         : AccAndTypeId =
@@ -1392,12 +1373,7 @@ module Accumulator =
 
 
 
-    /// This returns the Accumulator resulting from unifying the two or more AccIds and RefDefs
-    and unifyRefDefResOptsTom
-        (refDefsWithIds : (AccumulatorTypeId * Result<RefDefType, AccTypeError> option) tom)
-        (acc : Accumulator)
-        : AccAndTypeId =
-        unifyRefDefsSinglePass refDefsWithIds acc
+
 
     /// Version of unifyRefDefResOptsTom that only needs to be given AccIds, not the RefDefs also
     and unifyAccIdsTom (accIds : AccumulatorTypeId tom) (acc : Accumulator) : AccAndTypeId =
@@ -2027,7 +2003,7 @@ module Accumulator =
 
     let addTypeConstraintsToAcc (typeConstraints : TypeConstraints) (acc : Accumulator) : AccAndTypeId =
         let result = convertTypeConstraints typeConstraints
-        Aati.make result.typeId (combine result.acc acc)
+        combine result.acc acc |> Aati.make result.typeId
 
 
     let addTypeConstraintForName (name : RefConstr) (tc : TypeConstraints) (acc : Accumulator) : AccAndTypeId =
@@ -2093,6 +2069,11 @@ module TC = TypeConstraints
 
 
 
+(*
+
+    Helpers for function types and record dotting
+
+*)
 
 
 /// Pass in the IDs for the params and return type and this will return an Acc and AccId for the overall arrow type
@@ -2149,13 +2130,13 @@ let rec makeDottedSeqImpliedType (fields : RecordFieldName nel) acc =
 
 
 
+(*
+    Get Accumulator and type from expressions
+*)
 
-
-/// @TODO: I think it's finally time to tackle this now!!
-let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAndTypeId =
+let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
 
     let makeOkType = Ok >> Some
-
 
     match expr with
     | T.SingleValueExpression singleVal ->
@@ -2428,13 +2409,10 @@ let rec getAccumulatorFromSingleOrCompExpr (expr : SingleOrCompoundExpr) : AccAn
 
 
         | T.Operator (left, op, right) ->
+            // @TODO: need to break up operator sequence into a binary tree of operators branch nodes and operands leaf nodes
             failwith
                 "@TODO: need to break up operator sequence into a binary tree of operators branch nodes and operands leaf nodes"
 
-
-
-and getAccumulatorFromExpr (expr : TypedExpr) : AccAndTypeId =
-    getAccumulatorFromSingleOrCompExpr expr.expr
 
 
 //and getAccumulatorFromParam (param : FunctionOrCaseMatchParam) : AccumulatorAndOwnType =
