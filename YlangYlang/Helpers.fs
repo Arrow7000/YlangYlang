@@ -457,6 +457,8 @@ module String =
 
     let join (sep : string) (seq : string seq) = String.Join (sep, seq)
 
+    let trim len (str : string) = str.Substring (0, len)
+
 
 module List =
     let takeWhilePartition predicate list =

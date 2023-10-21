@@ -32,7 +32,7 @@ type NamesMaps =
 //let getValues names : ValueDeclarations = names.values
 
 
-let empty : NamesMaps =
+let private empty : NamesMaps =
     { typeDeclarations = Map.empty
       typeConstructors = Map.empty
       typeParams = Map.empty
@@ -42,19 +42,19 @@ let empty : NamesMaps =
 
 
 
-let findTypeDeclaration (name : UpperIdent) { typeDeclarations = nameMap } = Map.tryFind name nameMap
+let private findTypeDeclaration (name : UpperIdent) { typeDeclarations = nameMap } = Map.tryFind name nameMap
 
-let findTypeConstructor (name : UpperNameValue) { typeConstructors = nameMap } = Map.tryFind name nameMap
+let private findTypeConstructor (name : UpperNameValue) { typeConstructors = nameMap } = Map.tryFind name nameMap
 
-let findTypeParam (name : LowerIdent) ({ typeParams = nameMap } : NamesMaps) = Map.tryFind name nameMap
+let private findTypeParam (name : LowerIdent) ({ typeParams = nameMap } : NamesMaps) = Map.tryFind name nameMap
 
 
 (* @TODO: hmm it's actually a bit problematic to make both the value and value type annotation getters be non-nullable, because it's possible that only a value or only a type annotation has been declared, in which case one of these *will* fail... *)
 
-let findValue (name : LowerNameValue) ({ values = nameMap } : NamesMaps) = Map.tryFind name nameMap
-let findValueType (name : LowerNameValue) ({ valueTypes = nameMap } : NamesMaps) = Map.tryFind name nameMap
+let private findValue (name : LowerNameValue) ({ values = nameMap } : NamesMaps) = Map.tryFind name nameMap
+let private findValueType (name : LowerNameValue) ({ valueTypes = nameMap } : NamesMaps) = Map.tryFind name nameMap
 
-let findValueAndType (name : LowerNameValue) (namesMap : NamesMaps) =
+let private findValueAndType (name : LowerNameValue) (namesMap : NamesMaps) =
     let value = findValue name namesMap
     let valueType = findValueType name namesMap
 

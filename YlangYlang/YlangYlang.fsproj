@@ -15,9 +15,10 @@
     <Compile Include="ExpressionParsing.fs" />
     <Compile Include="QST.fs" />
     <Compile Include="NameResolution.fs" />
-    <Compile Include="TST.fs" />
-    <Compile Include="TypedNameResolution.fs" />
-    <Compile Include="TypeChecker.fs" />
+    <Compile Include="TypeInference\TypedSyntaxTree.fs" />
+    <Compile Include="TypeInference\TypedNameResolution.fs" />
+    <Compile Include="TypeInference\Accumulator.fs" />
+    <Compile Include="TypeInference\TypeChecker.fs" />
     <Compile Include="Errors.fs" />
     <Compile Include="DebugHelpers.fs" />
   </ItemGroup>

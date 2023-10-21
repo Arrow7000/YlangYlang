@@ -12,7 +12,9 @@
     <Compile Include="DisjointSetForestTests.fs" />
     <Compile Include="ParserTests.fs" />
     <Compile Include="ExpressionParsingTests.fs" />
-    <Compile Include="TypeCheckerTests.fs" />
+    <Compile Include="TypeInference\TypeInferTestHelpers.fs" />
+    <Compile Include="TypeInference\AccumulatorTests.fs" />
+    <Compile Include="TypeInference\TypeCheckerTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
 

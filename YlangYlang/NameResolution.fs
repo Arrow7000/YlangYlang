@@ -103,6 +103,9 @@ let reifyLower
 
 
 
+
+
+
 type VariantConstructor =
     { typeDeclaration : Cst.NewTypeDeclaration
       variantCase : Cst.VariantCase
@@ -309,6 +312,36 @@ let unqualTypeToUpperIdent (UnqualTypeOrModuleIdentifier label) = UpperIdent lab
 
 let convertRecordMapFields map =
     Map.mapKeyVal (fun key v -> S.mapNode unqualValToRecField key, v) map
+
+
+
+
+let typeOrModuleIdentToUpperNameVal : Lexer.TypeOrModuleIdentifier -> UpperNameValue =
+    function
+    | Lexer.QualifiedType (QualifiedModuleOrTypeIdentifier path) ->
+        let (moduleSegments, UnqualTypeOrModuleIdentifier ident) = NEL.peelOffLast path
+
+        let modulePath =
+            moduleSegments
+            |> NEL.map (fun (UnqualTypeOrModuleIdentifier segment) -> segment)
+
+        FullyQualifiedUpperIdent (ModulePath modulePath, UpperIdent ident)
+        |> FullyQualifiedUpper
+
+    | Lexer.UnqualType (UnqualTypeOrModuleIdentifier ident) -> UpperIdent ident |> LocalUpper
+
+let recFieldToLowerIdent (RecordFieldName str) = LowerIdent str
+let lowerIdentToRecFieldName (LowerIdent ident) = RecordFieldName ident
+
+
+
+let convertValueIdentifierToLowerName : ValueIdentifier -> LowerNameValue =
+    function
+    | QualifiedValue (QualifiedValueIdentifier (path, valIdent)) ->
+        reifyLower (QualifiedModuleOrTypeIdentifier path) valIdent
+        |> FullyQualifiedLower
+    | UnqualValue ident -> unqualValToLowerIdent ident |> LocalLower
+
 
 
 

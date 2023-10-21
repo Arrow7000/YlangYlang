@@ -1,4 +1,4 @@
-module TypedSyntaxTree
+﻿module TypedSyntaxTree
 
 
 
@@ -41,6 +41,13 @@ let makeTypeConstrId () =
     System.Guid.NewGuid () |> TypeConstraintId
 
 
+let private recFieldToStr (RecordFieldName str) = str
+
+let private upperNameValToStr (str : UpperNameValue) =
+    // @TODO: stringify the actual underlying names properly
+    string str
+
+
 
 
 
@@ -68,6 +75,46 @@ and DefinitiveType =
     | DtArrow of fromType : TypeConstraints * toType : TypeConstraints
 
 
+    override this.ToString () =
+        match this with
+        | DtUnitType -> "()"
+        | DtPrimitiveType prim ->
+            match prim with
+            | Float -> "Float"
+            | Int -> "Int"
+            | String -> "String"
+            | Char -> "Char"
+            | Bool -> "Bool"
+        | DtTuple tcs ->
+            let commafied = tcs |> TOM.map string |> String.join ", "
+
+            "(" + commafied + ")"
+        | DtList tc -> "List " + string tc
+        | DtRecordWith fields ->
+            // @TODO: should add something in here for the thing that's being expanded
+            let commafiedFields =
+                fields
+                |> Map.toList
+                |> List.map (fun (key, value) -> recFieldToStr key + " : " + string value)
+                |> String.join ", "
+
+            "{ " + commafiedFields + " }"
+
+        | DtRecordExact fields ->
+            let commafiedFields =
+                fields
+                |> Map.toList
+                |> List.map (fun (key, value) -> recFieldToStr key + " : " + string value)
+                |> String.join ", "
+
+            "{ " + commafiedFields + " }"
+
+        | DtNewType (typeName, typeVars) ->
+            upperNameValToStr typeName
+            + " "
+            + (List.map string typeVars |> String.join " ")
+
+        | DtArrow (fromType, toType) -> string fromType + " -> " + string toType
 
 
 
@@ -96,6 +143,13 @@ and RefConstr =
     /// I.e. must be the same type as this type param
     | ByTypeParam of LowerIdent
 
+    override this.ToString () =
+        match this with
+        | ByValue name -> string name
+        | IsBoundVar (TypeConstraintId guid) -> string guid |> String.trim 6
+        | ByConstructorType ctor -> upperNameValToStr ctor
+        | ByTypeParam (LowerIdent str) -> str
+
 //| IsOfTypeByName of typeName : UpperNameValue * typeParams : TypeConstraints list
 
 
@@ -109,6 +163,19 @@ and RefConstr =
 /// If a `RefConstr` turns out to be incompatible with the existing definitive type, this will be transformed into a `TypeJudgment` with the incompatible definitive types listed in the `Error` case.
 and TypeConstraints =
     | Constrained of definitive : DefinitiveType option * otherConstraints : RefConstr set
+
+    override this.ToString () =
+        let (Constrained (defOpt, others)) = this
+
+        let refConstrsStr =
+            others
+            |> Set.toSeq
+            |> Seq.map string
+            |> String.join ", "
+
+        match defOpt with
+        | None -> refConstrsStr
+        | Some def -> refConstrsStr + " : " + string def
 
 
     /// Makes a new TypeConstraints which is truly empty
@@ -125,6 +192,42 @@ and TypeConstraints =
 
     static member addRefConstraints (constrs : RefConstr set) (Constrained (defOpt, refConstrs)) =
         Constrained (defOpt, Set.union constrs refConstrs)
+
+
+
+    (* Some shorter aliases *)
+
+    static member fromDef = TypeConstraints.fromDefinitive
+    static member fromRef = TypeConstraints.fromConstraint
+    static member any () = TypeConstraints.makeUnspecific ()
+
+
+
+
+
+
+
+
+/// I think there is space for yet another version of a concrete type, which is either a concrete type or a generic. And it can hold itself recursively. The benefit being that we don't need to have either a full TC with all the reference constraints, nor a special RefDtType that can't live outside of an Accumulator, but one that can stand on its own, and is exactly as concrete as it can be, with no extraneous information included.
+type ConcreteType =
+    | ConcreteUnitType
+    | ConcretePrimitiveType of BuiltInPrimitiveTypes
+    | ConcreteTuple of ConcreteOrGeneric tom
+    | ConcreteList of ConcreteOrGeneric
+    /// I think we need to pass in a type param to the extended record, so that not including one is a type error
+    | ConcreteRecordWith of referencedFields : Map<RecordFieldName, ConcreteOrGeneric>
+    | ConcreteRecordExact of Map<RecordFieldName, ConcreteOrGeneric>
+    /// This guy will only be able to be assigned at the root of a file once we have the types on hand to resolve them and assign
+    | ConcreteNewType of typeName : UpperNameValue * typeParams : ConcreteOrGeneric list
+    | ConcreteArrow of fromType : ConcreteOrGeneric * toType : ConcreteOrGeneric
+
+
+and ConcreteOrGeneric =
+    | Concrete of ConcreteType
+    | Generic
+
+
+
 
 
 
@@ -161,7 +264,12 @@ and TypeError =
 
 
 /// Only to be used as keys and references in Accumulator and RefDefTypes
-type AccumulatorTypeId = | AccumulatorTypeId of System.Guid
+type AccumulatorTypeId =
+    | AccumulatorTypeId of System.Guid
+
+    override this.ToString () =
+        let (AccumulatorTypeId guid) = this
+        string guid |> String.trim 6
 
 
 
@@ -178,9 +286,54 @@ type RefDefType =
     | RefDtArrow of fromType : AccumulatorTypeId * toType : AccumulatorTypeId
 
 
+    override this.ToString () =
+        match this with
+        | RefDtUnitType -> "()"
+        | RefDtPrimitiveType prim ->
+            match prim with
+            | Float -> "Float"
+            | Int -> "Int"
+            | String -> "String"
+            | Char -> "Char"
+            | Bool -> "Bool"
+        | RefDtTuple tcs ->
+            let commafied = tcs |> TOM.map string |> String.join ", "
+
+            "(" + commafied + ")"
+
+        | RefDtList tc -> "List " + string tc
+        | RefDtRecordWith fields ->
+            // @TODO: should add something in here for the thing that's being expanded
+            let commafiedFields =
+                fields
+                |> Map.toList
+                |> List.map (fun (key, value) -> recFieldToStr key + " : " + string value)
+                |> String.join ", "
+
+            "{ " + commafiedFields + " }"
+
+        | RefDtRecordExact fields ->
+            let commafiedFields =
+                fields
+                |> Map.toList
+                |> List.map (fun (key, value) -> recFieldToStr key + " : " + string value)
+                |> String.join ", "
+
+            "{ " + commafiedFields + " }"
+
+        | RefDtNewType (typeName, typeVars) ->
+            upperNameValToStr typeName
+            + " "
+            + (List.map string typeVars |> String.join " ")
+
+        | RefDtArrow (fromType, toType) -> string fromType + " -> " + string toType
+
 
 type AccTypeError = | DefTypeClash of RefDefType * RefDefType
 
+
+/// Commonly used type throughout Accumulator stuff
+type RefDefResOpt = Result<RefDefType, AccTypeError> option
 
 
 type TypeJudgment2 = Result<RefDefType option, AccTypeError>
@@ -327,32 +480,6 @@ type Accumulator
 
 
 
-
-
-
-//type MentionableType =
-//    | UnitType
-//    | GenericTypeVar of LowerNameValue
-//    | Tuple of TupleType
-//    | Record of RecordType
-//    | ExtendedRecord of ExtendedRecordType
-//    | ReferencedType of typeName : UpperNameValue * typeParams : MentionableType list
-//    | Arrow of fromType : MentionableType * toType : NEL<MentionableType>
-//    | Parensed of MentionableType
-
-
-
-///// Because there need to be at least two members for it to be a tuple type. Otherwise it's just a parensed expression.
-//and TupleType = { types : MentionableType tom }
-
-
-//and RecordType =
-//    { fields : Map<RecordFieldName, MentionableType> }
-
-///// @TODO: as said above at MentionableType, we may need separate versions of this for value type annotations vs for use in type declarations; because in the former free type variables are allowed, but in the latter they are not.
-//and ExtendedRecordType =
-//    { extendedAlias : LowerIdent // Because it has to be a type param
-//      fields : Map<RecordFieldName, MentionableType> }
 
 
 
