@@ -1,4 +1,6 @@
 ﻿module Accumulator
+// Should maybe call this TypeUnification or TypeContext or something
+
 
 open TypedSyntaxTree
 
@@ -41,6 +43,9 @@ module Aati = AccAndTypeId
 
 
 
+
+
+
 let private makeAccTypeId () : AccumulatorTypeId =
     System.Guid.NewGuid () |> AccumulatorTypeId
 
@@ -50,14 +55,14 @@ let private makeAccTypeId () : AccumulatorTypeId =
 let empty = Accumulator.empty
 
 
-
+/// Specifies what needs to be done when a group of RefConstrs are introduced/unified into an Acc
 type private UnifyRefConstrsPassResult =
     /// The added refConstrs are not present in the Acc at all, so just create a new entry with only these RefConstrs and call it a day
     | NotCurrentlyInAcc
     /// The added refConstrs overlap with exactly one Acc entry, so all you need to do is replace that ID's existing RefConstrs with this one and call it a day
-    | InOneEntry of realAccId : AccumulatorTypeId * combinedRefConstrs : RefConstr set
+    | InOneEntry of accId : AccumulatorTypeId * combinedRefConstrs : RefConstr set
     /// The added refConstrs overlap with two or more Acc entries, so the RefDefs need to be unified, and they all need to have their refConstrs set to this unified set
-    | InMultipleEntries of realAccIds : AccumulatorTypeId tom * allUnifiedRefConstrs : RefConstr set
+    | InMultipleEntries of accIds : AccumulatorTypeId tom * allUnifiedRefConstrs : RefConstr set
 
 
 
@@ -157,10 +162,10 @@ let rec private unifyRefDefResOptsTom
             Aati.make newKey updatedAcc
 
 
-        | RefDtPrimitiveType primA, RefDtPrimitiveType primB ->
+        | RefDtPrimType primA, RefDtPrimType primB ->
             let typeResult =
                 if primA = primB then
-                    makeOkType (RefDtPrimitiveType primA)
+                    makeOkType (RefDtPrimType primA)
                 else
                     makeErrType refDefA refDefB
 
@@ -223,55 +228,51 @@ let rec private unifyRefDefResOptsTom
                 |> Aati.make newKey
 
 
-        | RefDtRecordExact mapA, RefDtRecordExact mapB ->
-            let mergeResults =
-                // @TODO: Actually ideally we should get the results of unifying the constraints and then separately get whether it's a non-exact merge or not, so that we don't lose the type information from the values of the two different maps
-                Map.mergeExact (fun _ valA valB -> unifyTwoAccTypeIds valA valB acc) mapA mapB
+        | RefDtRecordExact mapA, RefDtRecordExact mapB
+        | RefDtRecordWith mapA, RefDtRecordExact mapB
+        | RefDtRecordExact mapA, RefDtRecordWith mapB ->
+            // If one of the records is an exact one then combining it with an extensible one forces the combined expression to be the exact record's type
 
-            match mergeResults with
-            | Ok mergedMap ->
-                let combinedAcc =
-                    mergedMap
-                    |> Map.fold (fun state _ aati -> combine aati.acc state) Accumulator.empty
+            match Map.getOverlap mapA mapB with
+            | Map.MapsOverlap.Exact shared ->
+                let mergedMap, threadedAcc =
+                    shared
+                    |> Map.fold
+                        (fun (newMap, acc') key (idA, idB) ->
+                            let unificationResult = unifyTwoAccTypeIds idA idB acc'
+                            Map.add key unificationResult.typeId newMap, unificationResult.acc)
+                        (Map.empty, acc)
 
-                let mapType =
-                    mergedMap
-                    |> Map.map (fun _ -> Aati.getId)
-                    |> RefDtRecordExact
+                let mapType = RefDtRecordExact mergedMap
 
-                Accumulator.replaceEntries accIdsToReplace newKey (makeOkType mapType) combinedRefConstrs combinedAcc
+                Accumulator.replaceEntries accIdsToReplace newKey (makeOkType mapType) combinedRefConstrs threadedAcc
                 |> Aati.make newKey
 
-            | Error _ ->
+
+            | _ ->
                 Accumulator.replaceEntries accIdsToReplace newKey (makeErrType refDefA refDefB) combinedRefConstrs acc
                 |> Aati.make newKey
+
 
         | RefDtRecordWith mapA, RefDtRecordWith mapB ->
-            // @TODO: actually the logic here should be very different to that of exact maps!
-            // @TODO: and actually there should also be compatible cases where one is exact and one is "with"!
+            let addSingleEntry (mergedMap, acc') fieldName accId = Map.add fieldName accId mergedMap, acc'
 
+            let mergedFields, combinedAcc =
+                Map.foldAllEntries
+                    addSingleEntry
+                    addSingleEntry
+                    (fun (mergedMap, acc') fieldName valA valB ->
+                        let unifyResult = unifyTwoAccTypeIds valA valB acc'
+                        Map.add fieldName unifyResult.typeId mergedMap, unifyResult.acc)
+                    mapA
+                    mapB
+                    (Map.empty, acc)
 
-            let mergeResults =
-                // @TODO: Actually ideally we should get the results of unifying the constraints and then separately get whether it's a non-exact merge or not, so that we don't lose the type information from the values of the two different maps
-                Map.mergeExact (fun _ valA valB -> unifyTwoAccTypeIds valA valB acc) mapA mapB
+            let mapType = RefDtRecordWith mergedFields
 
-            match mergeResults with
-            | Ok mergedMap ->
-                let combinedAcc =
-                    mergedMap
-                    |> Map.fold (fun state _ aati -> combine aati.acc state) Accumulator.empty
+            Accumulator.replaceEntries accIdsToReplace newKey (makeOkType mapType) combinedRefConstrs combinedAcc
+            |> Aati.make newKey
 
-                let mapType =
-                    mergedMap
-                    |> Map.map (fun _ -> Aati.getId)
-                    |> RefDtRecordWith
-
-                Accumulator.replaceEntries accIdsToReplace newKey (makeOkType mapType) combinedRefConstrs combinedAcc
-                |> Aati.make newKey
-
-            | Error _ ->
-                Accumulator.replaceEntries accIdsToReplace newKey (makeErrType refDefA refDefB) combinedRefConstrs acc
-                |> Aati.make newKey
 
         | RefDtNewType (nameA, typeParamsA), RefDtNewType (nameB, typeParamsB) ->
             if nameA = nameB then
@@ -477,18 +478,18 @@ and addRefConstrsForAccId (accId : AccumulatorTypeId) (refConstrs : RefConstr se
         |> snd
 
     match refConstrInformation with
-    | UnifyRefConstrsPassResult.NotCurrentlyInAcc ->
+    | NotCurrentlyInAcc ->
         // The refConstrs need to be added for the newly added item
 
         addRefConstrsToEntry refConstrs |> Aati.make accId
 
-    | UnifyRefConstrsPassResult.InOneEntry (existingAccId, combinedRefConstrs) ->
+    | InOneEntry (existingAccId, combinedRefConstrs) ->
         // Unify the existing and new entries
 
         addRefConstrsToEntry combinedRefConstrs
         |> unifyTwoAccTypeIds existingAccId accId
 
-    | UnifyRefConstrsPassResult.InMultipleEntries (accIds, combinedRefConstrs) ->
+    | InMultipleEntries (accIds, combinedRefConstrs) ->
         // Unify the new and existing entries
 
         addRefConstrsToEntry combinedRefConstrs
@@ -508,10 +509,28 @@ and addRefDefResOptWithRefConstrs
 
 
 
+and unifyTwoRefDefResOpts
+    (accIdA : AccumulatorTypeId)
+    (refDefResOptA : Result<RefDefType, AccTypeError> option)
+    (accIdB : AccumulatorTypeId)
+    (refDefResOptB : Result<RefDefType, AccTypeError> option)
+    (acc : Accumulator)
+    : AccAndTypeId =
+    unifyRefDefResOptsTom (TOM.make (accIdA, refDefResOptA) (accIdB, refDefResOptB)) acc
+
+
+
+and unifyTwoAccTypeIds (idA : AccumulatorTypeId) (idB : AccumulatorTypeId) (acc : Accumulator) : AccAndTypeId =
+    let itemA, _ = Accumulator.getTypeById idA acc
+    let itemB, _ = Accumulator.getTypeById idB acc
+
+    unifyTwoRefDefResOpts idA itemA idB itemB acc
+
+
 /// Merges two accumulators. No IDs should be lost, refDefs should be unified according to reference constraint overlaps. And resulting combined IDs should be unified also.
 ///
 /// There should be no entities from one Acc referencing IDs in the other.
-and combine (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
+let rec combine (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
     // I think the way to do this is by inserting the items without any dependencies on other AccIds first, e.g. those entries which are None or Unit or PrimitiveType. Once those are done, then get their IDs and we can insert the next batch of types, namely those which reference (only) those IDs we've just inserted (or that reference any IDs we've inserted already, even if those were partly in a previous batch).
     // That way we can add one RefDefType (with accompanying RefConstrs) at a time, whilst still ensuring we never end up in a place where the Acc contains references to AccIds it does not contain!
     // Note: we add the items in acc1 to acc2, as per the convention where the last parameter is the data type being modified
@@ -524,7 +543,7 @@ and combine (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
 
         match refDef with
         | RefDtUnitType -> true
-        | RefDtPrimitiveType _ -> true
+        | RefDtPrimType _ -> true
         | RefDtList accId -> hasId accId
         | RefDtTuple accIdTom -> accIdTom |> TOM.map hasId |> TOM.fold (&&) true
         | RefDtRecordWith fields ->
@@ -646,28 +665,12 @@ and combineAccsFromAatis (aatis : AccAndTypeId seq) =
 
 
 
+
 /// Adds a new entry and unifies RefConstrs as needed
-and addRefConstraints (refConstrs : RefConstr set) (acc : Accumulator) : AccAndTypeId =
+let addRefConstraints (refConstrs : RefConstr set) (acc : Accumulator) : AccAndTypeId =
     addRefDefResOptWithRefConstrs None refConstrs acc
 
 
-
-and unifyTwoRefDefResOpts
-    (accIdA : AccumulatorTypeId)
-    (refDefResOptA : Result<RefDefType, AccTypeError> option)
-    (accIdB : AccumulatorTypeId)
-    (refDefResOptB : Result<RefDefType, AccTypeError> option)
-    (acc : Accumulator)
-    : AccAndTypeId =
-    unifyRefDefResOptsTom (TOM.make (accIdA, refDefResOptA) (accIdB, refDefResOptB)) acc
-
-
-
-and unifyTwoAccTypeIds (idA : AccumulatorTypeId) (idB : AccumulatorTypeId) (acc : Accumulator) : AccAndTypeId =
-    let itemA, _ = Accumulator.getTypeById idA acc
-    let itemB, _ = Accumulator.getTypeById idB acc
-
-    unifyTwoRefDefResOpts idA itemA idB itemB acc
 
 
 
@@ -680,73 +683,6 @@ let unifyManyTypeConstraintIds (ids : AccumulatorTypeId seq) (acc : Accumulator)
 
 
 
-
-
-/// This returns the Accumulator resulting from unifying the RefDefs that have the given RefConstrs
-let unifyRefConstrs
-    // @TODO: hmm this keyOpt isn't actually used in all cases; and that's because this function is actually the wrong place to both add and edit things in the Acc. I think we probably want to get rid of this function eventually and replace it with a simple function that can handle being given RefConstrs to add/unify into the Acc, and then just sub-unifies the entries based on the return information from `getRefConstrAddOrUnifyInfo`.
-    (keyOpt : AccumulatorTypeId option)
-    (newRefDefResOpt : Result<RefDefType, AccTypeError> option)
-    (refConstrs : RefConstr set)
-    (acc : Accumulator)
-    : AccAndTypeId =
-    let newKey =
-        match keyOpt with
-        | Some key -> key
-        | None -> makeAccTypeId ()
-
-    let firstPassResult = getRefConstrAddOrUnifyInfo refConstrs acc
-
-    match firstPassResult with
-    | NotCurrentlyInAcc ->
-        // Add the refConstrs to the Acc
-
-        { acc with
-            refConstraintsMap =
-                acc.refConstraintsMap
-                |> Map.add newKey (newRefDefResOpt, refConstrs) }
-        |> Aati.make newKey
-
-    | InOneEntry (accId, combinedRefConstrs) ->
-        // Add the refConstrs to this accId's item in the Acc
-
-        let replacedAcc =
-            Accumulator.replaceEntry accId (fun _ refDefResOpt _ -> refDefResOpt, combinedRefConstrs) acc
-            |> snd
-
-        match newRefDefResOpt with
-        | None -> Aati.make accId replacedAcc
-
-        | Some newRefDefRes ->
-            let newKey', accWithRefDefAdded =
-                Accumulator.addRefDefResOpt (Some newRefDefRes) replacedAcc
-
-            let unificationResult = unifyTwoAccTypeIds accId newKey' accWithRefDefAdded
-
-            unificationResult
-
-    | InMultipleEntries (accIds, allUnifiedRefConstrs) ->
-        // Merge all the RefDefs at the given IDs and insert the full unified RefConstrs into its slot in the Acc
-
-        let accWithNewItemAdded =
-            { acc with
-                refConstraintsMap =
-                    acc.refConstraintsMap
-                    |> Map.add newKey (newRefDefResOpt, allUnifiedRefConstrs) }
-
-        let unifiedResult = unifyAccIdsTom accIds accWithNewItemAdded
-
-        let unifiedRealId, (unifiedRefDef, _) =
-            Accumulator.getRealIdAndType unifiedResult.typeId unifiedResult.acc
-
-        let accWithRefConstrsReplaced =
-            { unifiedResult.acc with
-                refConstraintsMap =
-                    unifiedResult.acc.refConstraintsMap
-                    |> Map.add unifiedRealId (unifiedRefDef, allUnifiedRefConstrs) }
-
-        accWithRefConstrsReplaced
-        |> Aati.make unifiedRealId
 
 
 
@@ -810,7 +746,7 @@ let rec convertDefinitiveType (def : DefinitiveType) : AccAndTypeId =
         |> Aati.make newKey
 
     | DtPrimitiveType prim ->
-        makeSingletonAcc (makeOkType (RefDtPrimitiveType prim))
+        makeSingletonAcc (makeOkType (RefDtPrimType prim))
         |> Aati.make newKey
 
     | DtList tc ->
@@ -933,7 +869,7 @@ let rec convertRefDefToTypeConstraints
 
     match refDef with
     | RefDtUnitType -> fromDef DtUnitType
-    | RefDtPrimitiveType prim -> DtPrimitiveType prim |> fromDef
+    | RefDtPrimType prim -> DtPrimitiveType prim |> fromDef
     | RefDtList constrId ->
         let foundTypeResultOpt, refConstrs = Accumulator.getTypeById constrId acc
 
@@ -1072,21 +1008,22 @@ let addTypeConstraintForName (name : RefConstr) (tc : TypeConstraints) (acc : Ac
 
 
 /// This is mostly for verifying tests and things, to have an easy way to compare a thing to a concrete thing without polluting it with reference constraints and things
-let rec convertRefDefToConcreteType (refDef : RefDefType) (acc : Accumulator) : Result<ConcreteType, AccTypeError> =
-    let convertFromAccId typeId =
-        let refDefResOpt, _ = Accumulator.getTypeById typeId acc
-        convertRefDefResOptToConcrete refDefResOpt acc
+let rec convertRefDefToConcreteType
+    (refDef : RefDefType)
+    (acc : Accumulator)
+    : Result<ConcreteOrGeneric, AccTypeError> =
+    let convertFromAccId typeId = convertAccTypeIdToConcrete typeId acc
 
     match refDef with
-    | RefDtUnitType -> Ok ConcreteUnitType
-    | RefDtPrimitiveType prim -> ConcretePrimitiveType prim |> Ok
-    | RefDtList tc -> convertFromAccId tc |> Result.map ConcreteList
+    | RefDtUnitType -> Ok ConcUnitType
+    | RefDtPrimType prim -> ConcPrimType prim |> Ok
+    | RefDtList tc -> convertFromAccId tc |> Result.map ConcList
     | RefDtTuple accIds ->
         accIds
         |> TOM.map convertFromAccId
         |> TOM.sequenceResult
         |> Result.mapError NEL.head
-        |> Result.map ConcreteTuple
+        |> Result.map ConcTuple
     | RefDtRecordWith fields ->
         fields
         |> Map.toList
@@ -1095,7 +1032,7 @@ let rec convertRefDefToConcreteType (refDef : RefDefType) (acc : Accumulator) : 
             |> Result.map (fun v -> field, v))
         |> Result.sequenceList
         |> Result.mapError NEL.head
-        |> Result.map (Map.ofList >> ConcreteRecordWith)
+        |> Result.map (Map.ofList >> ConcRecordWith)
 
     | RefDtRecordExact fields ->
         fields
@@ -1105,7 +1042,7 @@ let rec convertRefDefToConcreteType (refDef : RefDefType) (acc : Accumulator) : 
             |> Result.map (fun v -> field, v))
         |> Result.sequenceList
         |> Result.mapError NEL.head
-        |> Result.map (Map.ofList >> ConcreteRecordExact)
+        |> Result.map (Map.ofList >> ConcRecordExact)
 
     | RefDtNewType (typeName, typeVars) ->
         let typeVarResults =
@@ -1115,11 +1052,11 @@ let rec convertRefDefToConcreteType (refDef : RefDefType) (acc : Accumulator) : 
             |> Result.mapError NEL.head
 
         typeVarResults
-        |> Result.map (fun typeVars' -> ConcreteNewType (typeName, typeVars'))
+        |> Result.map (fun typeVars' -> ConcNewType (typeName, typeVars'))
 
     | RefDtArrow (fromType, toType) ->
         (convertFromAccId fromType, convertFromAccId toType)
-        ||> Result.map2 (fun from' to' -> ConcreteArrow (from', to')) always
+        ||> Result.map2 (fun from' to' -> ConcArrow (from', to')) always
 
 
 
@@ -1128,19 +1065,27 @@ and convertRefDefOptToConcrete
     (acc : Accumulator)
     : Result<ConcreteOrGeneric, AccTypeError> =
     match refDefOpt with
-    | Some refDef ->
-        convertRefDefToConcreteType refDef acc
-        |> Result.map Concrete
+    | Some refDef -> convertRefDefToConcreteType refDef acc
+
     | None -> Ok Generic
 
 
 
-and convertRefDefResOptToConcrete (refDefResOpt : Result<RefDefType, AccTypeError> option) (acc : Accumulator) =
+and convertRefDefResOptToConcrete
+    (refDefResOpt : Result<RefDefType, AccTypeError> option)
+    (acc : Accumulator)
+    : Result<ConcreteOrGeneric, AccTypeError> =
     match refDefResOpt with
     | Some (Ok refDef) -> convertRefDefOptToConcrete (Some refDef) acc
     | Some (Error e) -> Error e
     | None -> convertRefDefOptToConcrete None acc
 
+and convertAccTypeIdToConcrete
+    (accId : AccumulatorTypeId)
+    (acc : Accumulator)
+    : Result<ConcreteOrGeneric, AccTypeError> =
+    let refDefResOpt, _ = Accumulator.getTypeById accId acc
+    convertRefDefResOptToConcrete refDefResOpt acc
 
 
 
@@ -1148,17 +1093,20 @@ and convertRefDefResOptToConcrete (refDefResOpt : Result<RefDefType, AccTypeErro
 
 
 
-let rec convertDefinitiveToConcrete (defType : DefinitiveType) : ConcreteType =
+
+
+
+let rec convertDefinitiveToConcrete (defType : DefinitiveType) : ConcreteOrGeneric =
     match defType with
-    | DtUnitType -> ConcreteUnitType
-    | DtPrimitiveType prim -> ConcretePrimitiveType prim
-    | DtTuple items -> ConcreteTuple (TOM.map convertTypeConstraintsToConcrete items)
-    | DtList tc -> ConcreteList (convertTypeConstraintsToConcrete tc)
-    | DtRecordWith fields -> ConcreteRecordWith (Map.map (fun _ tc -> convertTypeConstraintsToConcrete tc) fields)
-    | DtRecordExact fields -> ConcreteRecordExact (Map.map (fun _ tc -> convertTypeConstraintsToConcrete tc) fields)
-    | DtNewType (typeName, typeVars) -> ConcreteNewType (typeName, List.map convertTypeConstraintsToConcrete typeVars)
+    | DtUnitType -> ConcUnitType
+    | DtPrimitiveType prim -> ConcPrimType prim
+    | DtTuple items -> ConcTuple (TOM.map convertTypeConstraintsToConcrete items)
+    | DtList tc -> ConcList (convertTypeConstraintsToConcrete tc)
+    | DtRecordWith fields -> ConcRecordWith (Map.map (fun _ tc -> convertTypeConstraintsToConcrete tc) fields)
+    | DtRecordExact fields -> ConcRecordExact (Map.map (fun _ tc -> convertTypeConstraintsToConcrete tc) fields)
+    | DtNewType (typeName, typeVars) -> ConcNewType (typeName, List.map convertTypeConstraintsToConcrete typeVars)
     | DtArrow (fromType, toType) ->
-        ConcreteArrow (convertTypeConstraintsToConcrete fromType, convertTypeConstraintsToConcrete toType)
+        ConcArrow (convertTypeConstraintsToConcrete fromType, convertTypeConstraintsToConcrete toType)
 
 
 
@@ -1166,7 +1114,7 @@ and convertTypeConstraintsToConcrete (tc : TypeConstraints) : ConcreteOrGeneric 
     let (Constrained (defOpt, _)) = tc
 
     match defOpt with
-    | Some def -> convertDefinitiveToConcrete def |> Concrete
+    | Some def -> convertDefinitiveToConcrete def
     | None -> Generic
 
 
@@ -1190,6 +1138,12 @@ let getEntryByRefConstr
 let getAccIdByRefConstr (refConstr : RefConstr) (acc : Accumulator) : AccumulatorTypeId option =
     getEntryByRefConstr refConstr acc
     |> Option.map fst
+
+
+
+
+
+
 
 
 

@@ -209,21 +209,19 @@ and TypeConstraints =
 
 
 /// I think there is space for yet another version of a concrete type, which is either a concrete type or a generic. And it can hold itself recursively. The benefit being that we don't need to have either a full TC with all the reference constraints, nor a special RefDtType that can't live outside of an Accumulator, but one that can stand on its own, and is exactly as concrete as it can be, with no extraneous information included.
-type ConcreteType =
-    | ConcreteUnitType
-    | ConcretePrimitiveType of BuiltInPrimitiveTypes
-    | ConcreteTuple of ConcreteOrGeneric tom
-    | ConcreteList of ConcreteOrGeneric
+type ConcreteOrGeneric =
+    | ConcUnitType
+    | ConcPrimType of BuiltInPrimitiveTypes
+    | ConcTuple of ConcreteOrGeneric tom
+    | ConcList of ConcreteOrGeneric
     /// I think we need to pass in a type param to the extended record, so that not including one is a type error
-    | ConcreteRecordWith of referencedFields : Map<RecordFieldName, ConcreteOrGeneric>
-    | ConcreteRecordExact of Map<RecordFieldName, ConcreteOrGeneric>
+    | ConcRecordWith of referencedFields : Map<RecordFieldName, ConcreteOrGeneric>
+    | ConcRecordExact of Map<RecordFieldName, ConcreteOrGeneric>
     /// This guy will only be able to be assigned at the root of a file once we have the types on hand to resolve them and assign
-    | ConcreteNewType of typeName : UpperNameValue * typeParams : ConcreteOrGeneric list
-    | ConcreteArrow of fromType : ConcreteOrGeneric * toType : ConcreteOrGeneric
+    | ConcNewType of typeName : UpperNameValue * typeParams : ConcreteOrGeneric list
+    | ConcArrow of fromType : ConcreteOrGeneric * toType : ConcreteOrGeneric
 
-
-and ConcreteOrGeneric =
-    | Concrete of ConcreteType
+    /// The special generic type, i.e. not a concrete type
     | Generic
 
 
@@ -269,7 +267,7 @@ type AccumulatorTypeId =
 
     override this.ToString () =
         let (AccumulatorTypeId guid) = this
-        string guid |> String.trim 6
+        String.trim 6 (string guid) + "..."
 
 
 
@@ -277,7 +275,7 @@ type AccumulatorTypeId =
 /// Basically the same as a T.DefinitiveType but with guids referencing other types in the Acc instead of their own TypeConstraints
 type RefDefType =
     | RefDtUnitType
-    | RefDtPrimitiveType of BuiltInPrimitiveTypes
+    | RefDtPrimType of BuiltInPrimitiveTypes
     | RefDtList of AccumulatorTypeId
     | RefDtTuple of AccumulatorTypeId tom
     | RefDtRecordWith of referencedFields : Map<RecordFieldName, AccumulatorTypeId>
@@ -289,7 +287,7 @@ type RefDefType =
     override this.ToString () =
         match this with
         | RefDtUnitType -> "()"
-        | RefDtPrimitiveType prim ->
+        | RefDtPrimType prim ->
             match prim with
             | Float -> "Float"
             | Int -> "Int"
@@ -385,7 +383,6 @@ type Accumulator
 
     static member getRealId (accId : AccumulatorTypeId) (acc : Accumulator) =
         Accumulator.getRealIdAndType accId acc |> fst
-
 
 
     /// Use with caution! This literally just replaces entries and sticks the replaced keys in the redirect map. It does *not* unify the new entry with the rest of the reference constraints map!

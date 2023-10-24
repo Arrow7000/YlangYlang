@@ -79,7 +79,7 @@ let testAccumulatorLogic =
                                    guid3, (RefDtList guid4 |> Ok |> Some, set [ refD ])
                                    guid4, (None, set [ refA ])
                                    guid5, (RefDtList guid6 |> Ok |> Some, set [ refB; refC ])
-                                   guid6, (RefDtPrimitiveType String |> Ok |> Some, Set.empty) ]
+                                   guid6, (RefDtPrimType String |> Ok |> Some, Set.empty) ]
                                  |> Map.ofSeq }
 
 
@@ -89,7 +89,7 @@ let testAccumulatorLogic =
 
                      let expectedResult = RefDtList toTypeRealId |> Ok |> Some, set [ refB; refC; refD ]
 
-                     let expectedTypeParam = RefDtPrimitiveType String |> Ok |> Some, set [ refA ]
+                     let expectedTypeParam = RefDtPrimType String |> Ok |> Some, set [ refA ]
 
                      Expect.equal
                          returnedIdResult
@@ -109,7 +109,7 @@ let testAccumulatorLogic =
                                    guid3, (RefDtArrow (guid1, guid4) |> Ok |> Some, set [ refD ])
                                    guid4, (None, set [ refA ])
                                    guid5, (RefDtArrow (guid1, guid6) |> Ok |> Some, Set.empty)
-                                   guid6, (RefDtPrimitiveType String |> Ok |> Some, Set.empty) ]
+                                   guid6, (RefDtPrimType String |> Ok |> Some, Set.empty) ]
                                  |> Map.ofSeq }
 
 
@@ -120,7 +120,7 @@ let testAccumulatorLogic =
                      let expectedResult =
                          RefDtArrow (guid1, toTypeRealId) |> Ok |> Some, set [ refB; refC; refD ]
 
-                     let expectedToType = RefDtPrimitiveType String |> Ok |> Some, set [ refA ]
+                     let expectedToType = RefDtPrimType String |> Ok |> Some, set [ refA ]
 
                      Expect.equal
                          returnedIdResult
@@ -149,7 +149,7 @@ let testAccumulatorLogic =
 
                      let expectedResult = RefDtList toTypeRealId |> Ok |> Some, set [ refB; refC; refD ]
 
-                     let expectedTypeParam = RefDtPrimitiveType String |> Ok |> Some, set [ refA ]
+                     let expectedTypeParam = RefDtPrimType String |> Ok |> Some, set [ refA ]
 
                      Expect.equal
                          returnedIdResult

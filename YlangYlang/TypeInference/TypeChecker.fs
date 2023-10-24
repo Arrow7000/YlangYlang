@@ -1,4 +1,5 @@
 ﻿module TypeChecker
+// Should maybe call this type inference
 
 
 open Lexer
@@ -520,12 +521,12 @@ let refDeftypeOfPrimitiveLiteral (primitive : S.PrimitiveLiteralValue) : RefDefT
     match primitive with
     | S.NumberPrimitive num ->
         match num with
-        | S.FloatLiteral _ -> RefDtPrimitiveType Float
-        | S.IntLiteral _ -> RefDtPrimitiveType Int
-    | S.CharPrimitive _ -> RefDtPrimitiveType Char
-    | S.StringPrimitive _ -> RefDtPrimitiveType String
+        | S.FloatLiteral _ -> RefDtPrimType Float
+        | S.IntLiteral _ -> RefDtPrimType Int
+    | S.CharPrimitive _ -> RefDtPrimType Char
+    | S.StringPrimitive _ -> RefDtPrimType String
     | S.UnitPrimitive _ -> RefDtUnitType
-    | S.BoolPrimitive _ -> RefDtPrimitiveType Bool
+    | S.BoolPrimitive _ -> RefDtPrimType Bool
 
 
 
@@ -1199,7 +1200,7 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
             let typedDeclarations =
                 declarations
                 |> NEL.map (fun binding ->
-                    let bindingAccAndSelf = getAccumulatorFromBinding binding
+                    let bindingAccAndSelf = getAccumulatorFromParam binding.paramPattern
                     let assignedExprAccAndSelf = getAccumulatorFromExpr binding.assignedExpression
 
                     let combinedAcc =
@@ -1228,7 +1229,7 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
             | T.IfExpression (cond, ifTrue, ifFalse) ->
                 let condAccAndOwn = getAccumulatorFromExpr cond
 
-                let boolRefDef = RefDtPrimitiveType BuiltInPrimitiveTypes.Bool
+                let boolRefDef = RefDtPrimType BuiltInPrimitiveTypes.Bool
 
                 let withBoolConstrAdded =
                     Accumulator.addRefDefConstraintForAccId

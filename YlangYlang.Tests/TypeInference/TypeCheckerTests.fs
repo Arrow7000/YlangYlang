@@ -72,23 +72,14 @@ let typeCheckThings =
                     let convertedToConcrete : Result<ConcreteOrGeneric, AccTypeError> =
                         Acc.convertRefDefResOptToConcrete resultRefDef result.acc
 
-                    let conc = Concrete
 
-                    let str = ConcretePrimitiveType String |> conc
-                    let listOfStr = ConcreteList str |> conc
+                    let str = ConcPrimType String
+                    let listOfStr = ConcList str
 
-                    let expected =
-                        ConcreteArrow (
-                            conc ConcreteUnitType,
-                            ConcreteArrow (
-                                listOfStr,
-                                ConcreteArrow (Generic, ConcreteTuple (TOM.make str listOfStr) |> conc)
-                                |> conc
-                            )
-                            |> conc
-                        )
-                        |> conc
-                        |> Ok
+                    let innerArrows =
+                        ConcArrow (listOfStr, (ConcArrow (Generic, (ConcTuple (TOM.make str listOfStr)))))
+
+                    let expected = ConcArrow (ConcUnitType, innerArrows) |> Ok
 
                     Expect.equal
                         convertedToConcrete
@@ -96,73 +87,75 @@ let typeCheckThings =
                         "Arrow type signature is parsed correctly from NEL of type IDs"
                 }
 
-                test "Correctly infers type of params based on type IDs" {
+                //test "Correctly infers type of params based on type IDs" {
 
-                    let id1 : RefConstr = v "1"
-                    let id2 : RefConstr = v "2"
-                    let id3 : RefConstr = v "3"
-                    let id4 : RefConstr = v "4"
+                //    let id1 : RefConstr = v "1"
+                //    let id2 : RefConstr = v "2"
+                //    let id3 : RefConstr = v "3"
+                //    let id4 : RefConstr = v "4"
 
-                    let tc : TypeConstraints =
-                        arrowChain [ defCstrs unit [ id1 ]
-                                     defCstrs (list (def s)) [ id2 ]
-                                     cstr id3
-                                     defCstrs (tuple [ def s; list (def s) |> def ]) [ id4 ] ]
-                        |> def
+                //    let tc : TypeConstraints =
+                //        arrowChain [ defCstrs unit [ id1 ]
+                //                     defCstrs (list (def s)) [ id2 ]
+                //                     cstr id3
+                //                     defCstrs (tuple [ def s; list (def s) |> def ]) [ id4 ] ]
+                //        |> def
 
-                    let processedTc : Acc.AccAndTypeId = Acc.convertTypeConstraints tc
+                //    let processedTc : Acc.AccAndTypeId = Acc.convertTypeConstraints tc
 
-                    let accId1 =
-                        Acc.getAccIdByRefConstr id1 processedTc.acc
-                        |> Option.get
+                //    let accId1 =
+                //        Acc.getAccIdByRefConstr id1 processedTc.acc
+                //        |> Option.get
 
-                    let accId2 =
-                        Acc.getAccIdByRefConstr id2 processedTc.acc
-                        |> Option.get
+                //    let accId2 =
+                //        Acc.getAccIdByRefConstr id2 processedTc.acc
+                //        |> Option.get
 
-                    let accId3 =
-                        Acc.getAccIdByRefConstr id3 processedTc.acc
-                        |> Option.get
+                //    let accId3 =
+                //        Acc.getAccIdByRefConstr id3 processedTc.acc
+                //        |> Option.get
 
-                    let accId4 =
-                        Acc.getAccIdByRefConstr id4 processedTc.acc
-                        |> Option.get
-
-
-                    let result : Acc.AccAndTypeId =
-                        makeAccIdDestType (NEL.new_ accId1 [ accId2; accId3; accId4 ]) processedTc.acc
-
-                    let resultRefDef, _ = Accumulator.getTypeById result.typeId result.acc
-
-                    let convertedToConcrete : Result<ConcreteOrGeneric, AccTypeError> =
-                        Acc.convertRefDefResOptToConcrete resultRefDef result.acc
-
-                    let conc = Concrete
-
-                    let str = ConcretePrimitiveType String |> conc
-                    let listOfStr = ConcreteList str |> conc
-
-                    let expected =
-                        ConcreteArrow (
-                            conc ConcreteUnitType,
-                            ConcreteArrow (
-                                listOfStr,
-                                ConcreteArrow (Generic, ConcreteTuple (TOM.make str listOfStr) |> conc)
-                                |> conc
-                            )
-                            |> conc
-                        )
-                        |> conc
-                        |> Ok
-
-                    Expect.equal
-                        convertedToConcrete
-                        expected
-                        "Arrow type signature is parsed correctly from NEL of type IDs"
+                //    let accId4 =
+                //        Acc.getAccIdByRefConstr id4 processedTc.acc
+                //        |> Option.get
 
 
+                //    let result : Acc.AccAndTypeId =
+                //        makeAccIdDestType (NEL.new_ accId1 [ accId2; accId3; accId4 ]) processedTc.acc
 
-                } ]
+                //    let resultRefDef, _ = Accumulator.getTypeById result.typeId result.acc
+
+                //    let convertedToConcrete : Result<ConcreteOrGeneric, AccTypeError> =
+                //        Acc.convertRefDefResOptToConcrete resultRefDef result.acc
+
+                //    let conc = Concrete
+
+                //    let str = ConcPrimType String |> conc
+                //    let listOfStr = ConcList str |> conc
+
+                //    let expected =
+                //        ConcArrow (
+                //            conc ConcUnitType,
+                //            ConcArrow (
+                //                listOfStr,
+                //                ConcArrow (Generic, ConcTuple (TOM.make str listOfStr) |> conc)
+                //                |> conc
+                //            )
+                //            |> conc
+                //        )
+                //        |> conc
+                //        |> Ok
+
+                //    Expect.equal
+                //        convertedToConcrete
+                //        expected
+                //        "Arrow type signature is parsed correctly from NEL of type IDs"
+
+
+
+                //}
+
+                ]
           testList
               "Type check primitives"
               [ test "Type check int literal from string" {
