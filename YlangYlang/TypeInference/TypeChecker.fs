@@ -1135,8 +1135,7 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
                         typedKeyVals
                         |> NEL.map (fun (key, aati) -> key, aati.typeId)
                         |> Map.ofSeq
-                        // I think this needs to be exact because extending a record results in a record with exactly the same type as the record it's extending
-                        |> RefDtRecordExact
+                        |> RefDtRecordWith
 
 
                     Accumulator.addRefDefResOptWithRefConstrs

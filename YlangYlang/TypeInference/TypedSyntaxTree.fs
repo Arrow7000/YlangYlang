@@ -334,9 +334,6 @@ type AccTypeError = | DefTypeClash of RefDefType * RefDefType
 type RefDefResOpt = Result<RefDefType, AccTypeError> option
 
 
-type TypeJudgment2 = Result<RefDefType option, AccTypeError>
-
-
 
 
 /// @TODO: this should really also contain the other `ConstrainType`s, in case some of them also get evaluated to incompatible definitive types
@@ -352,9 +349,7 @@ type TypeJudgment = Result<TypeConstraints, AccTypeError>
 
 
 /// Attempt at making accumulator working by using two internal maps, one where every single def type gets a guid assigned to it, and every ref constraint gets placed in a set with its others, which points to a guid, which in turn may have a def type assigned to it.
-type Accumulator
-// electric boogaloo
- =
+type Accumulator =
     { refConstraintsMap : Map<AccumulatorTypeId, Result<RefDefType, AccTypeError> option * RefConstr set>
 
       /// This stores old ID references so that we don't ever run the risk of an ID ever getting out of date or replaced. This way a reference ID, once made, is reliable.

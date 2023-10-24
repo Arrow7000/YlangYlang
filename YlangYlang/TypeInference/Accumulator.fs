@@ -229,13 +229,13 @@ let rec private unifyRefDefResOptsTom
 
 
         | RefDtRecordExact mapA, RefDtRecordExact mapB
+        // If one of the records is an exact one then combining it with an extensible one forces the combined expression to be the exact record's type
         | RefDtRecordWith mapA, RefDtRecordExact mapB
         | RefDtRecordExact mapA, RefDtRecordWith mapB ->
-            // If one of the records is an exact one then combining it with an extensible one forces the combined expression to be the exact record's type
 
             match Map.getOverlap mapA mapB with
             | Map.MapsOverlap.Exact shared ->
-                let mergedMap, threadedAcc =
+                let mergedFields, threadedAcc =
                     shared
                     |> Map.fold
                         (fun (newMap, acc') key (idA, idB) ->
@@ -243,9 +243,9 @@ let rec private unifyRefDefResOptsTom
                             Map.add key unificationResult.typeId newMap, unificationResult.acc)
                         (Map.empty, acc)
 
-                let mapType = RefDtRecordExact mergedMap
+                let recordType = RefDtRecordExact mergedFields
 
-                Accumulator.replaceEntries accIdsToReplace newKey (makeOkType mapType) combinedRefConstrs threadedAcc
+                Accumulator.replaceEntries accIdsToReplace newKey (makeOkType recordType) combinedRefConstrs threadedAcc
                 |> Aati.make newKey
 
 
@@ -268,9 +268,9 @@ let rec private unifyRefDefResOptsTom
                     mapB
                     (Map.empty, acc)
 
-            let mapType = RefDtRecordWith mergedFields
+            let recordType = RefDtRecordWith mergedFields
 
-            Accumulator.replaceEntries accIdsToReplace newKey (makeOkType mapType) combinedRefConstrs combinedAcc
+            Accumulator.replaceEntries accIdsToReplace newKey (makeOkType recordType) combinedRefConstrs combinedAcc
             |> Aati.make newKey
 
 
