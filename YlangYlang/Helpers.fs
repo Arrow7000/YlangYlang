@@ -1,4 +1,4 @@
-[<AutoOpen>]
+﻿[<AutoOpen>]
 module Helpers
 
 open System
@@ -404,15 +404,17 @@ type Result<'a, 'e> with
     static member sequenceList (list : Result<'a, 'b> list) : Result<'a list, 'b nel> =
         Result.sequence list |> Result.map Seq.toList
 
-    static member traverse f =
-        List.map f
-        >> Result.sequence
-        >> Result.map List.ofSeq
+    static member traverse (f : 'a -> Result<'b, 'c>) : 'a list -> Result<'b list, 'c nel> =
+        List.map f >> Result.sequenceList
 
     static member bindError (f : 'errA -> Result<'T, 'errB>) (result : Result<'T, 'errA>) =
         match result with
         | Ok res -> Ok res
         | Error e -> f e
+
+
+    static member mapBoth mapOk mapErr =
+        Result.map mapOk >> Result.mapError mapErr
 
 
     static member map2 mapOks (mapErrs : 'err -> 'err -> 'err) result1 result2 =
@@ -445,7 +447,7 @@ type Result<'a, 'e> with
 
 
 module String =
-    let ofSeq s = Seq.fold (fun s c -> s + string c) "" s
+    let ofSeq (chars : char seq) = String.Concat chars
 
     let len s = String.length s |> uint
 
@@ -531,6 +533,29 @@ module List =
     let minSafe list = minBySafe id list
 
 
+
+
+
+
+type Either<'a, 'b> =
+    | Left of 'a
+    | Right of 'b
+
+    static member mapLeft f either =
+        match either with
+        | Left l -> Left (f l)
+        | Right r -> Right r
+
+    static member mapRight f either =
+        match either with
+        | Left l -> Left l
+        | Right r -> Right (f r)
+
+
+
+
+
+
 module Map =
     let mapKeyVal (f : 'Key -> 'T -> ('NKey * 'U)) map =
         Map.fold
@@ -559,6 +584,144 @@ module Map =
             map2
 
 
+
+
+
+    let foldSharedKeys
+        (fold : 'State -> 'Key -> 'a -> 'b -> 'State)
+        (map1 : Map<'Key, 'a>)
+        (map2 : Map<'Key, 'b>)
+        (initialState : 'State)
+        : 'State =
+        map1
+        |> Map.fold
+            (fun state keyFrom1 valueFrom1 ->
+                match Map.tryFind keyFrom1 map2 with
+                | Some valueFrom2 -> fold state keyFrom1 valueFrom1 valueFrom2
+                | None -> state)
+            initialState
+
+
+    /// Map over two maps but only those keys that they both have in common. Discard the rest.
+    let mapSharedKeys (map : 'Key -> 'a -> 'b -> 'c) (map1 : Map<'Key, 'a>) (map2 : Map<'Key, 'b>) : Map<'Key, 'c> =
+        let fold state k a b = Map.add k (map k a b) state
+        foldSharedKeys fold map1 map2 Map.empty
+
+
+
+
+
+
+    /// @TODO: should ideally split this out into two different functions, one for getting only the map1 - map2 difference keys, and one for the map2 - map1 difference keys. Then we can compose those two to recreate this foldNonSharedKeys function
+    let foldNonSharedKeys
+        (foldFrom1 : 'State -> 'Key -> 'a -> 'State)
+        (foldFrom2 : 'State -> 'Key -> 'b -> 'State)
+        (map1 : Map<'Key, 'a>)
+        (map2 : Map<'Key, 'b>)
+        initialState
+        : 'State =
+        let map1FoldState, map2Remaining =
+            map1
+            |> Map.fold
+                (fun (state, map2Remaining) keyFrom1 valueFrom1 ->
+                    match Map.tryFind keyFrom1 map2Remaining with
+                    | None ->
+                        // If this key is not present in map2 then we add it to the map
+                        //Map.add keyFrom1 (foldFrom1 keyFrom1 valueFrom1) merged, map2Remaining
+                        foldFrom1 state keyFrom1 valueFrom1, map2Remaining
+                    | Some _ ->
+                        // If this key is present in map2 then we don't add it to the map and we also remove it from the map2 keys
+                        state, Map.remove keyFrom1 map2Remaining)
+                (initialState, map2)
+
+        // So at this point map2Remaining contains only keys that are not present in map1, so we can just map and add its entries to the merged map
+        map2Remaining
+        |> Map.fold (fun state key value -> foldFrom2 state key value) map1FoldState
+
+
+    /// Map only over those keys that the two maps do *not* have in common and combine the two difference maps
+    let mapNonSharedKeys<'Key, 'a, 'b, 'c when 'Key : comparison>
+        (mapFrom1 : 'Key -> 'a -> 'c)
+        (mapFrom2 : 'Key -> 'b -> 'c)
+        (map1 : Map<'Key, 'a>)
+        (map2 : Map<'Key, 'b>)
+        : Map<'Key, 'c> =
+        let foldFrom1 state k v = Map.add k (mapFrom1 k v) state
+        let foldFrom2 state k v = Map.add k (mapFrom2 k v) state
+        foldNonSharedKeys foldFrom1 foldFrom2 map1 map2 Map.empty
+
+
+
+
+
+    let foldAllEntries<'Key, 'a, 'b, 'State when 'Key : comparison>
+        (foldFrom1 : 'State -> 'Key -> 'a -> 'State)
+        (foldFrom2 : 'State -> 'Key -> 'b -> 'State)
+        (foldShared : 'State -> 'Key -> 'a -> 'b -> 'State)
+        (map1 : Map<'Key, 'a>)
+        (map2 : Map<'Key, 'b>)
+        (initialState : 'State)
+        : 'State =
+        foldSharedKeys foldShared map1 map2 initialState
+        |> foldNonSharedKeys foldFrom1 foldFrom2 map1 map2
+
+
+    /// Map over two maps, with separate mapping funcs for shared and exclusive keys – can handle heterogeneous maps!
+    let mapAndCombineAllKeys mapFrom1 mapFrom2 (mapShared : 'Key -> 'a -> 'b -> 'c) map1 map2 : Map<'Key, 'c> =
+        let foldFrom1 state k v = Map.add k (mapFrom1 k v) state
+        let foldFrom2 state k v = Map.add k (mapFrom2 k v) state
+        let foldShared state k a b = Map.add k (mapShared k a b) state
+
+        foldAllEntries foldFrom1 foldFrom2 foldShared map1 map2 Map.empty
+
+
+
+
+    /// Describes how two maps overlap – either they have exactly the same keys, the left one is a superset of the right, the right is a superset of the left, or they both have keys the other doesn't have (fully disjoint maps still fall under the `BothHaveMore` case, then it will just have an empty shared map)
+    type MapsOverlap<'Key, 'T, 'U when 'Key : comparison> =
+        | Exact of unified : Map<'Key, 'T * 'U>
+        | BothHaveMore of diffLeft : Map<'Key, 'T> * shared : Map<'Key, 'T * 'U> * diffRight : Map<'Key, 'U>
+        | LeftHasMore of diffLeft : Map<'Key, 'T> * shared : Map<'Key, 'T * 'U>
+        | RightHasMore of shared : Map<'Key, 'T * 'U> * diffRight : Map<'Key, 'U>
+
+
+    let getOverlap<'Key, 'T, 'U when 'Key : comparison>
+        (map1 : Map<'Key, 'T>)
+        (map2 : Map<'Key, 'U>)
+        : MapsOverlap<'Key, 'T, 'U> =
+        let combinedShared =
+            foldSharedKeys (fun state key val1 val2 -> Map.add key (val1, val2) state) map1 map2 Map.empty
+
+        let foldFrom1 state key (val1 : 'T) =
+            let addToMap map = Map.add key val1 map
+
+            match state with
+            | Exact shared -> LeftHasMore (addToMap Map.empty, shared)
+            | LeftHasMore (leftMore, shared) -> LeftHasMore (addToMap leftMore, shared)
+            | BothHaveMore (left, shared, right) -> BothHaveMore (addToMap left, shared, right)
+            | RightHasMore (shared, right) -> BothHaveMore (addToMap Map.empty, shared, right)
+
+        let foldFrom2 state key (val2 : 'U) =
+            let addToMap map = Map.add key val2 map
+
+            match state with
+            | Exact shared -> RightHasMore (shared, addToMap Map.empty)
+            | RightHasMore (shared, rightMore) -> RightHasMore (shared, addToMap rightMore)
+            | BothHaveMore (left, shared, right) -> BothHaveMore (left, shared, addToMap right)
+            | LeftHasMore (left, shared) -> BothHaveMore (left, shared, addToMap Map.empty)
+
+        Exact combinedShared
+        |> foldNonSharedKeys foldFrom1 foldFrom2 map1 map2
+
+
+
+
+
+
+
+
+
+
     /// Merges many maps, but defers to the merging function if there are key clashes
     let mergeSafeMany (merger : 'Key -> 'T -> 'T -> 'T) (maps : seq<Map<'Key, 'T>> when 'Key : comparison) =
         Seq.fold (mergeSafe merger) Map.empty maps
@@ -566,10 +729,10 @@ module Map =
 
 
     /// Merges two maps that have exactly the same keys. Returns an error result if they don't.
-    let mergeExact
+    let mergeExact<'Key, 'a, 'b, 'c when 'Key : comparison>
         (merger : 'Key -> 'a -> 'b -> 'c)
-        (map1 : Map<'Key, 'a> when 'Key : comparison)
-        (map2 : Map<'Key, 'b> when 'Key : comparison)
+        (map1 : Map<'Key, 'a>)
+        (map2 : Map<'Key, 'b>)
         =
         let keys1 = Map.keys map1 |> Set.ofSeq
         let keys2 = Map.keys map2 |> Set.ofSeq
@@ -592,6 +755,8 @@ module Map =
                         Error disjointKeys
                 | Error err -> Error err)
             (Ok Map.empty)
+
+
 
 
     /// Also produces an NEL of the errors so that the first error can be accessed easily without needing to handle the (impossible) case of an empty map
@@ -705,22 +870,6 @@ module Set =
 
 
 
-
-
-
-type Either<'a, 'b> =
-    | Left of 'a
-    | Right of 'b
-
-    static member mapLeft f either =
-        match either with
-        | Left l -> Left (f l)
-        | Right r -> Right r
-
-    static member mapRight f either =
-        match either with
-        | Left l -> Left l
-        | Right r -> Right (f r)
 
 
 
