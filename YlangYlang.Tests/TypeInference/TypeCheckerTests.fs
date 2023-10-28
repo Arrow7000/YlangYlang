@@ -77,7 +77,7 @@ let typeCheckThings =
                     let listOfStr = ConcList str
 
                     let innerArrows =
-                        ConcArrow (listOfStr, (ConcArrow (Generic, (ConcTuple (TOM.make str listOfStr)))))
+                        ConcArrow (listOfStr, (ConcArrow (Generic None, (ConcTuple (TOM.make str listOfStr)))))
 
                     let expected = ConcArrow (ConcUnitType, innerArrows) |> Ok
 

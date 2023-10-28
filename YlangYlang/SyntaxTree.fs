@@ -5,6 +5,7 @@
 //[<StructuredFormatDisplay("Node({str})")>]
 type CstNode<'a> =
     { node : 'a
+      /// @TODO: I wonder if this should be made an NEL, because it doesn't make sense to have a node with a tokens reference that doesn't contain any tokens
       source : Lexer.TokenWithSource list }
 
     member this.str = sprintf "%A" this.node

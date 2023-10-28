@@ -33,8 +33,25 @@ and AssignmentPattern =
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 /// Represents a generic, undeclared type variable. Used to create type constraints; e.g. between the input type and the output type of `let id x = x`.
-type TypeConstraintId = | TypeConstraintId of System.Guid
+type TypeConstraintId =
+    | TypeConstraintId of System.Guid
+    override this.ToString () =
+        let (TypeConstraintId guid) = this
+
+        (string guid |> String.trim 6) + "..."
 
 
 let makeTypeConstrId () =
@@ -133,9 +150,7 @@ and RefConstr =
     //| HasTypeOfFirstParamOf of TypeConstraintId
 
 
-    /// I.e. must be the type that this constructor is a variant of; when given constructor params this will look like a `DtArrow`.
-    /// Technically if this is present in a TypeConstraints it implies that either the definitive type is a NewType (or still an incomplete Arrow), but that can be merged at the module level once we have names and constructors to resolve.
-    | ByConstructorType of ctor : UpperNameValue
+    //| ByConstructorType of ctor : UpperNameValue
 
 
     // From here onwards are the constraints that are derived from a type expressions. The ones above are derived from value expressions.
@@ -147,7 +162,7 @@ and RefConstr =
         match this with
         | ByValue name -> string name
         | IsBoundVar (TypeConstraintId guid) -> string guid |> String.trim 6
-        | ByConstructorType ctor -> upperNameValToStr ctor
+        //| ByConstructorType ctor -> upperNameValToStr ctor
         | ByTypeParam (LowerIdent str) -> str
 
 //| IsOfTypeByName of typeName : UpperNameValue * typeParams : TypeConstraints list
@@ -222,7 +237,8 @@ type ConcreteOrGeneric =
     | ConcArrow of fromType : ConcreteOrGeneric * toType : ConcreteOrGeneric
 
     /// The special generic type, i.e. not a concrete type
-    | Generic
+    /// @TODO: not sure if we want an option for the constraint ID here yet
+    | Generic of TypeConstraintId option
 
 
 
@@ -272,6 +288,66 @@ type AccumulatorTypeId =
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+type VariantCase =
+    { /// @TODO: make this support qualified names too
+      label : UpperIdent
+      /// Could be empty. Any of these constraint IDs should be declared in the type declaration as type params or else this is not valid.
+      ///
+      /// @TODO: actually this may not only contain type variables but also proper types, so they will be described by MentionableTypes
+      contents : MentionableType list }
+
+
+and UnionType =
+    | UnionType of
+        typeName : UpperNameValue *
+        /// These are the constraints this type declares, to be referenced inside the variant branches
+        typeParams : TypeConstraintId list *
+        variants : VariantCase nel
+
+
+
+
+
+
+/// Maybe we should rename this to TypeExpression or something?
+and MentionableType =
+    /// Either declared or implicit
+    | GenericTypeVar of TypeConstraintId
+
+    // And the concrete type shapes
+    | UnitType
+    /// Possibly don't need this because it's kind of a special kind of referenced type, but good to have this for now
+    | Primitive of BuiltInPrimitiveTypes
+    | Tuple of MentionableType tom
+    | Record of Map<RecordFieldName, MentionableType>
+    | ExtendedRecord of Map<RecordFieldName, MentionableType>
+    /// This includes a map of which type constraint IDs (declared in the UnionType and referenced inside its variants) are set to which MentionableTypes – whether concrete or a generic type constraint ID declared in a parent scope
+    | ReferencedType of referencedType : UnionType * typeParamsSet : Map<TypeConstraintId, MentionableType>
+    | Arrow of fromType : MentionableType * toType : MentionableType
+
+
+
+
+
+
+
+
+
+
+
+
 /// Basically the same as a T.DefinitiveType but with guids referencing other types in the Acc instead of their own TypeConstraints
 type RefDefType =
     | RefDtUnitType
@@ -280,7 +356,14 @@ type RefDefType =
     | RefDtTuple of AccumulatorTypeId tom
     | RefDtRecordWith of referencedFields : Map<RecordFieldName, AccumulatorTypeId>
     | RefDtRecordExact of Map<RecordFieldName, AccumulatorTypeId>
-    | RefDtNewType of typeName : UpperNameValue * typeParams : AccumulatorTypeId list
+    //| RefDtNewType of typeName : UpperNameValue * typeParams : AccumulatorTypeId list
+
+    /// Represents a specific instance of a union type, with a mapping from the type's type parameters to specific type constraints.
+    /// These type constraints can start out as completely blank and unconstrained, but can be filled in over time as we learn of more constraints and definitive shapes they must have.
+    /// This way the original type remains the same, unbesmirched, and its specific instantiations that come under restrictions.
+    ///
+    /// @TODO: maybe don't store the whole thing  but only a reference to it with a mapping of type params set
+    | RefDtNewType of type_ : UnionType * typeParamsToSpecifics : Map<TypeConstraintId, AccumulatorTypeId>
     | RefDtArrow of fromType : AccumulatorTypeId * toType : AccumulatorTypeId
 
 
@@ -319,19 +402,29 @@ type RefDefType =
 
             "{ " + commafiedFields + " }"
 
-        | RefDtNewType (typeName, typeVars) ->
+        | RefDtNewType (unionType, specifiedTypeParams) ->
+            let (UnionType (typeName, allowedTypeParams, _)) = unionType
+
+            let typeParams =
+                allowedTypeParams
+                |> List.map (fun typeParam -> Map.find typeParam specifiedTypeParams)
+
             upperNameValToStr typeName
             + " "
-            + (List.map string typeVars |> String.join " ")
+            + (List.map string typeParams |> String.join " ")
 
         | RefDtArrow (fromType, toType) -> string fromType + " -> " + string toType
 
 
-type AccTypeError = | DefTypeClash of RefDefType * RefDefType
+type AccTypeError =
+    | DefTypeClash of RefDefType * RefDefType
+    | UnresolvedCtorError of ctorName : UpperNameValue
+    | UnresolvedTypeName of typeName : UpperNameValue
+    /// When a pattern match destructuring doesn't have the correct number of params. The in tells us if there are not enough (in which case it'll be negative) or too many (will be positive)
+    | WrongPatternParamLength of int
+    | DoesntMatchExpectedTypeShape of requiredShape : MentionableType * RefDefType
 
 
-/// Commonly used type throughout Accumulator stuff
-type RefDefResOpt = Result<RefDefType, AccTypeError> option
 
 
 
@@ -343,8 +436,18 @@ type TypeJudgment = Result<TypeConstraints, AccTypeError>
 
 
 
+
+
+
 (* Name dictionaries *)
 
+
+
+
+
+
+/// Commonly used type throughout Accumulator stuff
+type RefDefResOpt = Result<RefDefType, AccTypeError> option
 
 
 
@@ -439,6 +542,13 @@ type Accumulator =
         |> snd
 
 
+    static member simpleReplaceRefDefEntry
+        (accId : AccumulatorTypeId)
+        (refDefResOpt : Result<RefDefType, AccTypeError> option)
+        (acc : Accumulator)
+        : Accumulator =
+        Accumulator.replaceEntry accId (fun _ _ refConstrs -> refDefResOpt, refConstrs) acc
+        |> snd
 
 
     /// This can always be added without any further unifications needed 🥳 so it can be a very simple function.
@@ -477,9 +587,9 @@ type Accumulator =
 
 
 
-type VariantCase =
-    { label : UpperIdent
-      contents : TypeConstraints list }
+//type VariantCase =
+//    { label : UpperIdent
+//      contents : TypeConstraints list }
 
 
 

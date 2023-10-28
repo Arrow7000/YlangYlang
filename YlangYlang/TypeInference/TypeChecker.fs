@@ -380,7 +380,7 @@ and private mentionableArrowToDefinite (toTypes : Cst.MentionableType nel) : Typ
 
 
 
-let rec convertAssignmentPattern (pattern : Cst.AssignmentPattern) : AssignmentPattern =
+let rec convertAssignmentPattern (pattern : Cst.AssignmentPattern) : T.AssignmentPattern =
     match pattern with
     | S.Named name -> Named (unqualValToLowerIdent name)
     | S.Ignored -> Ignored
@@ -391,7 +391,7 @@ let rec convertAssignmentPattern (pattern : Cst.AssignmentPattern) : AssignmentP
     | S.Aliased (p, alias) -> Aliased (convertAssignmentPattern p.node, unqualValToLowerIdent alias.node)
 
 
-and convertDestructuredPattern (pattern : Cst.DestructuredPattern) : DestructuredPattern =
+and convertDestructuredPattern (pattern : Cst.DestructuredPattern) : T.DestructuredPattern =
     match pattern with
     | S.DestructuredRecord fields ->
         NEL.map (S.getNode >> unqualValToRecField) fields
@@ -411,7 +411,7 @@ and convertDestructuredPattern (pattern : Cst.DestructuredPattern) : Destructure
 
 
 
-let rec gatherParams (pattern : AssignmentPattern) : FunctionOrCaseMatchParam =
+let rec gatherParams (pattern : T.AssignmentPattern) : T.FunctionOrCaseMatchParam =
     match pattern with
     | Named ident ->
         let param_ : Param = { destructurePath = SimpleName }
@@ -445,7 +445,7 @@ let rec gatherParams (pattern : AssignmentPattern) : FunctionOrCaseMatchParam =
 
 
 
-and gatherDestructuredPattern (pattern : DestructuredPattern) : Map<LowerIdent, SOD<Param>> =
+and gatherDestructuredPattern (pattern : T.DestructuredPattern) : Map<LowerIdent, SOD<Param>> =
     /// Adjusts the destructure path of a param to account for the fact that it is contained inside a nested destructuring
     let adjustDestructurePath (newPath : PathToDestructuredName) (param_ : Param) : Param =
         { param_ with destructurePath = newPath }
@@ -876,6 +876,45 @@ type private TC = TypeConstraints
 
 
 
+
+
+
+/// Map from type names to the actual types
+type TypesInScope = Map<UpperNameValue, UnionType>
+
+/// Map from the constructor names to the variant and type
+type TypeVariantsInScope = Map<UpperNameValue, VariantCase * UnionType>
+
+type TypesAndVariantsInScope =
+    { types : TypesInScope
+      constructors : TypeVariantsInScope }
+
+
+module TypesAndVariantsInScope =
+
+    let getTypeFromScopes
+        (typeName : UpperNameValue)
+        (scopes : TypesAndVariantsInScope)
+        : Result<UnionType, AccTypeError> =
+        match Map.tryFind typeName scopes.types with
+        | Some union -> Ok union
+        | None -> Error (UnresolvedTypeName typeName)
+
+    let getVariantFromScopes
+        (ctorName : UpperNameValue)
+        (scopes : TypesAndVariantsInScope)
+        : Result<VariantCase * UnionType, AccTypeError> =
+        match Map.tryFind ctorName scopes.constructors with
+        | Some variantAndUnion -> Ok variantAndUnion
+        | None -> Error (UnresolvedCtorError ctorName)
+
+
+
+
+
+
+
+
 (*
 
     Helpers for function types and record dotting
@@ -883,7 +922,7 @@ type private TC = TypeConstraints
 *)
 
 
-/// Pass in the IDs for the params and return type and this will return an Acc and AccId for the overall arrow type
+/// Pass in the IDs for the params and return type and this will return an Acc and AccId for the overall arrow type. If the NEL only has one item then it will just be a non-arrow value.
 let rec makeAccIdDestType ((NEL (first, rest)) : AccumulatorTypeId nel) (acc : Accumulator) : AccAndTypeId =
     match rest with
     | [] ->
@@ -944,7 +983,7 @@ let rec makeDottedSeqImpliedType (fields : RecordFieldName nel) acc =
 
 /// Get type information based on a single assignment pattern – named values, destructurings, and so on.
 /// This *only* gets the inferred type based on the destructuring pattern, not based on usage or anything else.
-let getAccumulatorFromParam (param : AssignmentPattern) : AccAndTypeId =
+let getAccumulatorFromParam (typeScope : TypesAndVariantsInScope) (param : AssignmentPattern) : AccAndTypeId =
     let rec getInferredTypeFromAssignmentPattern (pattern : AssignmentPattern) : AccAndTypeId =
         match pattern with
         | Named ident -> Acc.addRefDefResOptWithRefConstrs None (Set.singleton (ByValue (LocalLower ident))) Acc.empty
@@ -1010,28 +1049,72 @@ let getAccumulatorFromParam (param : AssignmentPattern) : AccAndTypeId =
             Acc.addRefDefResOpt (Some (Ok refDefType)) combinedAcc
 
 
-        | DestructuredTypeVariant (ctor, params_) ->
+        | DestructuredTypeVariant (ctorName, params_) ->
             let gatheredParams = List.map getInferredTypeFromAssignmentPattern params_
             let combinedAcc = Acc.combineAccsFromAatis gatheredParams
 
-            let ctorType = ByConstructorType ctor
+            let ctorResult = TypesAndVariantsInScope.getVariantFromScopes ctorName typeScope
 
-            match List.map Aati.getId gatheredParams with
-            | [] ->
-                // I.e. there are no params
-                Acc.addRefDefResOptWithRefConstrs None (Set.singleton ctorType) combinedAcc
+            match ctorResult with
+            | Ok (variant, union) ->
 
-            | head :: tail ->
-                // I.e. there are params
+                match List.map Aati.getId gatheredParams with
+                | [] ->
+                    let newTypeRefDef = RefDtNewType (Map.empty, union)
 
-                /// @TODO: I'm not 100% sure that this is the best way to do this, or if there is actually a more consistent way to specify what the relationship of the constructor to the params should be.
-                /// E.g. one thing which `makeAccIdFuncApplicationType` does *not* capture is the fact that these are not just *some* parameters, but they need to be *all* of the parameters for that type variant. Otherwise should be a type error.
-                let withFuncRequirement =
-                    makeAccIdFuncApplicationType (NEL.new_ head tail) combinedAcc
+                    // I.e. there are no params to add for this variant's constructor
+                    Acc.addRefDefResOptWithRefConstrs (Some (Ok newTypeRefDef)) Set.empty combinedAcc
 
-                Acc.combine combinedAcc withFuncRequirement.acc
-                |> Acc.addRefDefResOptWithRefConstrs None (Set.singleton ctorType)
+                | head :: tail ->
+                    // I.e. there are params
 
+
+                    /// Match up the TCIs with the ATIs and return the remaining ones if one of them is longer than the other
+                    let rec matchUpTciWithAtis
+                        (combinedSoFar : (TypeConstraintId * AccumulatorTypeId) list)
+                        (tcis : TypeConstraintId list)
+                        (atis : AccumulatorTypeId list)
+                        =
+                        match tcis, atis with
+                        | [], [] -> combinedSoFar, None
+                        | h :: t, [] -> combinedSoFar, Some (Left (h :: t))
+                        | [], h :: t -> combinedSoFar, Some (Right (h :: t))
+                        | l :: tl, r :: tr -> matchUpTciWithAtis ((l, r) :: combinedSoFar) tl tr
+
+                    let matchedUp, remaining =
+                        matchUpTciWithAtis List.empty variant.contents (head :: tail)
+
+                    match remaining with
+                    | None ->
+                        let matchMap = Map.ofList matchedUp
+
+                        let newTypeRefDef = RefDtNewType (matchMap, union)
+
+                        Acc.addRefDefResOptWithRefConstrs (Some (Ok newTypeRefDef)) Set.empty combinedAcc
+
+                    | Some remaining_ ->
+                        let paramLenDiff =
+                            match remaining_ with
+                            | Left tcis -> List.length tcis
+                            | Right atis -> -(List.length atis)
+
+                        Acc.addRefDefResOptWithRefConstrs
+                            (Some (Error (WrongPatternParamLength paramLenDiff)))
+                            Set.empty
+                            combinedAcc
+
+            // @TODO: Technically we should be able to type check those constructor params that do match up and separately report an error about the incorrect number of pattern matched params, but that'll have to wait for when we're able to both return a type here and separately return an error also
+
+
+            ///// @TODO: I'm not 100% sure that this is the best way to do this, or if there is actually a more consistent way to specify what the relationship of the constructor to the params should be.
+            ///// E.g. one thing which `makeAccIdFuncApplicationType` does *not* capture is the fact that these are not just *some* parameters, but they need to be *all* of the parameters for that type variant. Otherwise should be a type error.
+            //let withFuncRequirement =
+            //    makeAccIdFuncApplicationType (NEL.new_ head tail) combinedAcc
+
+            //Acc.combine combinedAcc withFuncRequirement.acc
+            //|> Acc.addRefDefResOptWithRefConstrs None (Set.singleton ctorType)
+
+            | Error e -> Acc.addError e combinedAcc
 
 
     getInferredTypeFromAssignmentPattern param
@@ -1044,8 +1127,17 @@ let getAccumulatorFromParam (param : AssignmentPattern) : AccAndTypeId =
 
 
 /// This should: from a binding, derive the type + all the names declared/destructured along with their types in the Accumulator - for use in the let expression body (and of course not outside of it)
-let private getAccumulatorFromBinding (binding : LetBinding) : AccAndTypeId =
-    getAccumulatorFromParam binding.paramPattern
+let private getAccumulatorFromBinding (typeScope : TypesAndVariantsInScope) (binding : LetBinding) : AccAndTypeId =
+    getAccumulatorFromParam typeScope binding.paramPattern
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1056,7 +1148,9 @@ let private getAccumulatorFromBinding (binding : LetBinding) : AccAndTypeId =
 *)
 
 /// Return the Accumulator of constrained values along with the type ID of the expression in its entirety
-let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
+let rec getAccumulatorFromExpr (typeScope : TypesAndVariantsInScope) (expr : T.Expression) : AccAndTypeId =
+
+    let recursiveGetAccFromExpr = getAccumulatorFromExpr typeScope
 
     let makeOkType = Ok >> Some
     let getParamFromPattern (pattern : FunctionOrCaseMatchParam) = pattern.paramPattern
@@ -1081,7 +1175,7 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
             | T.Compound compound ->
                 match compound with
                 | T.CompoundValues.List list ->
-                    let typedList = List.map getAccumulatorFromExpr list
+                    let typedList = List.map recursiveGetAccFromExpr list
 
                     let combinedAcc = typedList |> Accumulator.combineAccsFromAatis
 
@@ -1094,7 +1188,7 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
 
 
                 | T.CompoundValues.Tuple tuple ->
-                    let typedTom = TOM.map getAccumulatorFromExpr tuple
+                    let typedTom = TOM.map recursiveGetAccFromExpr tuple
 
                     let combinedAcc = typedTom |> Accumulator.combineAccsFromAatis
 
@@ -1105,7 +1199,7 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
                 | T.CompoundValues.Record record ->
                     let typedKeyVals =
                         record
-                        |> List.map (fun (key, value) -> key, getAccumulatorFromExpr value)
+                        |> List.map (fun (key, value) -> key, recursiveGetAccFromExpr value)
 
                     let combinedAcc =
                         typedKeyVals
@@ -1124,7 +1218,7 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
                 | T.CompoundValues.RecordExtension (extended, additions) ->
                     let typedKeyVals =
                         additions
-                        |> NEL.map (fun (key, value) -> key, getAccumulatorFromExpr value)
+                        |> NEL.map (fun (key, value) -> key, recursiveGetAccFromExpr value)
 
                     let combinedAcc =
                         typedKeyVals
@@ -1147,10 +1241,13 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
 
 
             | T.Function funcVal ->
-                let typeOfBody : AccAndTypeId = getAccumulatorFromExpr funcVal.body
+                let typeOfBody : AccAndTypeId = recursiveGetAccFromExpr funcVal.body
 
                 let funcParamsAccumulatorsAndSelfTypes =
-                    NEL.map (getParamFromPattern >> getAccumulatorFromParam) funcVal.params_
+                    NEL.map
+                        (getParamFromPattern
+                         >> getAccumulatorFromParam typeScope)
+                        funcVal.params_
 
                 let funcParamsAccumulators =
                     funcParamsAccumulatorsAndSelfTypes
@@ -1184,23 +1281,44 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
 
 
         | T.UpperIdentifier name ->
-            Accumulator.addRefConstraints (Set.singleton (ByConstructorType name)) Accumulator.empty
+            match TypesAndVariantsInScope.getVariantFromScopes name typeScope with
+            | Ok (variant, union) ->
+                let params_ =
+                    variant.contents
+                    |> List.map (fun tcId -> tcId, Acc.addRefDefResOpt None Acc.empty)
+
+                let combinedAcc =
+                    params_
+                    |> List.map snd
+                    |> Acc.combineAccsFromAatis
+
+                let tcMap =
+                    params_
+                    |> List.map (fun (tcId, aati) -> tcId, aati.typeId)
+                    |> Map.ofSeq
+
+                let refDefNewType = RefDtNewType (tcMap, union)
+
+                Acc.addRefDef refDefNewType combinedAcc
+
+            | Error e -> Acc.addError e Acc.empty
 
 
-        | T.LowerIdentifier name -> Accumulator.addRefConstraints (Set.singleton (ByValue name)) Accumulator.empty
+
+        | T.LowerIdentifier name -> Accumulator.addSingleRefConstr (ByValue name) Accumulator.empty
 
 
 
 
 
         | T.LetExpression (declarations, expr') ->
-            let bodyExpr = getAccumulatorFromExpr expr'
+            let bodyExpr = recursiveGetAccFromExpr expr'
 
             let typedDeclarations =
                 declarations
                 |> NEL.map (fun binding ->
-                    let bindingAccAndSelf = getAccumulatorFromParam binding.paramPattern
-                    let assignedExprAccAndSelf = getAccumulatorFromExpr binding.assignedExpression
+                    let bindingAccAndSelf = getAccumulatorFromParam typeScope binding.paramPattern
+                    let assignedExprAccAndSelf = recursiveGetAccFromExpr binding.assignedExpression
 
                     let combinedAcc =
                         Accumulator.combineAccsFromAatis [ bindingAccAndSelf
@@ -1226,7 +1344,7 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
         | T.ControlFlowExpression controlFlow ->
             match controlFlow with
             | T.IfExpression (cond, ifTrue, ifFalse) ->
-                let condAccAndOwn = getAccumulatorFromExpr cond
+                let condAccAndOwn = recursiveGetAccFromExpr cond
 
                 let boolRefDef = RefDtPrimType BuiltInPrimitiveTypes.Bool
 
@@ -1236,8 +1354,8 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
                         condAccAndOwn.typeId
                         condAccAndOwn.acc
 
-                let ifTrueAccAndOwn = getAccumulatorFromExpr ifTrue
-                let ifFalseAccAndOwn = getAccumulatorFromExpr ifFalse
+                let ifTrueAccAndOwn = recursiveGetAccFromExpr ifTrue
+                let ifFalseAccAndOwn = recursiveGetAccFromExpr ifFalse
 
                 let combinedAcc =
                     Accumulator.combineMany [ withBoolConstrAdded.acc
@@ -1249,18 +1367,18 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
 
 
             | T.CaseMatch (exprToMatch, branches) ->
-                let matchExprAccAndSelf = getAccumulatorFromExpr exprToMatch
+                let matchExprAccAndSelf = recursiveGetAccFromExpr exprToMatch
 
                 let accsAndSelvesOfPatterns =
                     branches
                     |> NEL.map (fun branch ->
                         let matchPatternAccAndSelf =
-                            getAccumulatorFromParam (getParamFromPattern branch.matchPattern)
+                            getAccumulatorFromParam typeScope (getParamFromPattern branch.matchPattern)
 
                         let combinedNamesDefinedHere = getLocalValueNames matchPatternAccAndSelf.acc
                         let guidMap = makeGuidMapForNames combinedNamesDefinedHere
 
-                        let branchBodyExpr = getAccumulatorFromExpr branch.body
+                        let branchBodyExpr = recursiveGetAccFromExpr branch.body
 
                         {| patternAccAndId =
                             replaceNameRefsWithBoundVars guidMap matchPatternAccAndSelf.acc
@@ -1301,7 +1419,7 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
     | T.CompoundExpression compExpr ->
         match compExpr with
         | T.FunctionApplication (funcExpr, params_) ->
-            let paramsAccAndSelves = params_ |> NEL.map getAccumulatorFromExpr
+            let paramsAccAndSelves = params_ |> NEL.map recursiveGetAccFromExpr
 
             let paramsAcc =
                 paramsAccAndSelves
@@ -1311,7 +1429,7 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
             let requiredFuncAccAndId =
                 makeAccIdFuncApplicationType (NEL.map Aati.getId paramsAccAndSelves) paramsAcc
 
-            let funcExprAccAndSelf = getAccumulatorFromExpr funcExpr
+            let funcExprAccAndSelf = recursiveGetAccFromExpr funcExpr
 
             let combinedAcc =
                 Accumulator.combine requiredFuncAccAndId.acc funcExprAccAndSelf.acc
@@ -1323,7 +1441,7 @@ let rec getAccumulatorFromExpr (expr : T.Expression) : AccAndTypeId =
 
 
         | T.DotAccess (dottedExpr, dotSequence) ->
-            let exprAccAndSelf = getAccumulatorFromExpr dottedExpr
+            let exprAccAndSelf = recursiveGetAccFromExpr dottedExpr
 
             let withImpliedRecordType = makeDottedSeqImpliedType dotSequence exprAccAndSelf.acc
 
@@ -1355,6 +1473,31 @@ type private TypeAndDeclarations =
     { name : UpperIdent
       declaration : T.TypeDeclaration
       ctors : T.VariantConstructor list }
+
+
+
+
+
+
+
+/// Get the mentioned type parameters from a type expression
+let rec private getTypeParams (mentionableType : T.MentionableType) : TypeConstraintId set =
+    match mentionableType with
+    | MentionableType.GenericTypeVar name -> Set.singleton name
+    | MentionableType.UnitType -> Set.empty
+    | MentionableType.Tuple mentionables -> Set.collect getTypeParams mentionables
+
+    | MentionableType.Record fields
+    | MentionableType.ExtendedRecord fields ->
+        Map.toSeq fields
+        |> Set.collect (snd >> getTypeParams)
+
+    | MentionableType.ReferencedType (_, typeParams) -> Set.collect getTypeParams typeParams
+    | MentionableType.Arrow (fromType, toType) -> Set.union (getTypeParams fromType) (getTypeParams toType)
+
+
+
+
 
 
 let private getTypeAndDeclaration

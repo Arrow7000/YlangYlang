@@ -851,6 +851,24 @@ module Map =
         Map.filter (fun k _ -> Set.contains k keySet |> not) map
 
 
+    let foldMap<'State, 'Key, 'Result, 'T when 'Key : comparison>
+        (mapping : 'State -> 'Key -> 'T -> 'Result * 'State)
+        (initialState : 'State)
+        (map : Map<'Key, 'T>)
+        : Map<'Key, 'Result> * 'State =
+        let mappedSeq, newState =
+            Map.toSeq map
+            |> Seq.mapFold
+                (fun state (key, value) ->
+                    let newValue, newState = mapping state key value
+                    (key, newValue), newState)
+                initialState
+
+        Map.ofSeq mappedSeq, newState
+
+
+
+
 
 
 module Set =
@@ -868,6 +886,8 @@ module Set =
             Set.empty
             set
 
+    /// Map over a seq and union the resulting sequence of sets
+    let collect (f : 'a -> 'b set) (seqs : 'a seq) : 'b set = Seq.map f seqs |> Set.unionMany
 
 
 
