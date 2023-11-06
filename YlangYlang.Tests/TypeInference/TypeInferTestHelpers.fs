@@ -89,15 +89,15 @@ module TypeDsl =
 
     /// Make type constraints from one reference constraint only
     let cstr cnstraint =
-        TypeConstraints.Constrained (None, Set.singleton cnstraint)
+        TypeConstraints.TypeConstraints (None, Set.singleton cnstraint)
 
     /// Make type constraints from reference constraints only
     let cstrs constraints =
-        TypeConstraints.Constrained (None, set constraints)
+        TypeConstraints.TypeConstraints (None, set constraints)
 
     /// Make type constraints from definitive type and reference constraints
     let defCstrs def constraints =
-        TypeConstraints.Constrained (Some def, set constraints)
+        TypeConstraints.TypeConstraints (Some def, set constraints)
 
     /// Make empty type constraints
     let none = TypeConstraints.empty

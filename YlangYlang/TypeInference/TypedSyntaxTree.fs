@@ -155,15 +155,15 @@ and RefConstr =
 
     // From here onwards are the constraints that are derived from a type expressions. The ones above are derived from value expressions.
 
-    /// I.e. must be the same type as this type param
-    | ByTypeParam of LowerIdent
+    ///// I.e. must be the same type as this type param
+    //| ByTypeParam of LowerIdent
 
     override this.ToString () =
         match this with
         | ByValue name -> string name
         | IsBoundVar (TypeConstraintId guid) -> string guid |> String.trim 6
-        //| ByConstructorType ctor -> upperNameValToStr ctor
-        | ByTypeParam (LowerIdent str) -> str
+//| ByConstructorType ctor -> upperNameValToStr ctor
+//| ByTypeParam (LowerIdent str) -> str
 
 //| IsOfTypeByName of typeName : UpperNameValue * typeParams : TypeConstraints list
 
@@ -177,10 +177,10 @@ and RefConstr =
 /// Contains the definitive constraints that have been inferred so far, plus any other value or type param constraints that have not been evaluated yet.
 /// If a `RefConstr` turns out to be incompatible with the existing definitive type, this will be transformed into a `TypeJudgment` with the incompatible definitive types listed in the `Error` case.
 and TypeConstraints =
-    | Constrained of definitive : DefinitiveType option * otherConstraints : RefConstr set
+    | TypeConstraints of definitive : DefinitiveType option * otherConstraints : RefConstr set
 
     override this.ToString () =
-        let (Constrained (defOpt, others)) = this
+        let (TypeConstraints (defOpt, others)) = this
 
         let refConstrsStr =
             others
@@ -194,19 +194,19 @@ and TypeConstraints =
 
 
     /// Makes a new TypeConstraints which is truly empty
-    static member empty = Constrained (None, Set.empty)
+    static member empty = TypeConstraints (None, Set.empty)
 
     /// Makes a new TypeConstraints which is empty of specific, but still has a Guid so as not to lose links required between the thing that is assigned this constraint and anything else it is linked to
     static member makeUnspecific () =
-        Constrained (None, Set.singleton (IsBoundVar (makeTypeConstrId ())))
+        TypeConstraints (None, Set.singleton (IsBoundVar (makeTypeConstrId ())))
 
-    static member fromDefinitive (def : DefinitiveType) : TypeConstraints = Constrained (Some def, Set.empty)
+    static member fromDefinitive (def : DefinitiveType) : TypeConstraints = TypeConstraints (Some def, Set.empty)
 
     static member fromConstraint (constr : RefConstr) : TypeConstraints =
-        Constrained (None, Set.singleton constr)
+        TypeConstraints (None, Set.singleton constr)
 
-    static member addRefConstraints (constrs : RefConstr set) (Constrained (defOpt, refConstrs)) =
-        Constrained (defOpt, Set.union constrs refConstrs)
+    static member addRefConstraints (constrs : RefConstr set) (TypeConstraints (defOpt, refConstrs)) =
+        TypeConstraints (defOpt, Set.union constrs refConstrs)
 
 
 
@@ -407,11 +407,15 @@ type RefDefType =
 
             let typeParams =
                 allowedTypeParams
-                |> List.map (fun typeParam -> Map.find typeParam specifiedTypeParams)
+                |> List.map (fun typeParam -> Map.tryFind typeParam specifiedTypeParams)
 
             upperNameValToStr typeName
             + " "
-            + (List.map string typeParams |> String.join " ")
+            + (typeParams
+               |> List.map (function
+                   | None -> "_"
+                   | Some typeId -> string typeId)
+               |> String.join " ")
 
         | RefDtArrow (fromType, toType) -> string fromType + " -> " + string toType
 
@@ -442,6 +446,110 @@ type TypeJudgment = Result<TypeConstraints, AccTypeError>
 (* Name dictionaries *)
 
 
+(*
+
+# Notation
+
+## Type notations
+
+T1,T2,...,Tn => concrete types
+T1 a,T2 a,...,Tn a => types with type params
+T1 a b T3 => concrete type T1 with 3 type params, the first two being different generics and the third set to concrete type T3
+T1 (T2 T3) => concrete type T1 with one type param, currently set to concrete type T2 which in turn has one type param set to concrete type T3
+
+
+## Value type annotation notation
+
+x : T1 => value x has concrete type T1
+x : T1 T2 => value x has concrete type T1 which takes one type parameter, which in this case is set to concrete type T2.
+x : a => value x has generic type `a`
+f : a -> b => value f has type a -> b, meaning it is a function that given a value of generic type a it returns a value of generic type b
+f : a -> a => value f has type a -> a, meaning it is a function that given a value it returns a value of that same type, for any type `a`
+
+f : T1 a -> T1 b => value f is a function from T1 to T1, where T1 takes one type param, and can return a T1 with a different type param
+f : T1 a -> T2 a => value f is a function from T1 to T2, where both T1 and T2 take one type param, and returns a T2 with the same type param as was in the T1
+
+
+## Value expression notation
+
+f x => applying function f to parameter x
+f x : T1 => applying function f to parameter x results in a value of type T1
+
+
+## Inference rule notation
+
+     x
+----------- => given fact(s) x we can infer fact(s) y; or phrased differently: if x is true y must also be true
+     y
+
+ a, b, c; x, y, z
+------------------ => given type facts a, b, and c, and expression facts x, y, and z, we can infer facts n, m, and o. The type facts and expression facts are separated by a semicolon
+     n, m, o
+
+
+
+# The inference rules
+
+
+      f x
+-----------------
+   f : a -> b
+=> given the expression `f x` we can infer that f must be a function. We can't infer anything about x because f's type param `a` doesn't impose any constraints on the value it accepts, nor does f say anything about what its return value type is
+
+
+ f : T1 -> b, f x
+----------------------
+     x : T1
+=> given f only accepts a T1 as input, and we call f with param x, x must be a T1. Nothing else would be valid.
+
+
+ f : a -> T1
+-------------
+  f x : T1
+=> given f is a function that when given any value returns a T1, the expression f x returns a T1, but it tells us nothing about the type of value x
+
+
+ f : a -> a, x : T1
+--------------------
+      f x : T1
+=> if a type has the same type param in multiple places, when one of those instances is narrowed to a concrete type, all other instances are substituted with that concrete type, to ensure the invariant holds
+
+
+ f : a -> b -> a, x : T1
+-------------------------
+    f x : b -> T1
+=> same as the rule above
+
+
+ x : T1 a, y : T1 T2, f : a -> a -> a; f x y
+---------------------------------------------
+               f x y : T1 T2
+=> this can kinda be derived from the rule above
+
+
+ f : a -> a -> a, x : (T1, b), y : (c, T2)
+-------------------------------------------
+              f x y : (T1, T2)
+=> type narrowing! This is where unification comes in
+
+
+ f : Maybe T1 -> a, x : a; f x
+----------------------------
+         x : Maybe b
+NOTE: but the above really only makes sense because we know that you can have values of type Maybe that leave the type param unaffected. This would not be true for example with type Dummy where `type Dummy a = Dummy a`, because in that case if we inferred that x : Dummy _, the only way in which a Dummy would be assignable to `Dummy String` is if it were Dummy String, because there are no values possible for Dummy that are leave the type param unspecified; unlike for example with `None : Maybe a` or `[] : List a`.
+But maybe... we leave that for now, and for now we behave as if every type can have values that leave its inner type param unspecified, even if that's not strictly true, e.g. for the aforementioned Dummy type but even for types like `Tuple a b`, for obvious reasons.
+
+
+ f : (String -> b) -> c, x :
+
+
+
+
+
+
+
+
+*)
 
 
 
@@ -449,11 +557,25 @@ type TypeJudgment = Result<TypeConstraints, AccTypeError>
 /// Commonly used type throughout Accumulator stuff
 type RefDefResOpt = Result<RefDefType, AccTypeError> option
 
+/// FYI this on its own isn't enough to implement type schemes, we also need to distinguish between "these two things are mamish the same and ergo need to be fully unified" and "this thing should constrain this other thing but not the other way around"
+type RefConstraintEntry =
+    /// For concrete types or types constrained by other values
+    | Constrained of RefDefResOpt * RefConstr set
+    /// For types unconstrained by values and not adhering to a concrete shape.
+    ///
+    /// I think we store one of these for every generic that does not have any inherent type constraint on itself. We instantiate one of these for any non-inherently-constrained type or type param, like e.g. the `a` in `None : Maybe a`. Then, depending on the expression it is used in, we either do need to mamish unify the two expressions, or we just impose the constraint from one thing to the other. But either way a generic should never be removed from the Accumulator I don't think, because the `a` in `Maybe.None : Maybe a` is a long lived generic, and it never narrows to anything else, no matter how `None` is used.
+    ///
+    /// It's only for example if we add it into a `[ Just 123, None ]` that the `Maybe a`ness imposes a narrowing on what _uses_ it, so that it can't be used in a `[ 123, None ]` for example, because you can't unify a `Maybe a` with a naked `Int`.
+    ///
+    /// So we still need to do unification, but we're not unifying the constituent elements, only the type of the compound thing gets narrowed to the unification of `None : Maybe a` and `Just 123 : Maybe Int`. But the constraint only propagates one way, from the thing to the larger context that uses the structure, the structure itself doesn't (can't) impose a constraint onto the thing it uses. *Unless*! – and this is an important caveat – when the thing it's used in does have type *requirements*; e.g. we're doing `f a`; that does require `f` to be a `a -> b`, i.e. a concrete function. We can't know anything about the input and output types, and shouldn't make assumptions on what it takes and returns based on what we feed it, because it could be that we just happen to feed it a string but that `f` could equally well accept an `Int`, just because we passed it one thing doesn't mean that's the only thing it accepts.
+    ///
+    /// What other examples of such requirements are there? Well, e.g. things being pattern matched on and things used as conditionals in if expressions. And of course when passed as parameters to functions that do have strict requirements on the type they accept, whether implicitly through destructurings or through type annotations (not implemented yet)
+    | Generic // of TypeConstraintId
 
 
 /// Attempt at making accumulator working by using two internal maps, one where every single def type gets a guid assigned to it, and every ref constraint gets placed in a set with its others, which points to a guid, which in turn may have a def type assigned to it.
 type Accumulator =
-    { refConstraintsMap : Map<AccumulatorTypeId, Result<RefDefType, AccTypeError> option * RefConstr set>
+    { refConstraintsMap : Map<AccumulatorTypeId, RefConstraintEntry>
 
       /// This stores old ID references so that we don't ever run the risk of an ID ever getting out of date or replaced. This way a reference ID, once made, is reliable.
       redirectMap : Map<AccumulatorTypeId, AccumulatorTypeId> }
@@ -467,7 +589,7 @@ type Accumulator =
     static member getRealIdAndType
         (accId : AccumulatorTypeId)
         (acc : Accumulator)
-        : AccumulatorTypeId * (Result<RefDefType, AccTypeError> option * RefConstr set) =
+        : AccumulatorTypeId * RefConstraintEntry =
         match Map.tryFind accId acc.refConstraintsMap with
         | Some result -> accId, result
         | None ->
@@ -493,7 +615,7 @@ type Accumulator =
         =
         { refConstraintsMap =
             Map.removeKeys accIdsToReplace acc.refConstraintsMap
-            |> Map.add newAccId (refDefResOpt, refConstrs)
+            |> Map.add newAccId (Constrained (refDefResOpt, refConstrs))
 
           redirectMap =
               acc.redirectMap
@@ -506,25 +628,63 @@ type Accumulator =
 
 
 
-    /// Warning! It is on the caller to ensure that the refConstrs being added here don't have any overlap with any entries already present in the map, and to unify the entries accordingly if they do.
-    /// This will replace the entry at the _real_ AccId, so the caller doesn't have to worry about fetching the real AccId first. This function also returns the real AccId for good measure.
-    static member replaceEntry
+    ///// Warning! It is on the caller to ensure that the refConstrs being added here don't have any overlap with any entries already present in the map, and to unify the entries accordingly if they do.
+    ///// This will replace the entry at the _real_ AccId, so the caller doesn't have to worry about fetching the real AccId first. This function also returns the real AccId for good measure.
+    //static member replaceEntry
+    //    (accId : AccumulatorTypeId)
+    //    (replacer : AccumulatorTypeId
+    //                    -> Result<RefDefType, AccTypeError> option
+    //                    -> RefConstr set
+    //                    -> Result<RefDefType, AccTypeError> option * RefConstr set)
+    //    (acc : Accumulator)
+    //    : AccumulatorTypeId * Accumulator =
+    //    let realAccId, (Constrained (refDefResOpt, refConstrs)) =
+    //        Accumulator.getRealIdAndType accId acc
+
+    //    let replaced = replacer realAccId refDefResOpt refConstrs
+
+    //    realAccId,
+    //    { acc with
+    //        refConstraintsMap =
+    //            acc.refConstraintsMap
+    //            |> Map.add realAccId replaced }
+
+
+
+
+    //static member replaceRefConstrs
+    //    (accId : AccumulatorTypeId)
+    //    (newRefConstrs : RefConstr set)
+    //    (acc : Accumulator)
+    //    : AccumulatorTypeId * Accumulator =
+    //    let realAccId, entry = Accumulator.getRealIdAndType accId acc
+
+    //    let replaced =
+    //        match entry with
+    //        | Constrained (refDefResOpt, _) -> refDefResOpt, newRefConstrs
+    //        | Generic -> None, newRefConstrs
+
+    //    realAccId,
+    //    { acc with
+    //        refConstraintsMap =
+    //            acc.refConstraintsMap
+    //            |> Map.add realAccId (Constrained replaced) }
+
+
+    static member replaceEntryWithRefDefAndConstrs
         (accId : AccumulatorTypeId)
-        (replacer : AccumulatorTypeId
-                        -> Result<RefDefType, AccTypeError> option
-                        -> RefConstr set
-                        -> Result<RefDefType, AccTypeError> option * RefConstr set)
+        (replacer : RefConstraintEntry -> RefDefResOpt * RefConstr set)
         (acc : Accumulator)
         : AccumulatorTypeId * Accumulator =
-        let realAccId, (refDefResOpt, refConstrs) = Accumulator.getRealIdAndType accId acc
-        let replaced = replacer realAccId refDefResOpt refConstrs
+        let realAccId, entry = Accumulator.getRealIdAndType accId acc
+
+        let replaced = replacer entry
 
         realAccId,
         { acc with
             refConstraintsMap =
                 acc.refConstraintsMap
-                |> Map.add realAccId replaced }
-
+                |> Map.add realAccId (Constrained replaced) }
 
 
 
@@ -538,7 +698,7 @@ type Accumulator =
         (refConstrs : RefConstr set)
         (acc : Accumulator)
         : Accumulator =
-        Accumulator.replaceEntry accId (fun _ _ _ -> refDefResOpt, refConstrs) acc
+        Accumulator.replaceEntryWithRefDefAndConstrs accId (fun _ -> refDefResOpt, refConstrs) acc
         |> snd
 
 
@@ -547,7 +707,12 @@ type Accumulator =
         (refDefResOpt : Result<RefDefType, AccTypeError> option)
         (acc : Accumulator)
         : Accumulator =
-        Accumulator.replaceEntry accId (fun _ _ refConstrs -> refDefResOpt, refConstrs) acc
+        Accumulator.replaceEntryWithRefDefAndConstrs
+            accId
+            (function
+            | Generic -> refDefResOpt, Set.empty
+            | Constrained (_, refConstrs) -> refDefResOpt, refConstrs)
+            acc
         |> snd
 
 
@@ -562,7 +727,7 @@ type Accumulator =
         { acc with
             refConstraintsMap =
                 acc.refConstraintsMap
-                |> Map.add key (refDefResOpt, Set.empty) }
+                |> Map.add key (Constrained (refDefResOpt, Set.empty)) }
 
     /// This can always be added without any further unifications needed 🥳 so it can be a very simple function.
     /// Of course note that any AccIds referenced in the RefDef being added have to already exist in the Acc
@@ -572,16 +737,16 @@ type Accumulator =
         : AccumulatorTypeId * Accumulator =
         let newKey = System.Guid.NewGuid () |> AccumulatorTypeId
 
-        newKey,
-        { acc with
-            refConstraintsMap =
-                acc.refConstraintsMap
-                |> Map.add newKey (refDefResOpt, Set.empty) }
+        newKey, Accumulator.addRefDefResOptUnderKey newKey refDefResOpt acc
 
 
+    static member addGenericUnderKey key acc =
+        { acc with refConstraintsMap = acc.refConstraintsMap |> Map.add key Generic }
 
 
-
+    static member addGeneric acc =
+        let newKey = System.Guid.NewGuid () |> AccumulatorTypeId
+        Accumulator.addGenericUnderKey newKey acc
 
 
 

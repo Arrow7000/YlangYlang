@@ -45,67 +45,67 @@ open NameResolution
 
 
 
-/// Converts a "mentionable type" representing a type expression to a TypeConstraints representing our internal type representation.
-/// It has to be a type constraint and not a definitive type because we need to take into consideration type params (which may not be declared) and references to type names (which may not exist)
-let rec mentionableTypeToDefinite (mentionable : Cst.MentionableType) : TypeConstraints =
-    match mentionable with
-    | S.UnitType -> TypeConstraints.fromDefinitive DtUnitType
-    | S.GenericTypeVar unqual ->
-        unqualValToLowerIdent unqual
-        |> ByTypeParam
-        |> TypeConstraints.fromConstraint
+///// Converts a "mentionable type" representing a type expression to a TypeConstraints representing our internal type representation.
+///// It has to be a type constraint and not a definitive type because we need to take into consideration type params (which may not be declared) and references to type names (which may not exist)
+//let rec mentionableTypeToDefinite (mentionable : Cst.MentionableType) : TypeConstraints =
+//    match mentionable with
+//    | S.UnitType -> TypeConstraints.fromDefinitive DtUnitType
+//    | S.GenericTypeVar unqual ->
+//        unqualValToLowerIdent unqual
+//        |> ByTypeParam
+//        |> TypeConstraints.fromConstraint
 
-    | S.Tuple { types = types } ->
-        types
-        |> TOM.map (S.getNode >> mentionableTypeToDefinite)
-        |> DtTuple
-        |> TypeConstraints.fromDefinitive
+//    | S.Tuple { types = types } ->
+//        types
+//        |> TOM.map (S.getNode >> mentionableTypeToDefinite)
+//        |> DtTuple
+//        |> TypeConstraints.fromDefinitive
 
-    | S.Record { fields = fields } ->
-        fields
-        |> Map.mapKeyVal (fun key value -> unqualValToRecField key.node, mentionableTypeToDefinite value.node)
-        |> DtRecordExact
-        |> TypeConstraints.fromDefinitive
+//    | S.Record { fields = fields } ->
+//        fields
+//        |> Map.mapKeyVal (fun key value -> unqualValToRecField key.node, mentionableTypeToDefinite value.node)
+//        |> DtRecordExact
+//        |> TypeConstraints.fromDefinitive
 
-    | S.ExtendedRecord { extendedTypeParam = extendedParam
-                         fields = fields } ->
-        // TODO: ensure that we actually try to resolve the extended param at some point so that we type this type expression correctly
+//    | S.ExtendedRecord { extendedTypeParam = extendedParam
+//                         fields = fields } ->
+//        // TODO: ensure that we actually try to resolve the extended param at some point so that we type this type expression correctly
 
-        fields
-        |> Map.mapKeyVal (fun key value -> unqualValToRecField key.node, mentionableTypeToDefinite value.node)
-        |> DtRecordWith
-        |> TypeConstraints.fromDefinitive
+//        fields
+//        |> Map.mapKeyVal (fun key value -> unqualValToRecField key.node, mentionableTypeToDefinite value.node)
+//        |> DtRecordWith
+//        |> TypeConstraints.fromDefinitive
 
-    | S.ReferencedType (typeName, typeParams) ->
-        let definiteTypeParams =
-            List.map (S.getNode >> mentionableTypeToDefinite) typeParams
+//    | S.ReferencedType (typeName, typeParams) ->
+//        let definiteTypeParams =
+//            List.map (S.getNode >> mentionableTypeToDefinite) typeParams
 
-        //IsOfTypeByName (typeOrModuleIdentToUpperNameVal typeName.node, definiteTypeParams)
-        //|> TypeConstraints.fromConstraint
-        DtNewType (typeOrModuleIdentToUpperNameVal typeName.node, definiteTypeParams)
-        |> TypeConstraints.fromDefinitive
+//        //IsOfTypeByName (typeOrModuleIdentToUpperNameVal typeName.node, definiteTypeParams)
+//        //|> TypeConstraints.fromConstraint
+//        DtNewType (typeOrModuleIdentToUpperNameVal typeName.node, definiteTypeParams)
+//        |> TypeConstraints.fromDefinitive
 
-    | S.Arrow (fromType, toTypes) ->
-        DtArrow (
-            mentionableTypeToDefinite fromType.node,
-            NEL.map S.getNode toTypes
-            |> mentionableArrowToDefinite
-        )
-        |> TypeConstraints.fromDefinitive
+//    | S.Arrow (fromType, toTypes) ->
+//        DtArrow (
+//            mentionableTypeToDefinite fromType.node,
+//            NEL.map S.getNode toTypes
+//            |> mentionableArrowToDefinite
+//        )
+//        |> TypeConstraints.fromDefinitive
 
-    | S.Parensed parensed -> mentionableTypeToDefinite parensed.node
+//    | S.Parensed parensed -> mentionableTypeToDefinite parensed.node
 
 
-/// Converts an NEL representing one or more destination types in an arrow type to a single type
-and private mentionableArrowToDefinite (toTypes : Cst.MentionableType nel) : TypeConstraints =
-    let (NEL (first, rest)) = toTypes
-    let convertedFirst = mentionableTypeToDefinite first
+///// Converts an NEL representing one or more destination types in an arrow type to a single type
+//and private mentionableArrowToDefinite (toTypes : Cst.MentionableType nel) : TypeConstraints =
+//    let (NEL (first, rest)) = toTypes
+//    let convertedFirst = mentionableTypeToDefinite first
 
-    match rest with
-    | [] -> convertedFirst
-    | head :: tail ->
-        DtArrow (convertedFirst, mentionableArrowToDefinite (NEL (head, tail)))
-        |> TypeConstraints.fromDefinitive
+//    match rest with
+//    | [] -> convertedFirst
+//    | head :: tail ->
+//        DtArrow (convertedFirst, mentionableArrowToDefinite (NEL (head, tail)))
+//        |> TypeConstraints.fromDefinitive
 
 
 
@@ -556,9 +556,9 @@ let makeGuidMapForNames (names : LowerIdent set) : Map<LowerIdent, TypeConstrain
 
 
 let rec replaceRefConstrInTypeConstraints (switcher : RefConstr set -> RefConstr set) (tc : TypeConstraints) =
-    let (Constrained (defOpt, refs)) = tc
+    let (TypeConstraints (defOpt, refs)) = tc
 
-    Constrained (Option.map (replaceRefConstrInDefType switcher) defOpt, switcher refs)
+    TypeConstraints (Option.map (replaceRefConstrInDefType switcher) defOpt, switcher refs)
 
 and replaceRefConstrInDefType (switcher : RefConstr set -> RefConstr set) (defType : DefinitiveType) =
     match defType with
@@ -646,9 +646,9 @@ and deleteGuidsFromDefType (defType : DefinitiveType) =
 
 /// Delete bound vars with guids from TypeConstraints, for better test comparisons
 and deleteGuidsFromTypeConstraints (tc : TypeConstraints) =
-    let (Constrained (defOpt, refs)) = tc
+    let (TypeConstraints (defOpt, refs)) = tc
 
-    Constrained (Option.map (deleteGuidsFromDefType) defOpt, Set.choose (deleteAllBoundVarsFromRefConstraints) refs)
+    TypeConstraints (Option.map (deleteGuidsFromDefType) defOpt, Set.choose (deleteAllBoundVarsFromRefConstraints) refs)
 
 
 
@@ -1060,7 +1060,7 @@ let getAccumulatorFromParam (typeScope : TypesAndVariantsInScope) (param : Assig
 
                 match List.map Aati.getId gatheredParams with
                 | [] ->
-                    let newTypeRefDef = RefDtNewType (Map.empty, union)
+                    let newTypeRefDef = RefDtNewType (union, Map.empty)
 
                     // I.e. there are no params to add for this variant's constructor
                     Acc.addRefDefResOptWithRefConstrs (Some (Ok newTypeRefDef)) Set.empty combinedAcc
@@ -1160,16 +1160,17 @@ let rec getAccumulatorFromExpr (typeScope : TypesAndVariantsInScope) (expr : T.E
         match singleVal with
         | T.ExplicitValue explicit ->
             match explicit with
-            | T.Primitive primitive ->
+            | Primitive primitive ->
                 let refDefType = refDeftypeOfPrimitiveLiteral primitive
                 Accumulator.addRefDefResOpt (makeOkType refDefType) Accumulator.empty
 
 
             | T.DotGetter dotGetter ->
-                let fields = Map.ofList [ dotGetter, TC.any () ]
-                let defType = DtArrow (DtRecordWith fields |> TC.fromDef, TC.any ())
 
-                Accumulator.convertDefinitiveType defType
+                //let fields = Map.ofList [ dotGetter, TC.any () ]
+                //let defType = DtArrow (DtRecordWith fields |> TC.fromDef, TC.any ())
+
+                //Accumulator.convertDefinitiveType defType
 
 
             | T.Compound compound ->

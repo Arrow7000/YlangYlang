@@ -492,6 +492,44 @@ and unifyTwoAccTypeIds (idA : AccumulatorTypeId) (idB : AccumulatorTypeId) (acc 
     unifyTwoRefDefResOpts (idA, itemA, refConstrsA) (idB, itemB, refConstrsB) acc
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /// Merges two accumulators. No IDs should be lost, refDefs should be unified according to reference constraint overlaps. And resulting combined IDs should be unified also.
 ///
 /// There should be no entities from one Acc referencing IDs in the other.
@@ -940,7 +978,7 @@ let rec convertDefinitiveType (def : DefinitiveType) : AccAndTypeId =
 
 
 and convertTypeConstraints (tc : TypeConstraints) : AccAndTypeId =
-    let (Constrained (defOpt, refConstrs)) = tc
+    let (TypeConstraints (defOpt, refConstrs)) = tc
 
     let withRefConstrsAdded = addRefConstraints refConstrs Accumulator.empty
 
@@ -984,7 +1022,7 @@ let rec convertRefDefToTypeConstraints
     (acc : Accumulator)
     : TypeJudgment =
     let fromDef def =
-        TypeConstraints.Constrained (Some def, refConstrsToAdd)
+        TypeConstraints.TypeConstraints (Some def, refConstrsToAdd)
         |> Ok
 
     /// Just a little helper where foundType is the last param, for easier use in `Result.bind`s
@@ -1003,7 +1041,7 @@ let rec convertRefDefToTypeConstraints
             |> Result.bind (convertType refConstrs)
             |> Result.map (DtList >> TypeConstraints.fromDefinitive)
 
-        | None -> Constrained (None, refConstrs) |> Ok
+        | None -> TypeConstraints (None, refConstrs) |> Ok
 
     | RefDtTuple constrTom ->
         let resultsTom =
@@ -1015,7 +1053,7 @@ let rec convertRefDefToTypeConstraints
                 | Some foundTypeResult ->
                     foundTypeResult
                     |> Result.bind (convertType refConstrs)
-                | None -> Constrained (None, refConstrs) |> Ok)
+                | None -> TypeConstraints (None, refConstrs) |> Ok)
             |> TOM.sequenceResult
 
         match resultsTom with
@@ -1034,7 +1072,7 @@ let rec convertRefDefToTypeConstraints
                 | Some foundTypeResult ->
                     foundTypeResult
                     |> Result.bind (convertType refConstrs)
-                | None -> Constrained (None, refConstrs) |> Ok)
+                | None -> TypeConstraints (None, refConstrs) |> Ok)
             |> Result.sequenceList
 
         match resultsTom with
@@ -1053,7 +1091,7 @@ let rec convertRefDefToTypeConstraints
                 | Some foundTypeResult ->
                     foundTypeResult
                     |> Result.bind (convertType refConstrs)
-                | None -> Constrained (None, refConstrs) |> Ok)
+                | None -> TypeConstraints (None, refConstrs) |> Ok)
             |> Tuple.sequenceResult
 
         resultsPair
@@ -1071,7 +1109,7 @@ let rec convertRefDefToTypeConstraints
                 | Some foundTypeResult ->
                     foundTypeResult
                     |> Result.bind (convertType refConstrs)
-                | None -> Constrained (None, refConstrs) |> Ok)
+                | None -> TypeConstraints (None, refConstrs) |> Ok)
             |> Map.sequenceResult
 
         match resultsMap with
@@ -1089,7 +1127,7 @@ let rec convertRefDefToTypeConstraints
                 | Some foundTypeResult ->
                     foundTypeResult
                     |> Result.bind (convertType refConstrs)
-                | None -> Constrained (None, refConstrs) |> Ok)
+                | None -> TypeConstraints (None, refConstrs) |> Ok)
             |> Map.sequenceResult
 
         match resultsMap with
@@ -1235,7 +1273,7 @@ let rec convertDefinitiveToConcrete (defType : DefinitiveType) : ConcreteOrGener
 
 
 and convertTypeConstraintsToConcrete (tc : TypeConstraints) : ConcreteOrGeneric =
-    let (Constrained (defOpt, _)) = tc
+    let (TypeConstraints (defOpt, _)) = tc
 
     match defOpt with
     | Some def -> convertDefinitiveToConcrete def
