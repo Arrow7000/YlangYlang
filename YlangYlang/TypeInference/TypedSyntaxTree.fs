@@ -48,14 +48,14 @@ and AssignmentPattern =
 /// Represents a generic, undeclared type variable. Used to create type constraints; e.g. between the input type and the output type of `let id x = x`.
 type TypeConstraintId =
     | TypeConstraintId of System.Guid
+
     override this.ToString () =
         let (TypeConstraintId guid) = this
 
         (string guid |> String.trim 6) + "..."
 
 
-let makeTypeConstrId () =
-    System.Guid.NewGuid () |> TypeConstraintId
+let makeTypeConstrId () = System.Guid.NewGuid () |> TypeConstraintId
 
 
 let private recFieldToStr (RecordFieldName str) = str
@@ -127,9 +127,7 @@ and DefinitiveType =
             "{ " + commafiedFields + " }"
 
         | DtNewType (typeName, typeVars) ->
-            upperNameValToStr typeName
-            + " "
-            + (List.map string typeVars |> String.join " ")
+            upperNameValToStr typeName + " " + (List.map string typeVars |> String.join " ")
 
         | DtArrow (fromType, toType) -> string fromType + " -> " + string toType
 
@@ -182,11 +180,7 @@ and TypeConstraints =
     override this.ToString () =
         let (TypeConstraints (defOpt, others)) = this
 
-        let refConstrsStr =
-            others
-            |> Set.toSeq
-            |> Seq.map string
-            |> String.join ", "
+        let refConstrsStr = others |> Set.toSeq |> Seq.map string |> String.join ", "
 
         match defOpt with
         | None -> refConstrsStr
@@ -197,13 +191,11 @@ and TypeConstraints =
     static member empty = TypeConstraints (None, Set.empty)
 
     /// Makes a new TypeConstraints which is empty of specific, but still has a Guid so as not to lose links required between the thing that is assigned this constraint and anything else it is linked to
-    static member makeUnspecific () =
-        TypeConstraints (None, Set.singleton (IsBoundVar (makeTypeConstrId ())))
+    static member makeUnspecific () = TypeConstraints (None, Set.singleton (IsBoundVar (makeTypeConstrId ())))
 
     static member fromDefinitive (def : DefinitiveType) : TypeConstraints = TypeConstraints (Some def, Set.empty)
 
-    static member fromConstraint (constr : RefConstr) : TypeConstraints =
-        TypeConstraints (None, Set.singleton constr)
+    static member fromConstraint (constr : RefConstr) : TypeConstraints = TypeConstraints (None, Set.singleton constr)
 
     static member addRefConstraints (constrs : RefConstr set) (TypeConstraints (defOpt, refConstrs)) =
         TypeConstraints (defOpt, Set.union constrs refConstrs)
@@ -301,12 +293,14 @@ type AccumulatorTypeId =
 
 
 type VariantCase =
-    { /// @TODO: make this support qualified names too
-      label : UpperIdent
-      /// Could be empty. Any of these constraint IDs should be declared in the type declaration as type params or else this is not valid.
-      ///
-      /// @TODO: actually this may not only contain type variables but also proper types, so they will be described by MentionableTypes
-      contents : MentionableType list }
+    {
+        /// @TODO: make this support qualified names too
+        label : UpperIdent
+        /// Could be empty. Any of these constraint IDs should be declared in the type declaration as type params or else this is not valid.
+        ///
+        /// @TODO: actually this may not only contain type variables but also proper types, so they will be described by MentionableTypes
+        contents : MentionableType list
+    }
 
 
 and UnionType =
@@ -554,6 +548,205 @@ But maybe... we leave that for now, and for now we behave as if every type can h
 
 
 
+
+
+/// Represents any concrete type (except records for now)
+///
+/// Because... I've realised that actually I can represent ~every single fucking type~ [actually not *every* single fucking type, cos records can't be represented this way. But close enough!] this way, and this will let me iterate on the type inference and unification logic *muuuuuuuuch* quicker
+type SimpleType =
+    /// For types like Int, String, etc.
+    | PrimitiveType of name : UpperNameValue
+    /// For types like List a, Tuple a b, Map k v, and so on.
+    | ParametricType of name : UpperNameValue * paramTypes : SimpleType nel
+
+
+
+(*
+    This is for the "inside-out" type inference, where inferring polytypes is not possible and all we have is simple unification
+*)
+
+type UnificationVarId = | UnificationVarId of System.Guid
+
+/// Unconstrained unification vars can be generalised as soon as they are out of scope, or perhaps rather: as soon as the lowest common ancestor between two occurrences of the same unification variable.
+type SimpleTypeWithUnificationVars =
+    /// If there are no constraints on a thing then we can still generalise! It's only if there are seemingly incompatible constraints that we cannot generalise
+    | Unconstrained
+    | PrimitiveType of name : UpperNameValue
+    | ParametricType of name : UpperNameValue * paramTypes : UnificationVarId
+
+type UnificationVarOrValName =
+    /// Because if we need to resort to this strategy we should never need to resort to recursive deps across modules because circular references between modules is forbidden, so we should only ever need to use this strategy for local names
+    | ValName of LowerIdent
+    | UnificationVar of UnificationVarId
+
+type UnificationVarsContext = Map<UnificationVarOrValName, SimpleTypeWithUnificationVars>
+
+
+
+
+
+
+
+///// A skolem represents a concrete type that is simply unknown at this point, so we cannot make any assumptions about it, and there may be no constraints on it; otherwise it would no longer be a skolem but a concrete type
+//type SkolemId = | SkolemId of System.Guid
+
+
+/// This is what a skolem looks like outside the place that it is defined, i.e. the `a` and `b` in `forall a b. {{type expression using a and b}}`
+type TypeVariableId = | TypeVariableId of System.Guid
+
+/// So this describes the definition of a polytype *before* it is instantiated. I.e. a `forall a. Maybe a` or a `forall a b. a -> b`. Once we put this into a larger expression we must instantiate these type variables with the concrete types or skolems (if unifying them with known types) or with unification variables (if we're unifying them with types that are not yet known).
+///
+/// Note: we don't have a map of the type variables used in the polytype because they can just be inferred by doing a simple recursive scan for which type vars are present in the polytype, so in our implementation they're implicit, even though we can still represent them explicitly. Just this way we avoid the possibility of our internal type referencing type variables that don't exist.
+///
+/// Hmmm... actually I think maybe we should add an explicit `forall` representation in there, because otherwise it might be quite hard to know at any point whether this particular type variable is independent from here and *this* is where the implicit `forall` is or if it's actually linked to a different thing in a parent thing. And... yes technically if you're looking inside a `forall` scope that would then be called a skolem, but that's then a matter of perspective, but the underlying thing is the same, so we'd always have the same data thingy for it regardless of whether we were inside or outside the thing.
+type PolyTypeContents =
+    | TypeVariable of TypeVariableId
+    | PrimitiveType of name : UpperNameValue
+    /// The type params have to be *contents* also because they cannot be free variables *inside* of a type expression or type signature. Existential qualifiers ("forall"s) have to appear at the beginning of a type expression.
+    | ParametricType of name : UpperNameValue * typeParams : PolyTypeContents
+
+
+
+type PolyType =
+    { forall : TypeVariableId set
+      typeExpr : PolyTypeContents }
+
+
+//type PolyTypeOrUnificationVar =
+//    | PolyType of PolyType
+//    | UnificationVar of SimpleTypeWithUnificationVars
+
+//type PolyTypeWithUnificationVars =
+//    | TypeVariable of TypeVariableId
+//    | PrimitiveType of name : UpperNameValue
+//    /// The type params have to be *contents* also because they cannot be free variables *inside* of a type expression or type signature. Existential qualifiers ("forall"s) have to appear at the beginning of a type expression.
+//    | ParametricType of name : UpperNameValue * typeParams : PolyTypeContents
+//    | Unconstrained
+
+
+
+type PolyTypeContents_ =
+    /// For new unification variables that are not constrained yet
+    | Unconstrained
+    /// Referencing a unification variable
+    | UnificationVar of UnificationVarId
+    /// Referencing a *type variable* (not a unification variable!), which if it gets replaced we need to somehow propagate the message upwards that all instances of this type variable need to be replaced with the same thing – we only stop propagating that message upwards when we get to the polytype where this type var is declared in
+    | TypeVariable of TypeVariableId
+    /// A simple unparametric type, like `Int` or `String`
+    | PrimitiveType of name : UpperNameValue
+    /// Parametric types, like `List a` or `Maybe a`
+    | ParametricType of name : UpperNameValue * typeParams : PolyTypeOrUnificationVar
+
+
+
+and PolyType_ =
+    { forall : TypeVariableId set
+      typeExpr : PolyTypeContents_ }
+
+and PolyTypeOrUnificationVar =
+    | PolyType of PolyType_
+    | UnificationVar of PolyTypeContents_
+
+
+//type PolyTypeOrUnificationVarOrValName =
+//    | UnificationVar of UnificationVarId
+//    | ValName of LowerIdent
+
+/// Map that maps value names to their polytypes but also unification variables to their thingies
+//type FullRangeNamesMap = Map<PolyTypeOrUnificationVarOrValName, PolyTypeOrUnificationVar>
+type FullRangeNamesMap =
+    {
+        /// This is immutable for every named thing
+        resolvedNamesMap : Map<LowerIdent, PolyType_>
+        /// This on the other hand *is* mutable, because we need to update and refine constraints on the unification variables the more we learn from usages of the variables
+        unificationVarsMap : Map<UnificationVarId, PolyTypeContents_>
+    }
+
+
+
+//
+// @TODO: I think I actually need to create another structure that can actually incorporate both of the above, the constraint-only approach, and the polytype approach, because tachlis during the unification-variable stage we still need to be able to incorporate the richer polytypes from the first resolution pass into the algorithm. It's just that we won't be adding any *new* polytypes using that strategy and so simple concrete unification and narrowing is fine.
+//
+
+
+
+
+
+
+
+
+
+
+
+
+/// Name of a referenced value
+type RefValueName = | RefValueName of LowerNameValue
+
+/// Allows for directly referencing values in a Ctx
+type TypeRefId = | TypeRefId of System.Guid
+///
+type UnificationVar = | UnificationVar of System.Guid
+type TypeVar = | TypeVar of System.Guid
+//type Skolem = | Skolem of System.Guid
+
+
+
+
+
+type ConcreteType =
+    | ConcUnitType
+    | ConcPrimType of BuiltInPrimitiveTypes
+    | ConcTuple of TypeForInference tom
+    | ConcList of TypeForInference
+    /// I think we need to pass in a type param to the extended record, so that not including one is a type error
+    | ConcRecordWith of referencedFields : Map<RecordFieldName, TypeForInference>
+    | ConcRecordExact of Map<RecordFieldName, TypeForInference>
+    /// This guy will only be able to be assigned at the root of a file once we have the types on hand to resolve them and assign.
+    /// We initialise this by just making all the type params TypeVars (unification vars)
+    | ConcNewType of typeName : UpperNameValue * typeParams : TypeForInference list
+
+    | ConcArrow of fromType : TypeForInference * toType : TypeForInference
+
+
+and TypeForInference =
+    | Concrete of ConcreteType
+    ///// Same as whatever this name is (although not _exactly_ the same, because the named value could have a type scheme, so the type scheme will then adapt to whatever the context is
+    | Named of RefValueName
+
+    /// This is basically the `a` in a `forall a. a -> a`. So it needs to be substituted with something else at each instantiation, so that when that thing gets replaced it doesn't replace every instance of the type, but only that specific fresh instance of it.
+    | UnificationVarId of UnificationVar
+
+    /// This is that fresh instantiation of a unification variable, so that if one of these gets replaced with a concrete type, _all_ of the same ID instances get replaced with the same type
+    | TypeVarId of TypeVar
+
+
+//and WithUnresolveds =
+//    /// I think we just throw an error if we try to unify anything with an unresolved name inside of it
+//    | Named of RefValueName
+//    | UnresolvedTree of TypeForInference
+
+
+type TypeErr = | TypeClash of ConcreteType * ConcreteType
+
+
+type TypeInferenceResult = Result<TypeForInference, TypeErr>
+
+
+type NameOrReference =
+    | Name of RefValueName
+    | Reference of TypeRefId
+
+type TypeContext = Map<NameOrReference, TypeInferenceResult nel>
+
+
+
+
+
+
+
+
+
+
 /// Commonly used type throughout Accumulator stuff
 type RefDefResOpt = Result<RefDefType, AccTypeError> option
 
@@ -570,15 +763,17 @@ type RefConstraintEntry =
     /// So we still need to do unification, but we're not unifying the constituent elements, only the type of the compound thing gets narrowed to the unification of `None : Maybe a` and `Just 123 : Maybe Int`. But the constraint only propagates one way, from the thing to the larger context that uses the structure, the structure itself doesn't (can't) impose a constraint onto the thing it uses. *Unless*! – and this is an important caveat – when the thing it's used in does have type *requirements*; e.g. we're doing `f a`; that does require `f` to be a `a -> b`, i.e. a concrete function. We can't know anything about the input and output types, and shouldn't make assumptions on what it takes and returns based on what we feed it, because it could be that we just happen to feed it a string but that `f` could equally well accept an `Int`, just because we passed it one thing doesn't mean that's the only thing it accepts.
     ///
     /// What other examples of such requirements are there? Well, e.g. things being pattern matched on and things used as conditionals in if expressions. And of course when passed as parameters to functions that do have strict requirements on the type they accept, whether implicitly through destructurings or through type annotations (not implemented yet)
-    | Generic // of TypeConstraintId
+    | Generic of TypeConstraintId
 
 
 /// Attempt at making accumulator working by using two internal maps, one where every single def type gets a guid assigned to it, and every ref constraint gets placed in a set with its others, which points to a guid, which in turn may have a def type assigned to it.
 type Accumulator =
-    { refConstraintsMap : Map<AccumulatorTypeId, RefConstraintEntry>
+    {
+        refConstraintsMap : Map<AccumulatorTypeId, RefConstraintEntry>
 
-      /// This stores old ID references so that we don't ever run the risk of an ID ever getting out of date or replaced. This way a reference ID, once made, is reliable.
-      redirectMap : Map<AccumulatorTypeId, AccumulatorTypeId> }
+        /// This stores old ID references so that we don't ever run the risk of an ID ever getting out of date or replaced. This way a reference ID, once made, is reliable.
+        redirectMap : Map<AccumulatorTypeId, AccumulatorTypeId>
+    }
 
     static member empty =
         { refConstraintsMap = Map.empty
@@ -618,11 +813,8 @@ type Accumulator =
             |> Map.add newAccId (Constrained (refDefResOpt, refConstrs))
 
           redirectMap =
-              acc.redirectMap
-              |> Map.addBulk (
-                  accIdsToReplace
-                  |> Seq.map (fun accId -> accId, newAccId)
-              ) }
+            acc.redirectMap
+            |> Map.addBulk (accIdsToReplace |> Seq.map (fun accId -> accId, newAccId)) }
 
 
 
@@ -682,9 +874,7 @@ type Accumulator =
 
         realAccId,
         { acc with
-            refConstraintsMap =
-                acc.refConstraintsMap
-                |> Map.add realAccId (Constrained replaced) }
+            refConstraintsMap = acc.refConstraintsMap |> Map.add realAccId (Constrained replaced) }
 
 
 
@@ -710,7 +900,7 @@ type Accumulator =
         Accumulator.replaceEntryWithRefDefAndConstrs
             accId
             (function
-            | Generic -> refDefResOpt, Set.empty
+            | Generic _ -> refDefResOpt, Set.empty
             | Constrained (_, refConstrs) -> refDefResOpt, refConstrs)
             acc
         |> snd
@@ -725,9 +915,7 @@ type Accumulator =
         (acc : Accumulator)
         : Accumulator =
         { acc with
-            refConstraintsMap =
-                acc.refConstraintsMap
-                |> Map.add key (Constrained (refDefResOpt, Set.empty)) }
+            refConstraintsMap = acc.refConstraintsMap |> Map.add key (Constrained (refDefResOpt, Set.empty)) }
 
     /// This can always be added without any further unifications needed 🥳 so it can be a very simple function.
     /// Of course note that any AccIds referenced in the RefDef being added have to already exist in the Acc
@@ -741,7 +929,10 @@ type Accumulator =
 
 
     static member addGenericUnderKey key acc =
-        { acc with refConstraintsMap = acc.refConstraintsMap |> Map.add key Generic }
+        let newGeneric = makeTypeConstrId ()
+
+        { acc with
+            refConstraintsMap = acc.refConstraintsMap |> Map.add key (Generic newGeneric) }
 
 
     static member addGeneric acc =
@@ -792,10 +983,12 @@ and InfixOps = Map<LowerIdent, SOD<DeclaredInfixOp>>
 
 
 and DeclaredInfixOp =
-    { associativity : S.InfixOpAssociativity
-      precedence : int
-      /// The value should be a function taking exactly two parameters
-      value : Expression }
+    {
+        associativity : S.InfixOpAssociativity
+        precedence : int
+        /// The value should be a function taking exactly two parameters
+        value : Expression
+    }
 
 
 and VariantConstructor =
@@ -831,12 +1024,13 @@ and TypeDeclaration =
 
 /// Note that each let binding could still create multiple named values through assignment patterns, so this is only the result of a single name, not a full binding
 and LetBinding =
-    { paramPattern : AssignmentPattern
-      namesMap : Map<LowerIdent, SOD<Param>>
-      /// @TODO: hmm not entirely sure what this thing actually describes. Is it the inferred type of the entire binding? Or is it _only_ the inferred shape based on the assignment pattern, which therefore still needs to be unified with the inferred type of the actual assigned expression?
-      //bindingPatternInferredType : TypeJudgment
+    {
+        paramPattern : AssignmentPattern
+        namesMap : Map<LowerIdent, SOD<Param>>
+        /// @TODO: hmm not entirely sure what this thing actually describes. Is it the inferred type of the entire binding? Or is it _only_ the inferred shape based on the assignment pattern, which therefore still needs to be unified with the inferred type of the actual assigned expression?
+        //bindingPatternInferredType : TypeJudgment
 
-      (*
+        (*
       @TODO: we need to take into account the assignment pattern here so that we can:
         a) add the type constraints implied by that pattern, and
         b) partially evaluate or slice up the expression so that we're assigning the right sub-expressions to the right names
@@ -845,10 +1039,10 @@ and LetBinding =
         a) we've only got one expression we're evaluating per binding (and so not doing the duplicate work of evaluating the expression once for every named value in the assignment pattern), and
         b) for each named value, what path to take in that expression to get the slice of the expression that should be assigned to it, e.g. a tuple, type destructuring, etc.
       *)
-      assignedExpression : Expression
+        assignedExpression : Expression
 
     //combinedInferredType : TypeJudgment
-     }
+    }
 
 
 
@@ -861,7 +1055,7 @@ and FunctionOrCaseMatchParam =
     { paramPattern : AssignmentPattern
       namesMap : Map<LowerIdent, SOD<Param>>
     //inferredType : TypeJudgment
-     }
+    }
 
 
 
