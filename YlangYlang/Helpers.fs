@@ -533,7 +533,17 @@ module List =
     let minSafe list = minBySafe id list
 
 
+    /// Returns an Error result with the lists so far if lists don't have the same length; which will be a list of n pairs, where n is the length of the shorter of the two input lists.
+    /// If the lists are not the same length, the Error will contain the combined lists so far. This is useful so that we can do some type checking on those bits that do overlap.
+    let zipList listA listB : Result<('a * 'b) list, ('a * 'b) list> =
+        let rec zipList_ combinedSoFar a b =
+            match a, b with
+            | [], [] -> Ok (List.rev combinedSoFar)
+            | headA :: tailA, headB :: tailB -> zipList_ ((headA, headB) :: combinedSoFar) tailA tailB
+            | [], _ :: _
+            | _ :: _, [] -> Error (List.rev combinedSoFar)
 
+        zipList_ List.empty listA listB
 
 
 

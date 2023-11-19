@@ -24,8 +24,8 @@ module AccAndTypeId =
         let _ =
             try
                 Accumulator.getTypeById accTypeId acc
-            with
-            | _ -> failwithf "Tried to make an Aati with an ID that's not present in the Acc!"
+            with _ ->
+                failwithf "Tried to make an Aati with an ID that's not present in the Acc!"
 
         { acc = acc; typeId = accTypeId }
 
@@ -49,8 +49,7 @@ module Aati = AccAndTypeId
 
 
 
-let private makeAccTypeId () : AccumulatorTypeId =
-    System.Guid.NewGuid () |> AccumulatorTypeId
+let private makeAccTypeId () : AccumulatorTypeId = System.Guid.NewGuid () |> AccumulatorTypeId
 
 
 
@@ -71,17 +70,7 @@ type private UnifyRefConstrsPassResult =
 
 
 
-/// Returns an error with the lists so far if lists don't have the same length; which will be a list of n pairs, where n is the length of the shorter of the two input lists.
-/// If the lists are not the same length, the Error will contain the combined lists so far. This is useful so that we can do some type checking on those bits that do overlap.
-let private zipList listA listB : Result<('a * 'b) list, ('a * 'b) list> =
-    let rec zipList_ combinedSoFar a b =
-        match a, b with
-        | [], [] -> Ok (List.rev combinedSoFar)
-        | headA :: tailA, headB :: tailB -> zipList_ ((headA, headB) :: combinedSoFar) tailA tailB
-        | [], _ :: _
-        | _ :: _, [] -> Error (List.rev combinedSoFar)
 
-    zipList_ List.empty listA listB
 
 
 
@@ -207,7 +196,7 @@ let rec private unifyTwoRefDefs
 
     | RefDtTuple (TOM (headA, neckA, tailA)), RefDtTuple (TOM (headB, neckB, tailB)) ->
         /// This ensures the two lists of AccIds have the same length, it doesn't try to unify them yet
-        let combinedListResult = zipList tailA tailB
+        let combinedListResult = List.zipList tailA tailB
 
         match combinedListResult with
         | Ok combinedList ->
@@ -290,7 +279,7 @@ let rec private unifyTwoRefDefs
 
     | RefDtNewType (nameA, typeParamsA), RefDtNewType (nameB, typeParamsB) ->
         if nameA = nameB then
-            let zippedLists = zipList typeParamsA typeParamsB
+            let zippedLists = List.zipList typeParamsA typeParamsB
 
             match zippedLists with
             | Ok combinedList ->
@@ -549,14 +538,8 @@ let rec combine (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
         | RefDtPrimType _ -> true
         | RefDtList accId -> hasId accId
         | RefDtTuple accIdTom -> accIdTom |> TOM.map hasId |> TOM.fold (&&) true
-        | RefDtRecordWith fields ->
-            Map.values fields
-            |> Seq.map hasId
-            |> Seq.fold (&&) true
-        | RefDtRecordExact fields ->
-            Map.values fields
-            |> Seq.map hasId
-            |> Seq.fold (&&) true
+        | RefDtRecordWith fields -> Map.values fields |> Seq.map hasId |> Seq.fold (&&) true
+        | RefDtRecordExact fields -> Map.values fields |> Seq.map hasId |> Seq.fold (&&) true
         | RefDtNewType (_, typeParams) -> typeParams |> Seq.map hasId |> Seq.fold (&&) true
         | RefDtArrow (fromType, toType) -> hasId fromType && hasId toType
 
@@ -584,8 +567,7 @@ let rec combine (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
     let rec getItemsWithAllowedDependencies (sourceAcc : Accumulator) (destinationAcc : Accumulator) : Accumulator =
         let addedDepAccIds =
             Set.union
-                (Map.keys destinationAcc.refConstraintsMap
-                 |> Set.ofSeq)
+                (Map.keys destinationAcc.refConstraintsMap |> Set.ofSeq)
                 (Map.keys destinationAcc.redirectMap |> Set.ofSeq)
 
         let allDepAccIds =
@@ -632,8 +614,7 @@ let rec combine (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
                     Accumulator.addRefDefResOptUnderKey key refDefResOpt acc
                     |> Accumulator.replaceEntry key (fun _ rd _ -> rd, refConstrs)
 
-                addRefConstrsForAccId key refConstrs withRefDefInserted
-                |> Aati.getAcc
+                addRefConstrsForAccId key refConstrs withRefDefInserted |> Aati.getAcc
 
 
             let updatedDestAcc =
@@ -644,14 +625,15 @@ let rec combine (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
 
             let updatedSourceAcc =
                 { sourceAcc with
-                    refConstraintsMap =
-                        sourceAcc.refConstraintsMap
-                        |> Map.removeKeys (Map.keys entriesAllowedNow) }
+                    refConstraintsMap = sourceAcc.refConstraintsMap |> Map.removeKeys (Map.keys entriesAllowedNow) }
 
             getItemsWithAllowedDependencies updatedSourceAcc updatedDestAcc
 
 
-    getItemsWithAllowedDependencies acc1 { acc2 with redirectMap = Map.merge acc1.redirectMap acc2.redirectMap }
+    getItemsWithAllowedDependencies
+        acc1
+        { acc2 with
+            redirectMap = Map.merge acc1.redirectMap acc2.redirectMap }
 
 
 
@@ -662,8 +644,7 @@ let rec combine (acc1 : Accumulator) (acc2 : Accumulator) : Accumulator =
 and combineMany (accs : Accumulator seq) : Accumulator = Seq.fold combine Accumulator.empty accs
 
 /// Combine Accumulators from a seq of `AccAndTypeId`s
-and combineAccsFromAatis (aatis : AccAndTypeId seq) : Accumulator =
-    Seq.map Aati.getAcc aatis |> combineMany
+and combineAccsFromAatis (aatis : AccAndTypeId seq) : Accumulator = Seq.map Aati.getAcc aatis |> combineMany
 
 
 
@@ -676,12 +657,10 @@ and combineAccsFromAatis (aatis : AccAndTypeId seq) : Accumulator =
 let addRefConstraints (refConstrs : RefConstr set) (acc : Accumulator) : AccAndTypeId =
     addRefDefResOptWithRefConstrs None refConstrs acc
 
-let addSingleRefConstr refConstr acc =
-    addRefDefResOptWithRefConstrs None (Set.singleton refConstr) acc
+let addSingleRefConstr refConstr acc = addRefDefResOptWithRefConstrs None (Set.singleton refConstr) acc
 
 
-let addError err acc =
-    addRefDefResOptWithRefConstrs (Some (Error err)) Set.empty acc
+let addError err acc = addRefDefResOptWithRefConstrs (Some (Error err)) Set.empty acc
 
 
 /// @TODO: maybe do this using the more fundamental unifyTypeConstraintIds? idk tho
@@ -709,12 +688,9 @@ let addRefDefConstraintForAccId
     /// It's not the most efficient way to do it to add a whole new AccId just so we have something to point `unifyTypeConstraintIds` to, but it works and if we really care we can make it more efficient later
     let accWithRefDefAdded =
         { acc with
-            refConstraintsMap =
-                acc.refConstraintsMap
-                |> Map.add newKey (refDefResOpt, Set.empty) }
+            refConstraintsMap = acc.refConstraintsMap |> Map.add newKey (refDefResOpt, Set.empty) }
 
-    accWithRefDefAdded
-    |> unifyTwoAccTypeIds newKey accId
+    accWithRefDefAdded |> unifyTwoAccTypeIds newKey accId
 
 
 
@@ -731,8 +707,7 @@ let addRefDefRes (refDefRes : Result<RefDefType, AccTypeError>) acc =
 let addRefDef (refDef : RefDefType) acc = addRefDefRes (Ok refDef) acc
 
 /// This adds an entry into the map that thus far has no type constraints. It will be narrowed later if it does get unified with other types but on its own it has no requirements.
-let addGeneric acc =
-    addRefDefResOptWithRefConstrs None Set.empty acc
+let addGeneric acc = addRefDefResOptWithRefConstrs None Set.empty acc
 
 
 
@@ -791,9 +766,7 @@ let rec mentionableTypeToRefDef (mentionableType : MentionableType) (acc : Accum
             let fromResult = mentionableTypeToRefDef fromType acc
             let toResult = mentionableTypeToRefDef toType fromResult.acc
 
-            RefDtArrow (fromResult.typeId, toResult.typeId)
-            |> Choice2Of2,
-            toResult.acc
+            RefDtArrow (fromResult.typeId, toResult.typeId) |> Choice2Of2, toResult.acc
 
         | MentionableType.ReferencedType (unionType, typeParamsMap) ->
             let mappedTypeParams, updatedAcc =
@@ -804,9 +777,7 @@ let rec mentionableTypeToRefDef (mentionableType : MentionableType) (acc : Accum
                         result.typeId, result.acc)
                     acc
 
-            RefDtNewType (mappedTypeParams, unionType)
-            |> Choice2Of2,
-            updatedAcc
+            RefDtNewType (mappedTypeParams, unionType) |> Choice2Of2, updatedAcc
 
 
     let accId, finalAcc =
@@ -844,13 +815,12 @@ let rec applyMentionableTypeToRefDef
         if primA = primB then
             Aati.make accId acc
         else
-            Accumulator.simpleReplaceRefDefEntry accId mismatchErr acc
-            |> Aati.make accId
+            Accumulator.simpleReplaceRefDefEntry accId mismatchErr acc |> Aati.make accId
     | MentionableType.Tuple mentionables, RefDtTuple items ->
         let (TOM (mentionHead, mentionNeck, mentionTail)) = mentionables
         let (TOM (refDefHead, refDefNeck, refDefTail)) = items
 
-        let zippedItemsResult = zipList mentionTail refDefTail
+        let zippedItemsResult = List.zipList mentionTail refDefTail
 
         match zippedItemsResult with
         | Ok zipped ->
@@ -899,17 +869,14 @@ let rec convertDefinitiveType (def : DefinitiveType) : AccAndTypeId =
     let makeOkType : RefDefType -> RefDefResOpt = Ok >> Some
 
     let makeSingletonAcc (refDefResOpt : Result<RefDefType, AccTypeError> option) : Accumulator =
-        { Accumulator.empty with refConstraintsMap = Map.ofList [ newKey, (refDefResOpt, Set.empty) ] }
+        { Accumulator.empty with
+            refConstraintsMap = Map.ofList [ newKey, (refDefResOpt, Set.empty) ] }
 
 
     match def with
-    | DtUnitType ->
-        makeSingletonAcc (makeOkType RefDtUnitType)
-        |> Aati.make newKey
+    | DtUnitType -> makeSingletonAcc (makeOkType RefDtUnitType) |> Aati.make newKey
 
-    | DtPrimitiveType prim ->
-        makeSingletonAcc (makeOkType (RefDtPrimType prim))
-        |> Aati.make newKey
+    | DtPrimitiveType prim -> makeSingletonAcc (makeOkType (RefDtPrimType prim)) |> Aati.make newKey
 
     | DtList tc ->
         let resultOfGeneric = convertTypeConstraints tc
@@ -922,9 +889,7 @@ let rec convertDefinitiveType (def : DefinitiveType) : AccAndTypeId =
         let resultsTom = TOM.map convertTypeConstraints tom
 
         let combinedAccs =
-            resultsTom
-            |> TOM.map Aati.getAcc
-            |> TOM.fold combine Accumulator.empty
+            resultsTom |> TOM.map Aati.getAcc |> TOM.fold combine Accumulator.empty
 
         let tupleType = RefDtTuple (TOM.map Aati.getId resultsTom)
 
@@ -998,9 +963,7 @@ let convertTypeJudgment (judgment : TypeJudgment) : AccAndTypeId =
     | Ok tc -> convertTypeConstraints tc
     | Error e ->
         { Accumulator.empty with
-            refConstraintsMap =
-                Map.empty
-                |> Map.add newKey (Some (Error e), Set.empty) }
+            refConstraintsMap = Map.empty |> Map.add newKey (Some (Error e), Set.empty) }
         |> Aati.make newKey
 
 
@@ -1021,13 +984,10 @@ let rec convertRefDefToTypeConstraints
     (refConstrsToAdd : RefConstr set)
     (acc : Accumulator)
     : TypeJudgment =
-    let fromDef def =
-        TypeConstraints.TypeConstraints (Some def, refConstrsToAdd)
-        |> Ok
+    let fromDef def = TypeConstraints.TypeConstraints (Some def, refConstrsToAdd) |> Ok
 
     /// Just a little helper where foundType is the last param, for easier use in `Result.bind`s
-    let convertType refConstrs foundType =
-        convertRefDefToTypeConstraints foundType refConstrs acc
+    let convertType refConstrs foundType = convertRefDefToTypeConstraints foundType refConstrs acc
 
     match refDef with
     | RefDtUnitType -> fromDef DtUnitType
@@ -1050,9 +1010,7 @@ let rec convertRefDefToTypeConstraints
                 let foundTypeResultOpt, refConstrs = Accumulator.getTypeById constrId acc
 
                 match foundTypeResultOpt with
-                | Some foundTypeResult ->
-                    foundTypeResult
-                    |> Result.bind (convertType refConstrs)
+                | Some foundTypeResult -> foundTypeResult |> Result.bind (convertType refConstrs)
                 | None -> TypeConstraints (None, refConstrs) |> Ok)
             |> TOM.sequenceResult
 
@@ -1069,9 +1027,7 @@ let rec convertRefDefToTypeConstraints
                 let foundTypeResultOpt, refConstrs = Accumulator.getTypeById constrId acc
 
                 match foundTypeResultOpt with
-                | Some foundTypeResult ->
-                    foundTypeResult
-                    |> Result.bind (convertType refConstrs)
+                | Some foundTypeResult -> foundTypeResult |> Result.bind (convertType refConstrs)
                 | None -> TypeConstraints (None, refConstrs) |> Ok)
             |> Result.sequenceList
 
@@ -1088,14 +1044,11 @@ let rec convertRefDefToTypeConstraints
                 let foundTypeResultOpt, refConstrs = Accumulator.getTypeById constrId acc
 
                 match foundTypeResultOpt with
-                | Some foundTypeResult ->
-                    foundTypeResult
-                    |> Result.bind (convertType refConstrs)
+                | Some foundTypeResult -> foundTypeResult |> Result.bind (convertType refConstrs)
                 | None -> TypeConstraints (None, refConstrs) |> Ok)
             |> Tuple.sequenceResult
 
-        resultsPair
-        |> Result.map (DtArrow >> TypeConstraints.fromDefinitive)
+        resultsPair |> Result.map (DtArrow >> TypeConstraints.fromDefinitive)
 
 
 
@@ -1106,9 +1059,7 @@ let rec convertRefDefToTypeConstraints
                 let foundTypeResultOpt, refConstrs = Accumulator.getTypeById constrId acc
 
                 match foundTypeResultOpt with
-                | Some foundTypeResult ->
-                    foundTypeResult
-                    |> Result.bind (convertType refConstrs)
+                | Some foundTypeResult -> foundTypeResult |> Result.bind (convertType refConstrs)
                 | None -> TypeConstraints (None, refConstrs) |> Ok)
             |> Map.sequenceResult
 
@@ -1124,9 +1075,7 @@ let rec convertRefDefToTypeConstraints
                 let foundTypeResultOpt, refConstrs = Accumulator.getTypeById constrId acc
 
                 match foundTypeResultOpt with
-                | Some foundTypeResult ->
-                    foundTypeResult
-                    |> Result.bind (convertType refConstrs)
+                | Some foundTypeResult -> foundTypeResult |> Result.bind (convertType refConstrs)
                 | None -> TypeConstraints (None, refConstrs) |> Ok)
             |> Map.sequenceResult
 
@@ -1189,9 +1138,7 @@ let rec convertRefDefToConcreteType
     | RefDtRecordWith fields ->
         fields
         |> Map.toList
-        |> List.map (fun (field, value) ->
-            convertFromAccId value
-            |> Result.map (fun v -> field, v))
+        |> List.map (fun (field, value) -> convertFromAccId value |> Result.map (fun v -> field, v))
         |> Result.sequenceList
         |> Result.mapError NEL.head
         |> Result.map (Map.ofList >> ConcRecordWith)
@@ -1199,9 +1146,7 @@ let rec convertRefDefToConcreteType
     | RefDtRecordExact fields ->
         fields
         |> Map.toList
-        |> List.map (fun (field, value) ->
-            convertFromAccId value
-            |> Result.map (fun v -> field, v))
+        |> List.map (fun (field, value) -> convertFromAccId value |> Result.map (fun v -> field, v))
         |> Result.sequenceList
         |> Result.mapError NEL.head
         |> Result.map (Map.ofList >> ConcRecordExact)
@@ -1298,8 +1243,7 @@ let getEntryByRefConstr
 
 
 let getAccIdByRefConstr (refConstr : RefConstr) (acc : Accumulator) : AccumulatorTypeId option =
-    getEntryByRefConstr refConstr acc
-    |> Option.map fst
+    getEntryByRefConstr refConstr acc |> Option.map fst
 
 
 
