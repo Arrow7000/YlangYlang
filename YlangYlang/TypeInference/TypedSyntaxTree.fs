@@ -626,27 +626,25 @@ type PolyType =
 
 
 type PolyTypeContents_ =
-    /// For new unification variables that are not constrained yet
-    | Unconstrained
-    /// Referencing a unification variable
+    /// Referencing a unification variable. To figure out what this unification var is you'll need to look into your local UnificationVarsMap (see below)
     | UnificationVar of UnificationVarId
     /// Referencing a *type variable* (not a unification variable!), which if it gets replaced we need to somehow propagate the message upwards that all instances of this type variable need to be replaced with the same thing – we only stop propagating that message upwards when we get to the polytype where this type var is declared in
     | TypeVariable of TypeVariableId
     /// A simple unparametric type, like `Int` or `String`
     | PrimitiveType of name : UpperNameValue
     /// Parametric types, like `List a` or `Maybe a`
-    | ParametricType of name : UpperNameValue * typeParams : PolyTypeOrUnificationVar
-
+    | ParametricType of name : UpperNameValue * typeParams : PolyTypeContents_ list
 
 
 and PolyType_ =
-    { forall : TypeVariableId set
+    { forall : TypeVariableId list
       typeExpr : PolyTypeContents_ }
 
-and PolyTypeOrUnificationVar =
-    | PolyType of PolyType_
-    | UnificationVar of PolyTypeContents_
 
+
+
+type TypedNamesMap = Map<LowerNameValue, PolyType_>
+type TypedLocalNamesMap = Map<LowerIdent, PolyType_>
 
 //type PolyTypeOrUnificationVarOrValName =
 //    | UnificationVar of UnificationVarId
@@ -654,19 +652,134 @@ and PolyTypeOrUnificationVar =
 
 /// Map that maps value names to their polytypes but also unification variables to their thingies
 //type FullRangeNamesMap = Map<PolyTypeOrUnificationVarOrValName, PolyTypeOrUnificationVar>
+
+/// THIS is basically the new version of the Accumulator, because it gathers unification constraints on variables, and so every inferExpressionType function will return one of these and so they need to be combined to get the full constraints for each unification variable. Then, with all of the gathered constraints on each unification variable, we can assign that type to the name, and then use that inferred type as the type for that name, and then proceed to see if that inferred type is indeed compatible with all the other uses of that name.
+type UnificationVarsMap = Map<UnificationVarId, PolyTypeContents_ option>
+
 type FullRangeNamesMap =
     {
         /// This is immutable for every named thing
-        resolvedNamesMap : Map<LowerIdent, PolyType_>
+        resolvedNamesMap : TypedNamesMap
         /// This on the other hand *is* mutable, because we need to update and refine constraints on the unification variables the more we learn from usages of the variables
-        unificationVarsMap : Map<UnificationVarId, PolyTypeContents_>
+        unificationVarsMap : UnificationVarsMap
     }
 
 
+type SelfAndConstrainedUnificationVars =
+    { self : PolyType_
+      constrained : UnificationVarsMap }
 
-//
-// @TODO: I think I actually need to create another structure that can actually incorporate both of the above, the constraint-only approach, and the polytype approach, because tachlis during the unification-variable stage we still need to be able to incorporate the richer polytypes from the first resolution pass into the algorithm. It's just that we won't be adding any *new* polytypes using that strategy and so simple concrete unification and narrowing is fine.
-//
+
+
+
+
+module SelfAndConstrainedUnificationVars =
+    let make self constrained : SelfAndConstrainedUnificationVars =
+        { self = self
+          constrained = constrained }
+
+///// This is a temporary data structure returned from both inferExpressionType and unifyTypes functions to signify which type variables in the nearest parent polytype forall need to be replaced with which concrete types, because if a type variable gets replaced with a particular concrete type we need to replace that type variable in every place it occurs!
+//type ConcretisedTypeVars = Map<TypeVariableId, UnificationVarId>
+
+
+
+
+
+/// Module with a greatly simplified language but still containing all the key elements, so that we can test type inference and resolution with a simpler version before tackling the real thing
+module DummyLang =
+    let private makePrimitiveType = PrimitiveType << LocalUpper << UpperIdent
+    let private makeParametricType label params_ = ParametricType (LocalUpper (UpperIdent label), params_)
+
+    let private makeNewTypeVarId () = System.Guid.NewGuid () |> TypeVariableId
+
+    /// Makes a new polytype. Pass in as many units as there are type parameter slots for that type.
+    let private makeNewParametricType label (typeVarSlots : unit list) =
+        let typeVars = typeVarSlots |> List.map makeNewTypeVarId
+
+        { forall = typeVars
+          typeExpr = makeParametricType label (List.map TypeVariable typeVars) }
+
+    let makeEmptyPolyType contents =
+        { forall = List.empty
+          typeExpr = contents }
+
+    let strType : PolyTypeContents_ = makePrimitiveType "String"
+    let intType : PolyTypeContents_ = makePrimitiveType "Int"
+
+    let listTypeOf (t : PolyType_) =
+        { forall = t.forall
+          typeExpr = makeParametricType "List" [ t.typeExpr ] }
+
+    let listType : PolyType_ = makeNewParametricType "List" [ () ]
+
+    let tupleTypeOf a b =
+        { forall = a.forall @ b.forall
+          typeExpr = makeParametricType "Tuple" [ a.typeExpr; b.typeExpr ] }
+
+    let tupleType : PolyType_ = makeNewParametricType "Tuple " [ (); () ]
+
+    let funcTypeOf from to_ =
+        { forall = from.forall @ to_.forall
+          typeExpr = makeParametricType "Arrow " [ from.typeExpr; to_.typeExpr ] }
+
+    let funcType : PolyType_ = makeNewParametricType "Arrow " [ (); () ]
+
+
+
+
+
+
+    //type StrVal = | Str of string
+    //type IntVal = | Int of int
+
+    ////type ListVal = | ListVal of Expr list
+    ////and TupleVal = | TupleVal of first : Expr * second : Expr
+
+    //and LambdaVal = | LambdaVal of params_ : LowerIdent nel * body : Expr
+    //and NamedVal = | NamedVal of LowerIdent
+
+    type LetBindingSingle =
+        { name : LowerIdent
+          typeAnnotation : PolyType_ option
+          assignedExpr : Expr }
+
+    //and LetBindings = | LetBindings of bindings : LetBindingSingle nel * body : Expr
+
+    //and FuncApplication = | FuncApplication of funcExpr : Expr * input : Expr
+
+    and Expr =
+        | StrVal of string
+        | IntVal of int
+        | ListVal of Expr list
+        | TupleVal of first : Expr * second : Expr
+        | LambdaVal of param : LowerIdent * body : Expr
+        | NamedVal of LowerIdent
+        | LetBindings of bindings : LetBindingSingle nel * body : Expr
+        | FuncApplication of funcExpr : Expr * input : Expr
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -714,7 +827,7 @@ and TypeForInference =
     | Named of RefValueName
 
     /// This is basically the `a` in a `forall a. a -> a`. So it needs to be substituted with something else at each instantiation, so that when that thing gets replaced it doesn't replace every instance of the type, but only that specific fresh instance of it.
-    | UnificationVarId of UnificationVar
+    | UnificationVar of UnificationVar
 
     /// This is that fresh instantiation of a unification variable, so that if one of these gets replaced with a concrete type, _all_ of the same ID instances get replaced with the same type
     | TypeVarId of TypeVar
