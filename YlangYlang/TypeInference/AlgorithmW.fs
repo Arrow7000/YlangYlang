@@ -18,20 +18,24 @@ module Sacuv = SelfAndConstrainedUnificationVars
 /// Make a new unification variable
 let private makeNewUniVar () = System.Guid.NewGuid () |> UnificationVarId
 
+/// Make a new type variable
+let private makeNewTypeVar () = System.Guid.NewGuid () |> TypeVariableId
+
 
 /// A recursive dependency group
 type RecursiveDepGroup =
     {
-        namesDependedOn : LowerIdent nel
-        ownName : LowerIdent
-        expr : D.Expr
+        //namesDependedOn : LowerIdent nel
+        //ownName : LowerIdent
+        //expr : D.Expr
+        namesAndExprs : (LowerIdent * D.Expr) nel
         /// Self explanatory: there could be expressions who themselves are not recursive or part of a recursive graph but depend on one or more of the names that *are* recursive
-        expressionsDependentOnThisGroup : (LowerNameValue * D.Expr) seq
+        expressionsDependentOnThisGroup : (LowerIdent * D.Expr) seq
     }
 
 type AllRecursiveDepGroups =
     { groups : RecursiveDepGroup seq
-      exprsDependentOnMultipleGroups : (LowerNameValue * D.Expr) seq }
+      exprsDependentOnMultipleGroups : (LowerIdent * D.Expr) seq }
 
 
 /// This is the result of running the 1st type inference strategy: the one that is more powerful because it can infer polytypes, but less flexible because it can't deal with recursively defined names, only those names whose types are annotated explicitly or whose types can be inferred by simply resolving the names in order of which depends on which
@@ -68,7 +72,17 @@ let constructRecursiveDependencyGraph
 let addLocalNamesMap (localNamesMap : TypedLocalNamesMap) (namesMap : TypedNamesMap) : TypedNamesMap =
     localNamesMap
     |> Map.mapKeyVal (fun key v -> LocalLower key, v)
+    // @TODO: this should really throw an error if there are any name clashes so we don't get silently overwritten names
     |> Map.merge namesMap
+
+
+
+let combineTwoLocalNamesMaps (map1 : TypedLocalNamesMap) (map2 : TypedLocalNamesMap) : TypedLocalNamesMap =
+    // @TODO: this should really throw an error if there are any name clashes so we don't get silently overwritten names
+    Map.merge map1 map2
+
+let combineMultipleLocalnamesMaps (maps : TypedLocalNamesMap seq) : TypedLocalNamesMap =
+    maps |> Seq.fold combineTwoLocalNamesMaps Map.empty
 
 
 /// Given a list of names and their assigned expressions, this resolves all the names that either have type annotations or that are not recursively defined.
@@ -90,11 +104,13 @@ let rec resolveAllResolvableNames
         (globalNamesMap : TypedNamesMap)
         (* The accumulatingNamesMap is the new stuff that we're learning about and adding onto with each run of the recursive function *)
         (accumulatingNamesMap : TypedLocalNamesMap)
+        (* This should actually be empty, we're only including this for the sake of correctness, to make sure we're never gathering constraints on names we have not seen defined yet, because at this stage of the type resolution process we don't deal with those yet *)
+        (accumulatingUnificationVarMap : UnificationVarsMap)
         (namesAndExprsToResolveStill : (LowerIdent * D.Expr) seq)
-        : TypedLocalNamesMap * (LowerIdent * D.Expr) seq =
+        : TypedLocalNamesMap * (LowerIdent * D.Expr) seq * UnificationVarsMap =
 
         match Seq.toList namesAndExprsToResolveStill with
-        | [] -> accumulatingNamesMap, Seq.empty
+        | [] -> accumulatingNamesMap, Seq.empty, accumulatingUnificationVarMap
         | toResolve ->
             let combinedNamesMap = addLocalNamesMap accumulatingNamesMap globalNamesMap
 
@@ -127,57 +143,122 @@ let rec resolveAllResolvableNames
             match namesAvailableForResolution with
             | [] ->
                 // We can't make any progress so we must've hit some (mutually) recursively defined names – although bear in mind that this could include some values that depend on the recursively defined names but are not themselves recursive or part of a recursive group!
-                accumulatingNamesMap, nameNotAvailableForResolution
+                accumulatingNamesMap, nameNotAvailableForResolution, accumulatingUnificationVarMap
 
             | _ ->
-                let newlyGleanedMap : TypedLocalNamesMap =
+                let inferredStuff : (LowerIdent * SelfAndConstrainedUnificationVars) list =
                     namesAvailableForResolution
-                    |> List.map (fun (name, expr) -> name, simpleResolver globalNamesMap expr)
+                    |> List.map (fun (name, expr) -> name, inferTypeFromExpr globalNamesMap expr)
+
+
+                let newlyGleanedNamesMap : TypedLocalNamesMap =
+                    inferredStuff
+                    |> List.map (fun (name, result) -> name, result.self)
                     |> Map.ofList
 
-                let combinedNewlyGleanedMap = Map.merge newlyGleanedMap accumulatingNamesMap
+                let combinedNewlyGleanedMap : TypedLocalNamesMap =
+                    combineTwoLocalNamesMaps newlyGleanedNamesMap accumulatingNamesMap
 
-                resolveNamesOfAvailable globalNamesMap combinedNewlyGleanedMap nameNotAvailableForResolution
+                let combinedUnificationVarMap : UnificationVarsMap =
+                    inferredStuff
+                    |> List.map (fun (_, result) -> result.constrained)
+                    |> combineUnificationVarMapsList
+                    |> combineTwoUnificationVarMaps accumulatingUnificationVarMap
+
+                resolveNamesOfAvailable
+                    globalNamesMap
+                    combinedNewlyGleanedMap
+                    combinedUnificationVarMap
+                    nameNotAvailableForResolution
 
 
-    namesAndExprs
-    |> Seq.map (fun binding -> binding.name, binding.assignedExpr)
-    |> resolveNamesOfAvailable namesMap namesWithTypeAnnotations
+    let gleanedLocalNamesMap, unresolvedBindings, unificationVarMap =
+        namesAndExprs
+        |> Seq.map (fun binding -> binding.name, binding.assignedExpr)
+        |> resolveNamesOfAvailable namesMap namesWithTypeAnnotations Map.empty
 
-
-
-
-
-/// Given an expression that doesn't rely on recursively defined names, it infers the type and returns it, along with any constraints learned about other unification variables.
-and simpleResolver = inferTypeFromExpr
-
-
-/// This is stage one of the type inference/resolution algorithm, it gets all available type annotations, infers the types of named values that don't depend on any others, and loops through so that every non-recursive definition is typed.
-/// Then what we're left with are the recursive groups which need to be resolved with unification variables. Then those values that depend on the recursive groups can be inferred with the whole algorithm again.
-and resolveSimpleInference
-    (namesMap : TypedNamesMap)
-    (letBindings : D.LetBindingSingle seq)
-    : SimpleTypeInferenceResult =
-    let simpleResults, recursivelyDefinedNameVals =
-        resolveAllResolvableNames namesMap letBindings
-
-    let combinedNamesMap = addLocalNamesMap simpleResults namesMap
-
-    { typedNames = simpleResults
-      recursiveDepsGroups = constructRecursiveDependencyGraph combinedNamesMap recursivelyDefinedNameVals }
+    if Map.isEmpty unificationVarMap then
+        gleanedLocalNamesMap, unresolvedBindings
+    else
+        // We should not have come across any any names that are not fully typed at this stage, so this indicates that something has gone wrong
+        failwith
+            $"{Map.count unificationVarMap} unification variables were seen during the first pass stage of resolving only definitive typed values, which should not be possible"
 
 
 
 
-and resolveInsideOutInference (namesMap : TypedNamesMap) (recursiveGroup : RecursiveDepGroup) : UnificationVarsContext =
-    ()
+///// This is stage one of the type inference/resolution algorithm, it gets all available type annotations, infers the types of named values that don't depend on any others, and loops through so that every non-recursive definition is typed.
+///// Then what we're left with are the recursive groups which need to be resolved with unification variables. Then those values that depend on the recursive groups can be inferred with the whole algorithm again.
+//and resolveSimpleInference
+//    (namesMap : TypedNamesMap)
+//    (letBindings : D.LetBindingSingle seq)
+//    : SimpleTypeInferenceResult =
+//    let simpleResults, recursivelyDefinedNameVals =
+//        resolveAllResolvableNames namesMap letBindings
 
-/// Which entails generalising those unification vars with no constraints and converting them to polytypes, and just concretising everything else
+//    let combinedNamesMap = addLocalNamesMap simpleResults namesMap
+
+//    { typedNames = simpleResults
+//      recursiveDepsGroups = constructRecursiveDependencyGraph combinedNamesMap recursivelyDefinedNameVals }
+
+
+
+
+/// Which entails generalising those unification vars with no constraints and converting them to polytypes, and just concretising everything else – but ofc only for those names and unification vars that are from the current let bindings, not just all of them willy nilly.
 and convertUnificationResultsToNormalTypes
-    (namesMap : TypedNamesMap)
-    (unificationResult : UnificationVarsContext)
-    : TypedLocalNamesMap =
+    //(namesMap : TypedNamesMap)
+    //(localNames : LowerIdent set)
+    (localUnificationVars : UnificationVarId set)
+    (unificationResult : UnificationVarsMap)
+    (typeToCleanUpAndReturn : PolyType_)
+    //: TypedLocalNamesMap =
+    : SelfAndConstrainedUnificationVars =
+    // @TODO: we need to figure out what we want from this function first.
+    // I think we want it to do a few things:
+    // 1. generalise all the unification vars that are not constrained
+    // 2. concretise all the unification vars that are constrained
+    // 3. remove all the above unification vars with their concrete types (whether poly or monomorphic) and put their concrete types in the return type
+    //
+    // – However! we need to decide whether we want this stuff to happen before or after we've inferred stuff from the let expression body, because we still need to be able to glean constraints from the body to the unification variables
+    //      – Hm I actually think this should only run after inferring the body, because it's only then that we have all the relevant information, the body is not more special than any other let binding expression body in what it can tell us. So we should just infer the body as normal, and only *then* run this function on the results of that body inference along with everything else, and *then* we can concretise and generalise and shit
+    // – So we also still need to decide how we're going to bubble up type errors to higher scopes, seeing as the names and unification variables are removed from being present at higher scopes than they are defined in
+    //
+    // 4. after swapping out all the concretised and generalised unification variables, replace the value of the things referencing those unification vars from the type to return, and *then* return that sanitised, concretised, and generalised return type from this function ✨
+
     ()
+
+
+
+
+///// Given only the uniVarIds in the current uniVarsMap, for each of them: check if there are constraints on it. If yes, replace it with the concrete type in the localNamesMap. If not, generalise it so that it is replaced with a new type variable.
+///// Then what this function actually returns is a map with the replacements ־ which tbh I think can just be: if Some, replace the option with the thing. If None, replace the option with a new type variable.
+//and generaliseUnificationVars
+//    (uniVarsMapToConcretiseOrGeneralise : UnificationVarsMap)
+//    : Map<UnificationVarId, PolyTypeContents_> =
+//    uniVarsMapToConcretiseOrGeneralise
+//    |> Map.map (fun _ v ->
+//        match v with
+//        | Some concrete -> concrete
+//        | None -> PolyTypeContents_.TypeVariable (makeNewTypeVar ()))
+
+/////// I *believe* that this is equivalent to... generalising the thing..! But only for those unification vars that are not constrained
+////and stripNamesAndUniVarsFromPolyTypeContents (uniVarsMap : UnificationVarsMap) (toSwap: Map<UnificationVarId, PolyTypeContents_>)   (polyTypeContents : PolyTypeContents_) : PolyTypeContents_ = ()
+////    //match polyTypeContents with
+////    //| PolyTypeContents_.UnificationVar uniVar ->
+////    //    match Map.tryFind uniVar uniVarsMap with
+////    //    | Some constraints ->
+////    //    | None ->
+////    //        PolyTypeContents_.TypeVariable typeVarId
+
+
+//and stripNamesAndUniVarsFromPolyType
+//    (uniVarsMap : UnificationVarsMap)
+//    (uniVarsToStrip : UnificationVarId set)
+//    (polyType : PolyType_)
+//    : PolyType_ =
+//    ()
+
+
 
 
 /// This returns the fully resolved map of let (and top-level, I suppose) bindings, along with the constraints on unification variables.
@@ -188,28 +269,149 @@ and convertUnificationResultsToNormalTypes
 and resolveAllNames
     (namesMap : TypedNamesMap)
     (letBindings : D.LetBindingSingle seq)
-    (body : D.Expr)
-    : SelfAndConstrainedUnificationVars =
+    //(body : D.Expr)
+    : TypedLocalNamesMap * UnificationVarsMap =
     //and resolveAllNames (namesMap : TypedNamesMap) (letBindings : D.LetBindingSingle seq) (body : D.Expr) : TypedLocalNamesMap * UnificationVarsMap =
-    // @TODO: beware of this entire function body, it was written by GitHub Copilot and I haven't checked it yet!
+    let makeSingleLetBinding name expr =
+        { D.LetBindingSingle.name = name
+          D.LetBindingSingle.assignedExpr = expr
+          D.LetBindingSingle.typeAnnotation = None }
 
-    let simpleResults, recursivelyDefinedNameVals =
+
+    let straightforwardlyResolvedNamesMap, recursivelyDefinedNameVals =
         resolveAllResolvableNames namesMap letBindings
 
-    let combinedNamesMap = addLocalNamesMap simpleResults namesMap
+    let namesMapAfterFirstPass : TypedNamesMap =
+        addLocalNamesMap straightforwardlyResolvedNamesMap namesMap
 
-    let recursiveGroups =
-        constructRecursiveDependencyGraph combinedNamesMap recursivelyDefinedNameVals
+    let recursiveGroups : AllRecursiveDepGroups =
+        constructRecursiveDependencyGraph namesMapAfterFirstPass recursivelyDefinedNameVals
 
-    let recursiveGroupsResults =
-        recursiveGroups |> Seq.map (resolveInsideOutInference combinedNamesMap)
 
-    let allResults =
-        recursiveGroupsResults
-        |> Seq.map (convertUnificationResultsToNormalTypes combinedNamesMap)
+    let resolvedFirstRecursiveGroupsInParallel =
+        recursiveGroups.groups
+        |> Seq.map (fun group ->
+            let nameUniVarAndExprs =
+                group.namesAndExprs
+                |> NEL.map (fun (name, expr) -> name, makeNewUniVar (), expr)
 
-    allResults |> Seq.fold addLocalNamesMap Map.empty
+            let nameToUniVarMap =
+                nameUniVarAndExprs
+                |> NEL.map (fun (name, uniVar, _) -> name, uniVar)
+                |> Map.ofSeq
 
+            let withUnificationVarsAssigned : TypedLocalNamesMap =
+                nameToUniVarMap
+                |> Map.map (fun _ uniVarId -> PolyTypeContents_.UnificationVar uniVarId |> D.makeEmptyPolyType)
+
+            let addedToMap = addLocalNamesMap withUnificationVarsAssigned namesMapAfterFirstPass
+
+            let groupResult =
+                nameUniVarAndExprs
+                |> NEL.map (fun (name, uniVar, expr) -> name, uniVar, inferTypeFromExpr addedToMap expr)
+
+            {| results =
+                groupResult
+                |> NEL.map (fun (name, uniVar, result) ->
+                    {| name = name
+                       uniVar = uniVar
+                       type_ = result.self
+                       constrained = result.constrained |})
+               dependentExprs = group.expressionsDependentOnThisGroup |})
+
+
+    /// Now we resolve those expressions that were dependent on the recursive groups, using this same function recursively
+    let fullyResolvedGroups : (TypedLocalNamesMap * UnificationVarsMap) seq =
+        resolvedFirstRecursiveGroupsInParallel
+        |> Seq.map (fun groupResults ->
+            let combinedUniVarMap =
+                groupResults.results |> NEL.map _.constrained |> combineUnificationVarMapsList
+
+            let combinedNamesMap =
+                groupResults.results
+                |> NEL.fold
+                    (fun state result -> Map.add (LocalLower result.name) result.type_ state)
+                    namesMapAfterFirstPass
+
+            let resolvedLocalNamesMap, newUniVarMap =
+                groupResults.dependentExprs
+                |> Seq.map (fun (name, expr) -> makeSingleLetBinding name expr)
+                |> resolveAllNames combinedNamesMap
+
+            resolvedLocalNamesMap, combineTwoUnificationVarMaps combinedUniVarMap newUniVarMap)
+
+    /// And now we resolve those bindings that were dependent on multiple recursive groups
+    let remainingBindings =
+        let combinedNamesMap =
+            fullyResolvedGroups
+            |> Seq.map fst
+            |> Seq.fold (fun state localMap -> addLocalNamesMap localMap state) namesMapAfterFirstPass
+
+        recursiveGroups.exprsDependentOnMultipleGroups
+        |> Seq.map (fun (name, expr) -> makeSingleLetBinding name expr)
+        |> resolveAllNames combinedNamesMap
+
+    /// Combine *all* the localnamesmaps from above, including lists of lists and shit
+    let combinedLocalNamesMap : TypedLocalNamesMap =
+        combineMultipleLocalnamesMaps (
+            straightforwardlyResolvedNamesMap
+            :: fst remainingBindings
+            :: (Seq.map fst fullyResolvedGroups |> Seq.toList)
+        )
+
+    /// Combine *all* the unificationvarmaps from above, including lists of lists and shit
+    let combinedUnificationVarsMap : UnificationVarsMap =
+        (snd remainingBindings
+         :: (resolvedFirstRecursiveGroupsInParallel
+             |> Seq.collect _.results
+             |> Seq.map _.constrained
+             |> Seq.toList)
+         @ (Seq.map snd fullyResolvedGroups |> Seq.toList))
+        |> combineUnificationVarMapsList
+
+    combinedLocalNamesMap, combinedUnificationVarsMap
+
+//let resolvedFromBody = inferTypeFromExpr combinedNamesMap body
+
+//let combinedUnificationVarMap =
+//    resolvedFirstRecursiveGroupsInParallel
+//    |> Seq.map _.unificationVarsMap
+//    |> combineUnificationVarMapsList
+//    |> combineTwoUnificationVarMaps resolvedFromBody.constrained
+
+//resolvedFirstRecursiveGroupsInParallel
+//|> Seq.map (fun group -> group.dependentExprs)
+
+
+//let recursiveGroupsResults =
+//    recursiveGroups |> Seq.map (resolveInsideOutInference combinedNamesMap)
+
+//let allResults =
+//    recursiveGroupsResults
+//    |> Seq.map (convertUnificationResultsToNormalTypes combinedNamesMap)
+
+//allResults |> Seq.fold addLocalNamesMap Map.empty
+
+
+/// @TODO: I think in this function is where I need to strip the names and unification vars initialised here from the polytype and unification vars map that we return
+and resolveAllNamesAndBody
+    (namesMap : TypedNamesMap)
+    (letBindings : D.LetBindingSingle seq)
+    (body : D.Expr)
+    : SelfAndConstrainedUnificationVars =
+    let bindingsNamesMap, uniVarsMap = resolveAllNames namesMap letBindings
+
+    let combinedNamesMap = addLocalNamesMap bindingsNamesMap namesMap
+
+    let bodyResult = inferTypeFromExpr combinedNamesMap body
+
+    let combinedUniVarMap =
+        combineTwoUnificationVarMaps uniVarsMap bodyResult.constrained
+
+    let sanitisedType =
+        convertUnificationResultsToNormalTypes (Map.keys uniVarsMap |> Set.ofSeq) combinedUniVarMap bodyResult.self
+
+    sanitisedType
 
 
 
@@ -270,10 +472,10 @@ and inferTypeFromExpr (namesMap : TypedNamesMap) (expr : D.Expr) : SelfAndConstr
         | Some t -> Sacuv.make t Map.empty
         | None ->
             failwith
-                $"Couldn't resolve named value \"{name}\"! This is most likely due to it being an undeclared variable (which @TODO we still need to handle) but if not it might indicate that we're not passing all declared names down in the namesMap"
+                $"Couldn't resolve named value \"{name}\"! This is most likely due to it being an undeclared variable (which @TODO we still need to handle gracefully) but if not it might indicate that we're not passing all declared names down in the namesMap"
 
 
-    | D.LetBindings (bindings, body) -> resolveAllNames namesMap bindings body
+    | D.LetBindings (bindings, body) -> resolveAllNamesAndBody namesMap bindings body
 
 
     | D.FuncApplication (funcExpr, param) ->
@@ -301,6 +503,22 @@ and inferTypeFromExpr (namesMap : TypedNamesMap) (expr : D.Expr) : SelfAndConstr
 
 and unifyTwoTypes (type1 : PolyType_) (type2 : PolyType_) : SelfAndConstrainedUnificationVars = ()
 
+and unifyTwoTypeContents
+    (type1 : PolyTypeContents_)
+    (type2 : PolyTypeContents_)
+    : {| self : PolyTypeContents_
+         constrained : UnificationVarsMap |}
+    =
+    ()
+
+and unifyTwoTypeContentsOpts
+    (type1 : PolyTypeContents_ option)
+    (type2 : PolyTypeContents_ option)
+    : {| self : PolyTypeContents_ option
+         constrained : UnificationVarsMap |}
+    =
+    ()
+
 and unifyManyTypes (types : PolyType_ nel) : SelfAndConstrainedUnificationVars =
     let (NEL (first, rest)) = types
 
@@ -315,7 +533,27 @@ and unifyManyTypes (types : PolyType_ nel) : SelfAndConstrainedUnificationVars =
     { self = combinedType
       constrained = combinedUnificationMap }
 
-and combineTwoUnificationVarMaps (map1 : UnificationVarsMap) (map2 : UnificationVarsMap) : UnificationVarsMap = ()
+
+/// @TODO: Should unify all of the constraints on each unification variable in the map
+and combineTwoUnificationVarMaps (map1 : UnificationVarsMap) (map2 : UnificationVarsMap) : UnificationVarsMap =
+    /// For those keys which are not shared, just simply add them in
+    let singleFolder state uniVar contents = Map.add uniVar contents state
+
+    let folder (state : UnificationVarsMap) uniVar contents1 contents2 : UnificationVarsMap =
+        let unificationResult = unifyTwoTypeContentsOpts contents1 contents2
+
+        // Add the immediate resulting type into the map first
+        let directCombinedMap = Map.add uniVar unificationResult.self state
+
+        // And then recursively fold in the other unification map containing the implications of the unification also
+        let bothCombined =
+            combineTwoUnificationVarMaps directCombinedMap unificationResult.constrained
+
+        bothCombined
+
+    Map.foldAllEntries singleFolder singleFolder folder map1 map2 Map.empty
+
+
 
 and combineUnificationVarMapsList (maps : UnificationVarsMap seq) : UnificationVarsMap =
     maps |> Seq.fold combineTwoUnificationVarMaps Map.empty
