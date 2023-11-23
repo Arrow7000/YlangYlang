@@ -47,23 +47,43 @@ type SimpleTypeInferenceResult =
         recursiveDepsGroups : AllRecursiveDepGroups
     }
 
-//let getTypeAnnotation (name : LowerNameValue) (namesMap : TypedNamesMap) : PolyType_ option = Map.tryFind name namesMap
-let getTypeAnnotation (binding : D.LetBindingSingle) = binding.typeAnnotation
 
 
-/// Gets all the value names referenced in an expression – note! need to specify that we're only interested in names defined at this scope and higher – internally defined let bindings or parameters should not be bubbled up because they are opaque
-let getNamesUsedInExpr (namesToLookOutFor : LowerIdent set) (expr : D.Expr) : LowerIdent set =
-    failwith "@TODO: implement"
+/// Gets all the value names referenced in an expression – note! need to specify that we're only interested in names defined at this scope and higher – internally defined let bindings or parameters should not be bubbled up because as far as the higher scopes are concerned those names do not exist.
+/// @TODO: this should probably fail for shadowed names, but we'll assume for now that there are no shadowed names
+let rec getNamesUsedInExpr (namesToLookOutFor : LowerIdent set) (expr : D.Expr) : LowerIdent set =
+    match expr with
+    | D.StrVal _ -> Set.empty
+    | D.IntVal _ -> Set.empty
+    | D.ListVal exprs -> Set.collect (getNamesUsedInExpr namesToLookOutFor) exprs
+    | D.TupleVal (first, second) ->
+        Set.union (getNamesUsedInExpr namesToLookOutFor first) (getNamesUsedInExpr namesToLookOutFor second)
 
-/// I believe... this should only work in let expressions?
-let getBindingsInExpr (expr : D.Expr) : (LowerIdent * D.Expr) list = failwith "@TODO: implement"
+    | D.LambdaVal (_, body) -> getNamesUsedInExpr namesToLookOutFor body
+    | D.NamedVal name ->
+        if Set.contains name namesToLookOutFor then
+            Set.singleton name
+        else
+            Set.empty
+
+    | D.LetBindings (bindings, body) ->
+        Set.union
+            (getNamesUsedInExpr namesToLookOutFor body)
+            (bindings
+             |> Seq.map (_.assignedExpr >> getNamesUsedInExpr namesToLookOutFor)
+             |> Set.unionMany)
+
+    | D.FuncApplication (funcExpr, inputExpr) ->
+        Set.union (getNamesUsedInExpr namesToLookOutFor funcExpr) (getNamesUsedInExpr namesToLookOutFor inputExpr)
+
+
 
 /// Given a list of names and their assigned expressions, constructs a list of groups of
 let constructRecursiveDependencyGraph
     (namesMap : TypedNamesMap)
     (namesAndExprs : (LowerIdent * D.Expr) seq)
     : AllRecursiveDepGroups =
-    failwith "@TODO: implement"
+    ()
 
 
 
@@ -95,7 +115,7 @@ let rec resolveAllResolvableNames
     /// @TODO: however! we still need to type check them internally
     let namesWithTypeAnnotations : TypedLocalNamesMap =
         namesAndExprs
-        |> Seq.choose (fun binding -> getTypeAnnotation binding |> Option.map (Tuple.makePair binding.name))
+        |> Seq.choose (fun binding -> binding.typeAnnotation |> Option.map (Tuple.makePair binding.name))
         |> Map.ofSeq
 
     /// This is the inner recursive function that goes through all the expressions that don't rely on any untyped-yet names and resolves their types.
