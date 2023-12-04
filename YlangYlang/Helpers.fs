@@ -19,6 +19,8 @@ let flip (f : 'b -> 'a -> 'c) : ('a -> 'b -> 'c) = fun a b -> f b a
 /// Make a tuple containing the original value and the mapped value
 let split f a = (a, f a)
 
+/// Sort the two items
+let sortItems a b = if compare a b <= 0 then a, b else b, a
 
 type 'T set when 'T : comparison = Set<'T>
 
@@ -192,6 +194,8 @@ type NonEmptyList<'a> =
         | neck :: rest -> NEL.appendList (NEL.reverse (NEL (neck, rest))) [ head ]
 
 
+    static member contains<'T when 'T : equality> (item : 'T) ((NEL (head, tail)) : 'T nel) =
+        item = head || List.contains item tail
 
 
 
@@ -330,6 +334,10 @@ type TwoOrMore<'a> =
 
 
     static member traverseResult (f : 'T -> Result<'a, 'b>) list = TOM.map f list |> TOM.sequenceResult
+
+
+    static member contains<'T when 'T : equality> (item : 'T) (TOM (head, neck, rest) : 'T tom) =
+        item = head || item = neck || List.contains item rest
 
 
 
@@ -567,6 +575,9 @@ type Either<'a, 'b> =
 
 
 module Map =
+    /// Make a new Map containing a single entry
+    let singleton (key : 'Key) (value : 'T) : Map<'Key, 'T> = Map.add key value Map.empty
+
     let mapKeyVal (f : 'Key -> 'T -> ('NKey * 'U)) map =
         Map.fold
             (fun newMap key value ->
