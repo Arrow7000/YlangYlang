@@ -523,21 +523,270 @@ and inferTypeFromExpr (namesMap : TypedNamesMap) (expr : D.Expr) : SelfAndConstr
 
 and unifyTwoTypes (type1 : PolyType_) (type2 : PolyType_) : SelfAndConstrainedUnificationVars = ()
 
+
+
+
 and unifyTwoTypeContents
     (type1 : PolyTypeContents_)
     (type2 : PolyTypeContents_)
-    : {| self : PolyTypeContents_
+    : {| self : Result<PolyTypeContents_, UnificationError>
          constrained : UnificationVarsMap |}
     =
-    ()
+    match type1, type2 with
+    | PTC.PrimitiveType prim1, PTC.PrimitiveType prim2 ->
+        if prim1 = prim2 then
+            {| self = Ok type1
+               constrained = Map.empty |}
+
+        else
+            {| self = UnificationClash (type1, type2) |> Error
+               constrained = Map.empty |}
+
+
+    | PTC.ParametricType (name1, typeParams1), PTC.ParametricType (name2, typeParams2) ->
+        if name1 = name2 then
+            match List.zipList typeParams1 typeParams2 with
+            | Ok combinedTypeParams ->
+                let paramsResults, unificationVarMap =
+                    combinedTypeParams
+                    |> List.mapFold
+                        (fun state (param1, param2) ->
+                            let unificationResult = unifyTwoTypeContents param1 param2
+
+                            unificationResult.self, combineTwoUnificationVarMaps state unificationResult.constrained)
+                        Map.empty
+
+                match Result.sequenceList paramsResults with
+                | Ok unifiedParams ->
+                    {| self = Ok (PTC.ParametricType (name1, unifiedParams))
+                       constrained = unificationVarMap |}
+
+                | Error errs ->
+                    {| self = NEL.head errs |> Error
+                       constrained = unificationVarMap |}
+
+            | Error _ ->
+                {| self = UnificationClash (type1, type2) |> Error
+                   constrained = Map.empty |}
+
+        else
+            {| self = UnificationClash (type1, type2) |> Error
+               constrained = Map.empty |}
+
+
+    | PTC.UnificationVar uniVar1, PTC.UnificationVar uniVar2 ->
+        if uniVar1 = uniVar2 then
+            {| self = Ok type1
+               constrained = Map.empty |}
+
+        else
+            /// Just so we have a consistent ordering so we avoid accidentally creating cycles of unification vars that don't lead anywhere
+            let smallerUniVar, biggerUniVar = sortItems uniVar1 uniVar2
+
+            /// The logic here being that we redirect one unification var to the other one. By convention we make the self type be the smaller uniVar, add an entry in the unification map to point it to the bigger one.
+            /// The bigger one will keep pointing to whatever it's pointing to in other unification maps, and the smaller one in other maps will be unified with the bigger one, which will result in unifying the bigger one with a concrete type.
+            let constrained : UnificationVarsMap =
+                Map.singleton smallerUniVar (PTC.UnificationVar biggerUniVar |> Ok |> Some)
+
+            {| self = Ok (PTC.UnificationVar smallerUniVar)
+               constrained = constrained |}
+
+
+    | PTC.TypeVariable typeVar1, PTC.TypeVariable typeVar2 ->
+        if typeVar1 = typeVar2 then
+            {| self = Ok type1
+               constrained = Map.empty |}
+
+        else
+            let newUnificationVar1 = makeNewUniVar ()
+            let newUnificationVar2 = makeNewUniVar ()
+
+            // @TODO: I'm not sure this is remotely right... are there any risks or assumptions violated by having a circular reference from uniVar to typeVar to uniVar to typeVar like this?
+            let uniVarsMap : UnificationVarsMap =
+                Map.singleton
+                    newUnificationVar1
+                    (PTC.InstantiatedTypeVariable (typeVar1, newUnificationVar2) |> Ok |> Some)
+                |> Map.add
+                    newUnificationVar2
+                    (PTC.InstantiatedTypeVariable (typeVar2, newUnificationVar1) |> Ok |> Some)
+
+            ///// We point both type variables to the freshly instantiated unification var
+            //let substitutionMap : SubstitutedTypeVars =
+            //    Map.singleton typeVar1 newUnificationVar |> Map.add typeVar2 newUnificationVar
+
+            //let constrained : Constraineds = Constraineds.make uniVarsMap substitutionMap
+
+            {| self = Ok (PTC.UnificationVar newUnificationVar1)
+               constrained = uniVarsMap |}
+
+
+    | PTC.UnificationVar uniVar, PTC.PrimitiveType prim
+    | PTC.PrimitiveType prim, PTC.UnificationVar uniVar ->
+        let uniVarsMap : UnificationVarsMap =
+            Map.singleton uniVar (PTC.PrimitiveType prim |> Ok |> Some)
+
+        {| self = Ok (PTC.UnificationVar uniVar)
+           constrained = uniVarsMap |}
+
+
+    | PTC.UnificationVar uniVar, PTC.ParametricType (name, typeParams)
+    | PTC.ParametricType (name, typeParams), PTC.UnificationVar uniVar ->
+        let uniVarsMap : UnificationVarsMap =
+            Map.singleton uniVar (Ok (PTC.ParametricType (name, typeParams)) |> Some)
+
+        {| self = Ok (PTC.UnificationVar uniVar)
+           constrained = uniVarsMap |}
+
+
+    | PTC.UnificationVar uniVar, PTC.TypeVariable typeVar
+    | PTC.TypeVariable typeVar, PTC.UnificationVar uniVar ->
+        {| self = Ok (PTC.InstantiatedTypeVariable (typeVar, uniVar))
+           constrained = Map.empty |}
+
+
+    | PTC.TypeVariable typeVar, (PTC.PrimitiveType _ as concreteType)
+    | (PTC.PrimitiveType _ as concreteType), PTC.TypeVariable typeVar
+
+    | PTC.TypeVariable typeVar, (PTC.ParametricType _ as concreteType)
+    | (PTC.ParametricType _ as concreteType), PTC.TypeVariable typeVar ->
+        let newUnificationVar = makeNewUniVar ()
+
+        /// Insert the fresh unification var into the unification var map
+        let uniVarsMap : UnificationVarsMap =
+            Map.singleton newUnificationVar (Some (Ok concreteType))
+
+        {| self = Ok (PTC.InstantiatedTypeVariable (typeVar, newUnificationVar))
+           constrained = uniVarsMap |}
+
+
+    | PTC.PrimitiveType _, PTC.ParametricType _
+    | PTC.ParametricType _, PTC.PrimitiveType _ ->
+        {| self = UnificationClash (type1, type2) |> Error
+           constrained = Map.empty |}
+
+
+    | PTC.InstantiatedTypeVariable (typeVar1, uniVar1), PTC.InstantiatedTypeVariable (typeVar2, uniVar2) ->
+        if typeVar1 = typeVar2 then
+            if uniVar1 = uniVar2 then
+                {| self = Ok type1
+                   constrained = Map.empty |}
+            else
+                let uniVarMap : UnificationVarsMap =
+                    Map.singleton uniVar1 (PTC.InstantiatedTypeVariable (typeVar1, uniVar2) |> Ok |> Some)
+
+                {| self = Ok (PTC.UnificationVar uniVar1)
+                   constrained = uniVarMap |}
+        else if uniVar1 = uniVar2 then
+            {| self = Ok (PTC.UnificationVar uniVar1)
+               constrained =
+                Map.singleton
+                    uniVar1
+                    (PTC.InstantiatedTypeVariable (NEL.append typeVar1 typeVar2, uniVar2)
+                     |> Ok
+                     |> Some) |}
+        else
+            let uniVarsMap : UnificationVarsMap =
+                Map.singleton
+                    uniVar1
+                    (PTC.InstantiatedTypeVariable (NEL.append typeVar1 typeVar2, uniVar2)
+                     |> Ok
+                     |> Some)
+                |> Map.add uniVar2 None
+
+            {| self = Ok (PTC.UnificationVar uniVar1)
+               constrained = uniVarsMap |}
+
+    | PTC.InstantiatedTypeVariable (typeVarNel, uniVar1), PTC.TypeVariable typeVar
+    | PTC.TypeVariable typeVar, PTC.InstantiatedTypeVariable (typeVarNel, uniVar1) ->
+        if NEL.contains<_> typeVar typeVarNel then
+            {| self = Ok (PTC.InstantiatedTypeVariable (typeVarNel, uniVar1))
+               constrained = Map.empty |}
+
+        else
+            {| self = Ok (PTC.InstantiatedTypeVariable (NEL.cons typeVar typeVarNel, uniVar1))
+               constrained = Map.empty |}
+
+
+    | PTC.InstantiatedTypeVariable (typeVarNel, instantiatedUniVar), PTC.UnificationVar uniVar
+    | PTC.UnificationVar uniVar, PTC.InstantiatedTypeVariable (typeVarNel, instantiatedUniVar) ->
+        {| self = Ok (PTC.UnificationVar uniVar)
+           constrained =
+            Map.singleton uniVar (PTC.InstantiatedTypeVariable (typeVarNel, instantiatedUniVar) |> Ok |> Some) |}
+
+
+    | PTC.InstantiatedTypeVariable (_, uniVar), (PTC.PrimitiveType _ as concreteType)
+    | (PTC.PrimitiveType _ as concreteType), PTC.InstantiatedTypeVariable (_, uniVar)
+
+    | PTC.InstantiatedTypeVariable (_, uniVar), (PTC.ParametricType _ as concreteType)
+    | (PTC.ParametricType _ as concreteType), PTC.InstantiatedTypeVariable (_, uniVar) ->
+
+        {| self = Ok (PTC.UnificationVar uniVar)
+           constrained = Map.singleton uniVar (Ok concreteType |> Some) |}
+
+
+
+
+and unifyTwoTypeContentsResults
+    (typeContentResult1 : Result<PolyTypeContents_, UnificationError>)
+    (typeContentResult2 : Result<PolyTypeContents_, UnificationError>)
+    : {| self : Result<PolyTypeContents_, UnificationError>
+         constrained : UnificationVarsMap |}
+    =
+    match typeContentResult1, typeContentResult2 with
+    | Ok typeContent1, Ok typeContent2 -> unifyTwoTypeContents typeContent1 typeContent2
+
+    | Error e, _
+    | _, Error e ->
+        {| self = Error e
+           constrained = Map.empty |}
+
+
+
+and unifyTwoTypeContentsResultsOpts
+    (typeOpt1 : Result<PolyTypeContents_, UnificationError> option)
+    (typeOpt2 : Result<PolyTypeContents_, UnificationError> option)
+    : {| self : Result<PolyTypeContents_, UnificationError> option
+         constrained : UnificationVarsMap |}
+    =
+    match typeOpt1, typeOpt2 with
+    | Some type1, Some type2 ->
+        let result = unifyTwoTypeContentsResults type1 type2
+
+        {| self = Some result.self
+           constrained = result.constrained |}
+
+    | Some type_, None
+    | None, Some type_ ->
+        {| self = Some type_
+           constrained = Map.empty |}
+
+    | None, None ->
+        {| self = None
+           constrained = Map.empty |}
 
 and unifyTwoTypeContentsOpts
-    (type1 : PolyTypeContents_ option)
-    (type2 : PolyTypeContents_ option)
-    : {| self : PolyTypeContents_ option
+    (typeOpt1 : PolyTypeContents_ option)
+    (typeOpt2 : PolyTypeContents_ option)
+    : {| self : Result<PolyTypeContents_, UnificationError> option
          constrained : UnificationVarsMap |}
     =
-    ()
+    match typeOpt1, typeOpt2 with
+    | Some type1, Some type2 ->
+        let result = unifyTwoTypeContents type1 type2
+
+        {| self = Some result.self
+           constrained = result.constrained |}
+
+    | None, None ->
+        {| self = None
+           constrained = Map.empty |}
+
+    | Some type_, None
+    | None, Some type_ ->
+        {| self = Some (Ok type_)
+           constrained = Map.empty |}
+
+
 
 and unifyManyTypes (types : PolyType_ nel) : SelfAndConstrainedUnificationVars =
     let (NEL (first, rest)) = types
@@ -554,24 +803,26 @@ and unifyManyTypes (types : PolyType_ nel) : SelfAndConstrainedUnificationVars =
       constrained = combinedUnificationMap }
 
 
-/// @TODO: Should unify all of the constraints on each unification variable in the map
 and combineTwoUnificationVarMaps (map1 : UnificationVarsMap) (map2 : UnificationVarsMap) : UnificationVarsMap =
     /// For those keys which are not shared, just simply add them in
     let singleFolder state uniVar contents = Map.add uniVar contents state
 
-    let folder (state : UnificationVarsMap) uniVar contents1 contents2 : UnificationVarsMap =
-        let unificationResult = unifyTwoTypeContentsOpts contents1 contents2
+    let folder (state : UnificationVarsMap) (uniVar : UnificationVarId) contents1 contents2 : UnificationVarsMap =
+        let unificationResult = unifyTwoTypeContentsResultsOpts contents1 contents2
 
         // Add the immediate resulting type into the map first
-        let directCombinedMap = Map.add uniVar unificationResult.self state
+        let directCombinedMap : UnificationVarsMap =
+            Map.add uniVar unificationResult.self state
 
         // And then recursively fold in the other unification map containing the implications of the unification also
-        let bothCombined =
+        let bothCombined : UnificationVarsMap =
             combineTwoUnificationVarMaps directCombinedMap unificationResult.constrained
 
         bothCombined
 
+
     Map.foldAllEntries singleFolder singleFolder folder map1 map2 Map.empty
+
 
 
 
@@ -581,6 +832,69 @@ and combineUnificationVarMapsList (maps : UnificationVarsMap seq) : UnificationV
 
 
 
+
+//and combineTwoSubstitutedTypeVarMaps (map1 : SubstitutedTypeVars) (map2 : SubstitutedTypeVars) : Constraineds =
+//    /// For those type vars which are not shared, just simply add them in
+//    let singleFolder (state : Constraineds) typeVar uniVar : Constraineds =
+//        { substitutedTypeVars = Map.add typeVar uniVar state.substitutedTypeVars
+//          unificationVarsMap = state.unificationVarsMap }
+
+
+//    let folder
+//        (state : Constraineds)
+//        (typeVar : TypeVariableId)
+//        (uniVar1 : UnificationVarId)
+//        (uniVar2 : UnificationVarId)
+//        : Constraineds =
+
+//        /// Just so we have a consistent ordering so we avoid accidentally creating cycles of unification vars that don't lead anywhere
+//        let smallerUniVar, biggerUniVar = sortItems uniVar1 uniVar2
+
+//        let newSubstitutedTypeVars : SubstitutedTypeVars =
+//            state.substitutedTypeVars |> Map.add typeVar smallerUniVar
+
+//        let newUniVarsMap : UnificationVarsMap =
+//            match Map.tryFind smallerUniVar state.unificationVarsMap with
+//            | Some _ ->
+//                failwith
+//                    "Unification variable already exists in the accumulated uniVarsMap and I think it shouldn't? idk, @TODO look into this"
+//            | None ->
+//                state.unificationVarsMap
+//                |> Map.add smallerUniVar (PTC.UnificationVar biggerUniVar |> Some)
+
+//        { unificationVarsMap = newUniVarsMap
+//          substitutedTypeVars = newSubstitutedTypeVars }
+
+
+//    Map.foldAllEntries singleFolder singleFolder folder map1 map2 Constraineds.empty
+
+
+
+//and combineTwoInstantiatedTypeVarsMaps
+//    (map1 : InstantiatedTypeVars)
+//    (map2 : InstantiatedTypeVars)
+//    : InstantiatedTypeVars =
+//    /// For those keys which are not shared, just simply add them in
+//    let singleFolder state typeVar uniVar = Map.add typeVar uniVar state
+
+//    let folder
+//        (state : InstantiatedTypeVars)
+//        (typeVar : TypeVariableId)
+//        (uniVar : UnificationVarId)
+//        contents2
+//        : InstantiatedTypeVars =
+//        let unificationResult = unifyTwoTypeContents uniVar contents2
+
+//        // Add the immediate resulting type into the map first
+//        let directCombinedMap = Map.add typeVar unificationResult.self state
+
+//        // And then recursively fold in the other unification map containing the implications of the unification also
+//        let bothCombined =
+//            combineTwoInstantiatedTypeVarsMaps directCombinedMap unificationResult.constrained
+
+//        bothCombined
+
+//    Map.foldAllEntries singleFolder singleFolder folder map1 map2 Map.empty
 
 
 

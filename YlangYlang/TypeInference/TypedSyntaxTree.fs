@@ -625,18 +625,42 @@ type PolyType =
 
 
 
+
+
+
+(*
+How do we represent a many-to-many relationship between unification variables and type variables?
+Maybe the first question actually should be how do we unify unification variables? Because if we can unify unification variables then we can let multiple of them point towards the same type variable, and also a concrete type.
+
+Basically the problem is that we have the concrete type shapes that need to be able to reference, in addition to of course other concrete types:
+- unification variables
+- type variables
+- an instantiated type variable – so that we can propagate instantiated type variables upwards to the polytype where they were declared
+
+But we also want to be able to represent the fact that multiple unification variables have been unified with each other, that multiple type variables have been unified with each other, and that one or more unification variables _and_ type variables have been unified with each other.
+And we want to be able to do that without polluting the internals of the concrete type shapes; which should really only be able to reference either a unification variable, a type variable, or an instantiated type variable (which is what lets us propagate the instantiated type variable upwards to the polytype where it was declared without propagating a whole additional substitution map upwards).
+*)
+
+
+
 type PolyTypeContents_ =
     /// Referencing a unification variable. To figure out what this unification var is you'll need to look into your local UnificationVarsMap (see below)
     | UnificationVar of UnificationVarId
     /// Referencing a *type variable* (not a unification variable!), which if it gets replaced we need to somehow propagate the message upwards that all instances of this type variable need to be replaced with the same thing – we only stop propagating that message upwards when we get to the polytype where this type var is declared in
     | TypeVariable of TypeVariableId
+
+    | InstantiatedTypeVariable of typeVars : TypeVariableId nel * instantiatedBy : UnificationVarId
     /// A simple unparametric type, like `Int` or `String`
     | PrimitiveType of name : UpperNameValue
     /// Parametric types, like `List a` or `Maybe a`
     | ParametricType of name : UpperNameValue * typeParams : PolyTypeContents_ list
 
 
-and PolyType_ =
+/// Alias for PolyTypeContents_
+type PTC = PolyTypeContents_
+
+
+type PolyType_ =
     { forall : TypeVariableId list
       typeExpr : PolyTypeContents_ }
 
@@ -653,16 +677,16 @@ type TypedLocalNamesMap = Map<LowerIdent, PolyType_>
 /// Map that maps value names to their polytypes but also unification variables to their thingies
 //type FullRangeNamesMap = Map<PolyTypeOrUnificationVarOrValName, PolyTypeOrUnificationVar>
 
-/// THIS is basically the new version of the Accumulator, because it gathers unification constraints on variables, and so every inferExpressionType function will return one of these and so they need to be combined to get the full constraints for each unification variable. Then, with all of the gathered constraints on each unification variable, we can assign that type to the name, and then use that inferred type as the type for that name, and then proceed to see if that inferred type is indeed compatible with all the other uses of that name.
-type UnificationVarsMap = Map<UnificationVarId, PolyTypeContents_ option>
 
-type FullRangeNamesMap =
-    {
-        /// This is immutable for every named thing
-        resolvedNamesMap : TypedNamesMap
-        /// This on the other hand *is* mutable, because we need to update and refine constraints on the unification variables the more we learn from usages of the variables
-        unificationVarsMap : UnificationVarsMap
-    }
+type UnificationError = | UnificationClash of PolyTypeContents_ * PolyTypeContents_
+
+
+
+/// THIS is basically the new version of the Accumulator, because it gathers unification constraints on variables, and so every inferExpressionType function will return one of these and so they need to be combined to get the full constraints for each unification variable. Then, with all of the gathered constraints on each unification variable, we can assign that type to the name, and then use that inferred type as the type for that name, and then proceed to see if that inferred type is indeed compatible with all the other uses of that name.
+type UnificationVarsMap = Map<UnificationVarId, Result<PolyTypeContents_, UnificationError> option>
+
+
+
 
 
 type SelfAndConstrainedUnificationVars =
