@@ -40,8 +40,7 @@ type NonEmptyList<'a> =
             items.GetEnumerator ()
 
     interface IEnumerable with
-        member this.GetEnumerator () =
-            (this :> IEnumerable<'a>).GetEnumerator () :> IEnumerator
+        member this.GetEnumerator () = (this :> IEnumerable<'a>).GetEnumerator () :> IEnumerator
 
 
 
@@ -219,8 +218,7 @@ type TwoOrMore<'a> =
             items.GetEnumerator ()
 
     interface IEnumerable with
-        member this.GetEnumerator () =
-            (this :> IEnumerable<'a>).GetEnumerator () :> IEnumerator
+        member this.GetEnumerator () = (this :> IEnumerable<'a>).GetEnumerator () :> IEnumerator
 
 
     /// Make new TOM with head, neck, and tail
@@ -339,9 +337,15 @@ type TwoOrMore<'a> =
     static member contains<'T when 'T : equality> (item : 'T) (TOM (head, neck, rest) : 'T tom) =
         item = head || item = neck || List.contains item rest
 
+    static member exists<'T when 'T : equality> (predicate : 'T -> bool) (TOM (head, neck, rest) : 'T tom) =
+        predicate head || predicate neck || List.exists predicate rest
 
 
-
+    /// Throws an exception if the seq contains fewer than two items!
+    static member ofSeq (seq : 'a seq) =
+        match seq |> Seq.toList with
+        | head :: neck :: tail -> TOM.new_ head neck tail
+        | _ -> failwith "A TwoOrMore needs to have at least two members"
 
 
 and TOM<'a> = TwoOrMore<'a>
@@ -351,7 +355,11 @@ and 'a tom = TwoOrMore<'a>
 
 
 
+
+
+
 type Option<'a> with
+
     static member combine f fst snd =
         match fst, snd with
         | Some a, Some b -> Some <| f a b
@@ -366,6 +374,7 @@ type Option<'a> with
 
 
 type Result<'a, 'e> with
+
     static member isOk =
         function
         | Ok _ -> true
@@ -421,8 +430,7 @@ type Result<'a, 'e> with
         | Error e -> f e
 
 
-    static member mapBoth mapOk mapErr =
-        Result.map mapOk >> Result.mapError mapErr
+    static member mapBoth mapOk mapErr = Result.map mapOk >> Result.mapError mapErr
 
 
     static member map2 mapOks (mapErrs : 'err -> 'err -> 'err) result1 result2 =
@@ -588,8 +596,7 @@ module Map =
 
     /// Merge two maps. If there are duplicate keys they will be overridden
     let merge map1 map2 =
-        map1
-        |> Map.fold (fun mapToAddTo key value -> Map.add key value mapToAddTo) map2
+        map1 |> Map.fold (fun mapToAddTo key value -> Map.add key value mapToAddTo) map2
 
     /// Merge many maps. If there are duplicate keys they will be overridden
     let mergeMany maps = Seq.fold merge Map.empty maps
@@ -731,8 +738,7 @@ module Map =
             | BothHaveMore (left, shared, right) -> BothHaveMore (left, shared, addToMap right)
             | LeftHasMore (left, shared) -> BothHaveMore (left, shared, addToMap Map.empty)
 
-        Exact combinedShared
-        |> foldNonSharedKeys foldFrom1 foldFrom2 map1 map2
+        Exact combinedShared |> foldNonSharedKeys foldFrom1 foldFrom2 map1 map2
 
 
 
@@ -835,9 +841,7 @@ module Map =
         | Some val1, Some val2 ->
             let newKey, newVal = combiner (key1, val1) (key2, val2)
 
-            Map.remove key1 map
-            |> Map.remove key2
-            |> Map.add newKey newVal
+            Map.remove key1 map |> Map.remove key2 |> Map.add newKey newVal
 
         | Some _, None
         | None, Some _
@@ -859,7 +863,7 @@ module Map =
                     else
                         keyvalsToMerge, Map.add key value newMap
 
-                    )
+                )
                 (List.empty, Map.empty)
 
         let combinedKey, combinedVal = combiner keyvalsToMerge
@@ -1009,12 +1013,7 @@ type SingleOrDuplicate<'a> =
 
     static member makeMapFromList<'Key when 'Key : comparison> (list : ('Key * 'a) list) =
         let listFolder (acc : Map<'Key, SOD<'a>>) ((key, value) : 'Key * 'a) : Map<'Key, SOD<'a>> =
-            Map.change
-                key
-                (Option.map (SOD.cons value)
-                 >> Option.defaultValue (SOD.new_ value)
-                 >> Some)
-                acc
+            Map.change key (Option.map (SOD.cons value) >> Option.defaultValue (SOD.new_ value) >> Some) acc
 
         list |> List.fold listFolder Map.empty
 

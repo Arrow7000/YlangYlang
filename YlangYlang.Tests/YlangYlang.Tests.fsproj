@@ -13,6 +13,7 @@
     <Compile Include="ParserTests.fs" />
     <Compile Include="ExpressionParsingTests.fs" />
     <Compile Include="TypeInference\TypeInferTestHelpers.fs" />
+    <Compile Include="TypeInference\DependencyGraphsTests.fs" />
     <Compile Include="TypeInference\AccumulatorTests.fs" />
     <Compile Include="TypeInference\TypeCheckerTests.fs" />
     <Compile Include="Main.fs" />
@@ -25,6 +26,6 @@
     <PackageReference Include="YoloDev.Expecto.TestSdk" Version="0.*" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.7.2" />
     <ProjectReference Include="..\YlangYlang\YlangYlang.fsproj" />
-    <PackageReference Update="FSharp.Core" Version="7.0.*" />
+    <PackageReference Update="FSharp.Core" Version="8.0.*" />
   </ItemGroup>
 </Project>
