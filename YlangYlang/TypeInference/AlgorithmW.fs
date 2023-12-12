@@ -4,6 +4,7 @@
 open TypedSyntaxTree
 module T = TypedSyntaxTree
 open QualifiedSyntaxTree.Names
+module DG = DependencyGraphs
 
 
 module D = DummyLang
@@ -156,7 +157,22 @@ let constructRecursiveDependencyGraph
     (namesMap : TypedNamesMap)
     (namesAndExprs : (LowerIdent * D.Expr) seq)
     : AllRecursiveDepGroups =
-    ()
+    failwith "@TODO: implement"
+
+
+
+let sortBindingsTopologically (namesAndExprs : (LowerIdent * D.Expr) seq) : DG.OneOrMore<LowerIdent * D.Expr> list =
+    let bindingNames = namesAndExprs |> Seq.map fst |> Set.ofSeq
+    let getDependencies = snd >> getNamesUsedInExpr bindingNames >> Set.toSeq
+
+    DG.getStronglyConnectedComponents<LowerIdent * D.Expr, LowerIdent> fst getDependencies namesAndExprs
+    |> DG.sortOneOrMoreTopologically fst getDependencies
+
+
+
+
+
+
 
 
 
@@ -733,181 +749,203 @@ and instantiateTypeVarsInPolyTypeContents
         let makeNormalisationInstruction' : UnificationResult -> TypeVariableId option -> NormalisationInstruction =
             makeNormalisationInstruction constrs.allUniVars constrs.typeVars
 
-
-
-        match overlap with
-        | OverlapCheckResult.SingleUniVarLeft uniVar ->
-            makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVar)) None,
-            map
-            |> Map.removeKeys constrs.allUniVars
-            |> Map.add uniVar (UnifResult (constrs.result, Set.empty))
-
-        | OverlapCheckResult.SingleTypeVarLeft typeVar ->
-            let newUniVar = makeNewUniVar ()
-
-            makeNormalisationInstruction' (Ok (PTC.UnificationVar newUniVar)) None,
-            map
-            |> Map.removeKeys constrs.allUniVars
-            |> Map.add newUniVar (UnifResult (constrs.result, Set.singleton typeVar))
-
-        | OverlapCheckResult.SingleOfEachLeft (uniVar, typeVar) ->
-            makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVar)) None,
-            map
-            |> Map.removeKeys constrs.allUniVars
-            |> Map.add uniVar (UnifResult (constrs.result, Set.singleton typeVar))
-
-        | OverlapCheckResult.MultipleUniVarsLeft uniVarsLeft ->
-            if TOM.contains<_> constrs.finalUniVar uniVarsLeft then
-                let uniVarToPointTo = constrs.finalUniVar
-
-                makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
+        // This `uniVarsMapWithKeysRemoved` still needs to have its values adjusted by the `normalisationInstr`, which we do just below this big match expression
+        let normalisationInstr, uniVarsMapWithKeysRemoved =
+            match overlap with
+            | OverlapCheckResult.SingleUniVarLeft uniVar ->
+                makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVar)) None,
                 map
                 |> Map.removeKeys constrs.allUniVars
-                |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.empty))
+                |> Map.add uniVar (UnifResult (constrs.result, Set.empty))
 
-            else
-                /// The uniVar containing the result didn't make the cut so we have to promote one of the other ones to be the one containing the result
-                let (TOM (head, neck, rest)) = uniVarsLeft
-                let uniVarToPointTo = head
+            | OverlapCheckResult.SingleTypeVarLeft typeVar ->
+                let newUniVar = makeNewUniVar ()
 
-                makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
+                makeNormalisationInstruction' (Ok (PTC.UnificationVar newUniVar)) None,
                 map
                 |> Map.removeKeys constrs.allUniVars
-                |> Map.addBulk (neck :: rest |> Seq.map (fun uniVar -> uniVar, UnifRedirect uniVarToPointTo))
-                |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.empty))
+                |> Map.add newUniVar (UnifResult (constrs.result, Set.singleton typeVar))
 
-
-        | OverlapCheckResult.MultipleTypeVarsLeft typeVars ->
-            let newUniVar = makeNewUniVar ()
-
-            makeNormalisationInstruction' (Ok (PTC.UnificationVar newUniVar)) None,
-            map
-            |> Map.removeKeys constrs.allUniVars
-            |> Map.add newUniVar (UnifResult (constrs.result, Set.ofSeq typeVars))
-
-        | OverlapCheckResult.SingleUniVarAndMultipleTypeVarsLeft (uniVar, typeVars) ->
-            makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVar)) None,
-            map
-            |> Map.removeKeys constrs.allUniVars
-            |> Map.add uniVar (UnifResult (constrs.result, Set.ofSeq typeVars))
-
-
-        | OverlapCheckResult.SingleTypeVarAndMultipleUniVarsLeft (typeVar, uniVarsLeft) ->
-            if TOM.contains<_> constrs.finalUniVar uniVarsLeft then
-                let uniVarToPointTo = constrs.finalUniVar
-
-                makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
+            | OverlapCheckResult.SingleOfEachLeft (uniVar, typeVar) ->
+                makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVar)) None,
                 map
                 |> Map.removeKeys constrs.allUniVars
-                |> Map.add constrs.finalUniVar (UnifResult (constrs.result, Set.singleton typeVar))
+                |> Map.add uniVar (UnifResult (constrs.result, Set.singleton typeVar))
 
-            else
-                /// The uniVar containing the result didn't make the cut so we have to promote one of the other ones to be the one containing the result
-                let (TOM (head, neck, rest)) = uniVarsLeft
-                let uniVarToPointTo = head
+            | OverlapCheckResult.MultipleUniVarsLeft uniVarsLeft ->
+                if TOM.contains<_> constrs.finalUniVar uniVarsLeft then
+                    let uniVarToPointTo = constrs.finalUniVar
 
-                makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
+                    makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
+                    map
+                    |> Map.removeKeys constrs.allUniVars
+                    |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.empty))
+
+                else
+                    /// The uniVar containing the result didn't make the cut so we have to promote one of the other ones to be the one containing the result
+                    let (TOM (head, neck, rest)) = uniVarsLeft
+                    let uniVarToPointTo = head
+
+                    makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
+                    map
+                    |> Map.removeKeys constrs.allUniVars
+                    |> Map.addBulk (neck :: rest |> Seq.map (fun uniVar -> uniVar, UnifRedirect uniVarToPointTo))
+                    |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.empty))
+
+
+            | OverlapCheckResult.MultipleTypeVarsLeft typeVars ->
+                let newUniVar = makeNewUniVar ()
+
+                makeNormalisationInstruction' (Ok (PTC.UnificationVar newUniVar)) None,
                 map
                 |> Map.removeKeys constrs.allUniVars
-                |> Map.addBulk (neck :: rest |> Seq.map (fun uniVar -> uniVar, UnifRedirect uniVarToPointTo))
-                |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.singleton typeVar))
+                |> Map.add newUniVar (UnifResult (constrs.result, Set.ofSeq typeVars))
 
-
-        | OverlapCheckResult.MultipleOfBoth (uniVarsLeft, typeVars) ->
-            if TOM.contains<_> constrs.finalUniVar uniVarsLeft then
-                let uniVarToPointTo = constrs.finalUniVar
-
-                makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
+            | OverlapCheckResult.SingleUniVarAndMultipleTypeVarsLeft (uniVar, typeVars) ->
+                makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVar)) None,
                 map
                 |> Map.removeKeys constrs.allUniVars
-                |> Map.add constrs.finalUniVar (UnifResult (constrs.result, Set.ofSeq typeVars))
-
-            else
-                /// The uniVar containing the result didn't make the cut so we have to promote one of the other ones to be the one containing the result
-                let (TOM (head, neck, rest)) = uniVarsLeft
-                let uniVarToPointTo = head
-
-                makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
-                map
-                |> Map.removeKeys constrs.allUniVars
-                |> Map.addBulk (neck :: rest |> Seq.map (fun uniVar -> uniVar, UnifRedirect uniVarToPointTo))
-                |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.ofSeq typeVars))
+                |> Map.add uniVar (UnifResult (constrs.result, Set.ofSeq typeVars))
 
 
-        | OverlapCheckResult.FullOverlap ->
-            // So this is the juicy case (I think)!!!
-            // This is the case where we actually put the logic of whether we replace the things referencing these coupled constraints with a concrete type (or type clash error) or if we generalise it with a new type variable if it's `None`!
-            // In other words, this is where we do either substitution or generalisation!!!
+            | OverlapCheckResult.SingleTypeVarAndMultipleUniVarsLeft (typeVar, uniVarsLeft) ->
+                if TOM.contains<_> constrs.finalUniVar uniVarsLeft then
+                    let uniVarToPointTo = constrs.finalUniVar
 
-            // @TODO: important! I think we need to arrange the normalisation instructions in a DAG, and then do a topological sort on them so that we can apply each norminstr in order, so that we don't end up doing a replacement containing old uniVars/typeVars after those have already been removed!
+                    makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
+                    map
+                    |> Map.removeKeys constrs.allUniVars
+                    |> Map.add constrs.finalUniVar (UnifResult (constrs.result, Set.singleton typeVar))
+
+                else
+                    /// The uniVar containing the result didn't make the cut so we have to promote one of the other ones to be the one containing the result
+                    let (TOM (head, neck, rest)) = uniVarsLeft
+                    let uniVarToPointTo = head
+
+                    makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
+                    map
+                    |> Map.removeKeys constrs.allUniVars
+                    |> Map.addBulk (neck :: rest |> Seq.map (fun uniVar -> uniVar, UnifRedirect uniVarToPointTo))
+                    |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.singleton typeVar))
 
 
-            match constrs.result with
-            | None ->
-                // So we can generalise this bitch
+            | OverlapCheckResult.MultipleOfBoth (uniVarsLeft, typeVars) ->
+                if TOM.contains<_> constrs.finalUniVar uniVarsLeft then
+                    let uniVarToPointTo = constrs.finalUniVar
 
-                let newTypeVar = makeNewTypeVar ()
+                    makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
+                    map
+                    |> Map.removeKeys constrs.allUniVars
+                    |> Map.add constrs.finalUniVar (UnifResult (constrs.result, Set.ofSeq typeVars))
 
-                makeNormalisationInstruction' (Ok (PTC.TypeVariable newTypeVar)) (Some newTypeVar),
-                map |> Map.removeKeys constrs.allUniVars
+                else
+                    /// The uniVar containing the result didn't make the cut so we have to promote one of the other ones to be the one containing the result
+                    let (TOM (head, neck, rest)) = uniVarsLeft
+                    let uniVarToPointTo = head
 
-            | Some result ->
-                match result with
-                | Ok constraint_ ->
-                    // so we need to replace the uniVar by this specific constraint
-                    makeNormalisationInstruction' (Ok constraint_) None,
+                    makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
+                    map
+                    |> Map.removeKeys constrs.allUniVars
+                    |> Map.addBulk (neck :: rest |> Seq.map (fun uniVar -> uniVar, UnifRedirect uniVarToPointTo))
+                    |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.ofSeq typeVars))
 
+
+            | OverlapCheckResult.FullOverlap ->
+                // So this is the juicy case (I think)!!!
+                // This is the case where we actually put the logic of whether we replace the things referencing these coupled constraints with a concrete type (or type clash error) or if we generalise it with a new type variable if it's `None`!
+                // In other words, this is where we do either substitution or generalisation!!!
+
+                // @TODO: important! I think we need to arrange the normalisation instructions in a DAG, and then do a topological sort on them so that we can apply each norminstr in order, so that we don't end up doing a replacement containing old uniVars/typeVars after those have already been removed!
+
+
+                match constrs.result with
+                | None ->
+                    // So we can generalise this bitch
+
+                    let newTypeVar = makeNewTypeVar ()
+
+                    makeNormalisationInstruction' (Ok (PTC.TypeVariable newTypeVar)) (Some newTypeVar),
                     map |> Map.removeKeys constrs.allUniVars
 
-                | Error e ->
-                    makeNormalisationInstruction' (Error e) None,
+                | Some result ->
+                    match result with
+                    | Ok constraint_ ->
+                        // so we need to replace the uniVar by this specific constraint
+                        makeNormalisationInstruction' (Ok constraint_) None,
 
-                    map |> Map.removeKeys constrs.allUniVars
+                        map |> Map.removeKeys constrs.allUniVars
+
+                    | Error e ->
+                        makeNormalisationInstruction' (Error e) None,
+
+                        map |> Map.removeKeys constrs.allUniVars
+
+
+        let uniVarsWithValuesNormalised =
+            applyNormInstrToUniVarsMap normalisationInstr uniVarsMapWithKeysRemoved
+
+        normalisationInstr, uniVarsWithValuesNormalised
 
 
 
 
+    //let normalisationInstructions, uniVarsMapWithModifiedKeys =
+    //    overlapResults
+    //    |> List.mapFold
+    //        (fun uniVarMap (coupledConstraints, overlap) ->
+    //            // @TODO: I think we might need to keep the `NormalisationInstruction`s in the folded state as well, because I think we need to apply each new `NormalisationInstruction` to each preceding one as well, in order for all them to contain the target end state instead of the intermediate states that may be replaced in later `NormalisationInstruction`s.
+    //            getNormalisationInstructionAndAdjustedUniVarsMapKeys coupledConstraints overlap uniVarMap)
+    //        unificationVarsMap
 
-    let normalisationInstructions, uniVarsMapWithModifiedKeys =
+
+    let normalisationInstructions, adjustedUniVarMap =
         overlapResults
-        |> List.mapFold
-            (fun uniVarMap (coupledConstraints, overlap) ->
+        |> List.fold
+            (fun (normalisationInstrs, uniVarMap) (coupledConstraints, overlap) ->
                 // @TODO: I think we might need to keep the `NormalisationInstruction`s in the folded state as well, because I think we need to apply each new `NormalisationInstruction` to each preceding one as well, in order for all them to contain the target end state instead of the intermediate states that may be replaced in later `NormalisationInstruction`s.
-                getNormalisationInstructionAndAdjustedUniVarsMapKeys coupledConstraints overlap uniVarMap)
-            unificationVarsMap
+                let newNormalInstr, adjustedUniVarMap =
+                    getNormalisationInstructionAndAdjustedUniVarsMapKeys coupledConstraints overlap uniVarMap
 
-    /// @TODO: see the comment on `sortNormalisationInstructionsTopologically` for why this may not be needed, and what we may need to do instead
-    let sortedNormInstructions =
-        sortNormalisationInstructionsTopologically normalisationInstructions
+                // We need to apply the new normalInstruction to the existing ones so we replace the uniVars and the like that need to be replaced
+                newNormalInstr
+                :: List.map (applyNorminstrToNormInstr newNormalInstr) normalisationInstrs,
+
+                adjustedUniVarMap)
+            (List.empty, unificationVarsMap)
 
 
-    let uniVarsMapWithNormalisationInstructionsApplied : UnificationVarsMap =
-        sortedNormInstructions
-        |> Seq.fold
-            (fun map normInstr ->
-                map
-                |> Map.map (fun _ redirectOrResult ->
-                    match redirectOrResult with
-                    | UnifRedirect uniVar -> UnifRedirect uniVar
+    ///// @TODO: see the comment on `sortNormalisationInstructionsTopologically` for why this may not be needed, and what we may need to do instead
+    //let sortedNormInstructions =
+    //    sortNormalisationInstructionsTopologically normalisationInstructions
 
-                    | UnifResult (typeResultOpt, typeVars) ->
-                        UnifResult (applyNormalisationInstructionToResultOpt normInstr typeResultOpt, typeVars)))
-            uniVarsMapWithModifiedKeys
+    ///// @TODO: I believe we don't need this if we apply the normalisation instruction to the uniVarsMap directly as we produce it
+    //let uniVarsMapWithNormalisationInstructionsApplied : UnificationVarsMap =
+    //    sortedNormInstructions
+    //    |> Seq.fold
+    //        (fun map normInstr ->
+    //            map
+    //            |> Map.map (fun _ redirectOrResult ->
+    //                match redirectOrResult with
+    //                | UnifRedirect uniVar -> UnifRedirect uniVar
+
+    //                | UnifResult (typeResultOpt, typeVars) ->
+    //                    UnifResult (applyNormalisationInstructionToResultOpt normInstr typeResultOpt, typeVars)))
+    //        adjustedUniVarMap
 
 
     let newPolyTypeContents : PolyTypeContents =
-        sortedNormInstructions
+        normalisationInstructions
         |> Seq.fold (fun state normInstr -> applyNormalisationInstruction normInstr state) type_
 
     let newTypeVars : TypeVariableId list =
-        sortedNormInstructions |> List.choose _.newTypeVarOpt
+        normalisationInstructions |> List.choose _.newTypeVarOpt
 
     let newPolyType : PolyType =
         { forall = newTypeVars
           typeExpr = newPolyTypeContents }
 
     { self = newPolyType
-      constrained = uniVarsMapWithNormalisationInstructionsApplied }
+      constrained = adjustedUniVarMap }
 
 
 
@@ -924,31 +962,26 @@ and getUnificationVarsFromPolyTypeContents (polyTypeContents : PolyTypeContents)
 
 
 
-/// Sort the items so that an items dependencies always precede it in the list – might need to involve putting them in a DAG first and sorting them afterwards.
-and sortTopologically<'T, 'a when 'a : comparison>
-    (getId : 'T -> 'a)
-    (getDependencies : 'T -> 'a seq)
-    (items : 'T seq)
-    : 'T seq =
-    ()
+///// Sort the items so that an items dependencies always precede it in the list – might need to involve putting them in a DAG first and sorting them afterwards.
+//and private sortTopologically<'T, 'a when 'a : comparison>
+//    (getId : 'T -> 'a)
+//    (getDependencies : 'T -> 'a seq)
+//    (items : 'T seq)
+//    : 'T seq =
+//    ()
 
 
-/// We sort these so that we can apply them in sequence without accidentally referencing old things that are overwritten in a different normalisation instruction.
-///
-/// @TODO: This should probably also entail applying each `NormalisationInstruction` to the ones that precede it, to apply to the `toReplaceWith` field, so that we don't have out of date unification variables in there
-///
-/// @TODO: Tbh I think we actually don't need to worry about sorting these, if we just apply each `NormalisationInstruction` to all the others (maybe even itself, although that *shouldn't* ever be necessary I don't think?). Ah but... that may not actually work yet, because there may be multiple transformations done on each thing, i.e. replace x with y and then replace y with z. And if we apply the 2nd transformation before the first, we'd be trying to change y to z and then x to y, which means that an x will never get all the way to z, but it will stay at y. We could probably solve this by keeping applying all the changes to all the things until there have been no more changes, but that might be quite computationally expensive... but then it means we can keep the algorithm simple.
-///
-/// @TODO: Hmm I wonder if we can solve that by processing the `NormalisationInstruction`s as we produce them... that way whenever we come up with an additional change, we just update all the things we've already gotten, and I *think* that way all the `NormalisationInstruction`s end up consistent with the final state...
-and sortNormalisationInstructionsTopologically
-    (instructions : NormalisationInstruction list)
-    : NormalisationInstruction list =
-
-
-
-
-
-    ()
+///// We sort these so that we can apply them in sequence without accidentally referencing old things that are overwritten in a different normalisation instruction.
+/////
+///// @TODO: This should probably also entail applying each `NormalisationInstruction` to the ones that precede it, to apply to the `toReplaceWith` field, so that we don't have out of date unification variables in there
+/////
+///// @TODO: Tbh I think we actually don't need to worry about sorting these, if we just apply each `NormalisationInstruction` to all the others (maybe even itself, although that *shouldn't* ever be necessary I don't think?). Ah but... that may not actually work yet, because there may be multiple transformations done on each thing, i.e. replace x with y and then replace y with z. And if we apply the 2nd transformation before the first, we'd be trying to change y to z and then x to y, which means that an x will never get all the way to z, but it will stay at y. We could probably solve this by keeping applying all the changes to all the things until there have been no more changes, but that might be quite computationally expensive... but then it means we can keep the algorithm simple.
+/////
+///// @TODO: Hmm I wonder if we can solve that by processing the `NormalisationInstruction`s as we produce them... that way whenever we come up with an additional change, we just update all the things we've already gotten, and I *think* that way all the `NormalisationInstruction`s end up consistent with the final state...
+//and private sortNormalisationInstructionsTopologically
+//    (instructions : NormalisationInstruction list)
+//    : NormalisationInstruction list =
+//    ()
 
 
 and applyNormalisationInstruction
@@ -983,9 +1016,20 @@ and applyNormalisationInstruction
 
 and applyNormalisationInstructionToResult
     (normalisationInstr : NormalisationInstruction)
-    (polyTypeResult : UnificationResult)
+    (polyTypeContentsResult : UnificationResult)
     : UnificationResult =
-    polyTypeResult |> Result.map (applyNormalisationInstruction normalisationInstr)
+    match polyTypeContentsResult with
+    | Ok polyTypeContents -> applyNormalisationInstruction normalisationInstr polyTypeContents |> Ok
+    | Error e ->
+        match e with
+        | UnificationClash (a, b) ->
+            UnificationClash (
+                applyNormalisationInstruction normalisationInstr a,
+                applyNormalisationInstruction normalisationInstr b
+            )
+            |> Error
+
+
 
 and applyNormalisationInstructionToResultOpt
     (normalisationInstr : NormalisationInstruction)
@@ -993,6 +1037,27 @@ and applyNormalisationInstructionToResultOpt
     : UnificationResult option =
     polyTypeResultOpt
     |> Option.map (applyNormalisationInstructionToResult normalisationInstr)
+
+
+
+and applyNorminstrToNormInstr
+    (normInstrToApply : NormalisationInstruction)
+    (normInstrToBeApplied : NormalisationInstruction)
+    : NormalisationInstruction =
+    { normInstrToBeApplied with
+        toReplaceWith = applyNormalisationInstructionToResult normInstrToApply normInstrToBeApplied.toReplaceWith }
+
+
+and applyNormInstrToUniVarsMap (normInstr : NormalisationInstruction) (map : UnificationVarsMap) : UnificationVarsMap =
+    map
+    |> Map.map (fun _ redirectOrResult ->
+        match redirectOrResult with
+        | UnifRedirect uniVar -> UnifRedirect uniVar
+
+        | UnifResult (typeResultOpt, typeVars) ->
+            UnifResult (applyNormalisationInstructionToResultOpt normInstr typeResultOpt, typeVars))
+
+
 
 
 
@@ -1444,40 +1509,16 @@ and combineUnificationVarMapsSeq : UnificationVarsMap seq -> UnificationVarsMap 
 
 
 
-/// When putting items in a topologically sorted list, we need to treat the mutually recursive items like they are one thing, so we store them together
-type private OneOrMore<'T> =
-    | One of 'T
-    | More of 'T tom
-
-/// Both dependencies and dependents.
-///
-/// Dependencies = items that this depends on.
-/// Dependents = items that depend on this.
-type private BothDeps<'Key> =
-    { dependencies : 'Key seq
-      dependents : 'Key seq }
-
-type private DepsMap<'T, 'Key when 'Key : comparison> = Map<'Key, 'T * 'Key seq>
-
-
-
-let makeDependenciesMap (items : 'T seq) : DepsMap<'T, 'Key> = ()
-
-
-let flipDependenciesMapToDependentsMap (dependenciesMap : DepsMap<'T, 'Key>) : DepsMap<'T, 'Key> = ()
 
 
 
 
 
 
-/// Sort the items so that an items dependencies always precede it in the list – might need to involve putting them in a DAG first and sorting them afterwards.
-let sortTopologically<'T, 'Key when 'Key : comparison>
-    (getId : 'T -> 'Key)
-    (getDependencies : 'T -> 'Key seq)
-    (items : 'T seq)
-    : OneOrMore<'T> seq =
-    ()
+
+
+
+
 
 
 

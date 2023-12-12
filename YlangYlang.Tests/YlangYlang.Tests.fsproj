@@ -14,6 +14,7 @@
     <Compile Include="ExpressionParsingTests.fs" />
     <Compile Include="TypeInference\TypeInferTestHelpers.fs" />
     <Compile Include="TypeInference\DependencyGraphsTests.fs" />
+    <Compile Include="TypeInference\DummyLangTests.fs" />
     <Compile Include="TypeInference\AccumulatorTests.fs" />
     <Compile Include="TypeInference\TypeCheckerTests.fs" />
     <Compile Include="Main.fs" />

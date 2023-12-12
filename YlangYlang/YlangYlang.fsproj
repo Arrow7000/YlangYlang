@@ -18,6 +18,7 @@
     <Compile Include="TypeInference\TypedSyntaxTree.fs" />
     <Compile Include="TypeInference\TypedNameResolution.fs" />
     <Compile Include="TypeInference\DependencyGraphs.fs" />
+    <Compile Include="TypeInference\DummyLang.fs" />
     <Compile Include="TypeInference\AlgorithmW.fs" />
     <Compile Include="TypeInference\Accumulator.fs" />
     <Compile Include="TypeInference\TypeChecker.fs" />

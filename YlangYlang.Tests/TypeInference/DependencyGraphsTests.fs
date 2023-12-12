@@ -8,7 +8,7 @@ open DependencyGraphs
 
 
 [<Tests>]
-let testStronglyConnectedGraphs =
+let testStronglyConnectedGraphs () =
     testList
         "Test strongly connected graphs collection"
         [ test "Test strongly connected graph" {
