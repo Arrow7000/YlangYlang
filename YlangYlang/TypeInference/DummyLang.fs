@@ -666,6 +666,22 @@ module TypeInference =
 
 
 
+    let applyNormInstrToTypedLocalNamesMap
+        (normInstr : NormalisationInstruction)
+        (map : TypedLocalNamesMap)
+        : TypedLocalNamesMap =
+        map
+        |> Map.map (fun _ polyType ->
+            let result = applyNormalisationInstruction normInstr polyType.typeExpr
+
+            { typeExpr = result
+              forall =
+                match normInstr.newTypeVarOpt with
+                | Some newTypeVar -> newTypeVar :: polyType.forall
+                | None -> polyType.forall })
+
+
+
     let private coupledConstraintToNormalisationInstruction
         (typeVarsToReplace : TypeVariableId set)
         (unificationVarsWeCanEliminate : UnificationVarId set)
@@ -716,14 +732,13 @@ module TypeInference =
               newTypeVarOpt = newTypeVarOpt }
 
 
-        let normalisationInstr, uniVarsMapWithKeysRemoved, newTypeVarOpt =
+        let normalisationInstr, uniVarsMapWithKeysRemoved =
             match overlap with
             | OverlapCheckResult.SingleUniVarLeft uniVar ->
                 makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVar)) None,
                 uniVarsMap
                 |> Map.removeKeys constrs.allUniVars
-                |> Map.add uniVar (UnifResult (constrs.result, Set.empty)),
-                None
+                |> Map.add uniVar (UnifResult (constrs.result, Set.empty))
 
             | OverlapCheckResult.SingleTypeVarLeft typeVar ->
                 match constrs.result with
@@ -733,21 +748,18 @@ module TypeInference =
                     makeNormalisationInstruction' (Ok (PTC.UnificationVar newUniVar)) None,
                     uniVarsMap
                     |> Map.removeKeys constrs.allUniVars
-                    |> Map.add newUniVar (UnifResult (Some unificationResult, Set.singleton typeVar)),
-                    None
+                    |> Map.add newUniVar (UnifResult (Some unificationResult, Set.singleton typeVar))
 
                 | None ->
                     makeNormalisationInstruction' (Ok (PTC.TypeVariable typeVar)) None,
-                    uniVarsMap |> Map.removeKeys constrs.allUniVars,
-                    None
+                    uniVarsMap |> Map.removeKeys constrs.allUniVars
 
 
             | OverlapCheckResult.SingleOfEachLeft (uniVar, typeVar) ->
                 makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVar)) None,
                 uniVarsMap
                 |> Map.removeKeys constrs.allUniVars
-                |> Map.add uniVar (UnifResult (constrs.result, Set.singleton typeVar)),
-                None
+                |> Map.add uniVar (UnifResult (constrs.result, Set.singleton typeVar))
 
             | OverlapCheckResult.MultipleUniVarsLeft uniVarsLeft ->
                 if TOM.contains<_> constrs.finalUniVar uniVarsLeft then
@@ -756,8 +768,7 @@ module TypeInference =
                     makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
                     uniVarsMap
                     |> Map.removeKeys constrs.allUniVars
-                    |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.empty)),
-                    None
+                    |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.empty))
 
                 else
                     /// The uniVar containing the result didn't make the cut so we have to promote one of the other ones to be the one containing the result
@@ -768,8 +779,7 @@ module TypeInference =
                     uniVarsMap
                     |> Map.removeKeys constrs.allUniVars
                     |> Map.addBulk (neck :: rest |> Seq.map (fun uniVar -> uniVar, UnifRedirect uniVarToPointTo))
-                    |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.empty)),
-                    None
+                    |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.empty))
 
 
             | OverlapCheckResult.MultipleTypeVarsLeft typeVars ->
@@ -778,15 +788,14 @@ module TypeInference =
                 makeNormalisationInstruction' (Ok (PTC.UnificationVar newUniVar)) None,
                 uniVarsMap
                 |> Map.removeKeys constrs.allUniVars
-                |> Map.add newUniVar (UnifResult (constrs.result, Set.ofSeq typeVars)),
-                None
+                |> Map.add newUniVar (UnifResult (constrs.result, Set.ofSeq typeVars))
+
 
             | OverlapCheckResult.SingleUniVarAndMultipleTypeVarsLeft (uniVar, typeVars) ->
                 makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVar)) None,
                 uniVarsMap
                 |> Map.removeKeys constrs.allUniVars
-                |> Map.add uniVar (UnifResult (constrs.result, Set.ofSeq typeVars)),
-                None
+                |> Map.add uniVar (UnifResult (constrs.result, Set.ofSeq typeVars))
 
 
             | OverlapCheckResult.SingleTypeVarAndMultipleUniVarsLeft (typeVar, uniVarsLeft) ->
@@ -796,8 +805,7 @@ module TypeInference =
                     makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
                     uniVarsMap
                     |> Map.removeKeys constrs.allUniVars
-                    |> Map.add constrs.finalUniVar (UnifResult (constrs.result, Set.singleton typeVar)),
-                    None
+                    |> Map.add constrs.finalUniVar (UnifResult (constrs.result, Set.singleton typeVar))
 
                 else
                     /// The uniVar containing the result didn't make the cut so we have to promote one of the other ones to be the one containing the result
@@ -808,8 +816,7 @@ module TypeInference =
                     uniVarsMap
                     |> Map.removeKeys constrs.allUniVars
                     |> Map.addBulk (neck :: rest |> Seq.map (fun uniVar -> uniVar, UnifRedirect uniVarToPointTo))
-                    |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.singleton typeVar)),
-                    None
+                    |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.singleton typeVar))
 
 
             | OverlapCheckResult.MultipleOfBoth (uniVarsLeft, typeVars) ->
@@ -819,8 +826,7 @@ module TypeInference =
                     makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
                     uniVarsMap
                     |> Map.removeKeys constrs.allUniVars
-                    |> Map.add constrs.finalUniVar (UnifResult (constrs.result, Set.ofSeq typeVars)),
-                    None
+                    |> Map.add constrs.finalUniVar (UnifResult (constrs.result, Set.ofSeq typeVars))
 
                 else
                     /// The uniVar containing the result didn't make the cut so we have to promote one of the other ones to be the one containing the result
@@ -831,8 +837,7 @@ module TypeInference =
                     uniVarsMap
                     |> Map.removeKeys constrs.allUniVars
                     |> Map.addBulk (neck :: rest |> Seq.map (fun uniVar -> uniVar, UnifRedirect uniVarToPointTo))
-                    |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.ofSeq typeVars)),
-                    None
+                    |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.ofSeq typeVars))
 
 
             | OverlapCheckResult.FullOverlap ->
@@ -850,8 +855,7 @@ module TypeInference =
                     let newTypeVar = makeNewTypeVar ()
 
                     makeNormalisationInstruction' (Ok (PTC.TypeVariable newTypeVar)) (Some newTypeVar),
-                    uniVarsMap |> Map.removeKeys constrs.allUniVars,
-                    Some newTypeVar
+                    uniVarsMap |> Map.removeKeys constrs.allUniVars
 
                 | Some result ->
                     match result with
@@ -859,14 +863,12 @@ module TypeInference =
                         // so we need to replace the uniVar by this specific constraint
                         makeNormalisationInstruction' (Ok constraint_) None,
 
-                        uniVarsMap |> Map.removeKeys constrs.allUniVars,
-                        None
+                        uniVarsMap |> Map.removeKeys constrs.allUniVars
 
                     | Error e ->
                         makeNormalisationInstruction' (Error e) None,
 
-                        uniVarsMap |> Map.removeKeys constrs.allUniVars,
-                        None
+                        uniVarsMap |> Map.removeKeys constrs.allUniVars
 
 
         normalisationInstr, applyNormInstrToUniVarsMap normalisationInstr uniVarsMapWithKeysRemoved
@@ -914,9 +916,42 @@ module TypeInference =
 
 
 
+    let instantiateTypeVarsInUniVarsMapAndLocalNamesMap
+        (typeVarsToReplace : TypeVariableId set)
+        (unificationVarsWeCanEliminate : UnificationVarId set)
+        (localNamesMap : TypedLocalNamesMap)
+        (unificationVarsMap : UnificationVarsMap)
+        : TypedLocalNamesMap * UnificationVarsMap =
+        let matchesForUniVars : UnificationVarsMap.CoupledConstraints set =
+            unificationVarsWeCanEliminate
+            |> Set.map (fun uniVar -> UnificationVarsMap.getAllJoinedUnificationVars uniVar unificationVarsMap)
+
+        let matchesForTypeVars : UnificationVarsMap.CoupledConstraints set =
+            typeVarsToReplace
+            |> Set.choose (fun typeVar -> UnificationVarsMap.getTypeVarConstraints typeVar unificationVarsMap)
+
+        /// This should now include all the entries that any of the uniVars and typeVars here touch
+        let matchesForBoth : UnificationVarsMap.CoupledConstraints set =
+            Set.union matchesForUniVars matchesForTypeVars
 
 
-    let private replaceCoupledConstraints
+        matchesForBoth
+        |> Set.toList
+        |> List.fold
+            (fun (namesMap, varsMap) coupledConstraints ->
+                let normInstr, newVarsMap =
+                    coupledConstraintToNormalisationInstruction
+                        Set.empty
+                        unificationVarsWeCanEliminate
+                        coupledConstraints
+                        varsMap
+
+                applyNormInstrToTypedLocalNamesMap normInstr namesMap, newVarsMap)
+            (localNamesMap, unificationVarsMap)
+
+
+
+    let private replaceCoupledConstraintsInTypeAndUniVarsMap
         (typeVarsToReplace : TypeVariableId set)
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (constrs : UnificationVarsMap.CoupledConstraints)
@@ -940,6 +975,23 @@ module TypeInference =
           constrained = newUniVarsMap }
 
 
+    let private replaceCoupledConstraintsInTypedLocalNamesMap
+        (typeVarsToReplace : TypeVariableId set)
+        (unificationVarsWeCanEliminate : UnificationVarId set)
+        (constrs : UnificationVarsMap.CoupledConstraints)
+        (localNamesMap : TypedLocalNamesMap)
+        (uniVarsMap : UnificationVarsMap)
+        : TypedLocalNamesMap * UnificationVarsMap =
+        let normInstr, newUniVarsMap =
+            coupledConstraintToNormalisationInstruction
+                typeVarsToReplace
+                unificationVarsWeCanEliminate
+                constrs
+                uniVarsMap
+
+        applyNormInstrToTypedLocalNamesMap normInstr localNamesMap, newUniVarsMap
+
+
 
     let private replaceCoupledConstraintsInSacuv
         (typeVarsToReplace : TypeVariableId set)
@@ -948,7 +1000,7 @@ module TypeInference =
         (uniVarsMap : UnificationVarsMap)
         (type_ : PolyType)
         : SelfAndConstrainedUnificationVars =
-        replaceCoupledConstraints
+        replaceCoupledConstraintsInTypeAndUniVarsMap
             (Set.ofList type_.forall |> Set.union typeVarsToReplace)
             unificationVarsWeCanEliminate
             coupledConstraints
@@ -1501,9 +1553,9 @@ module TypeInference =
             | head :: rest ->
                 let inferredHead = inferTypeFromExpr namesMap head
 
-                let unifiedType, uniVarsMap, uniVarsAddedHere =
+                let unifiedType, uniVarsMap =
                     List.fold
-                        (fun (unifiedTypeSoFar, uniVarsMap, uniVarsAddedHere) expr ->
+                        (fun (unifiedTypeSoFar, uniVarsMap) expr ->
                             let inferResult = inferTypeFromExpr namesMap expr
                             let unifiedType = unifyTwoTypes unifiedTypeSoFar inferResult.self
 
@@ -1511,16 +1563,13 @@ module TypeInference =
                                 combineUnificationVarMapsSeq
                                     [ uniVarsMap; inferResult.constrained; unifiedType.constrained ]
 
-                            unifiedType.self,
-                            combinedUniVarsMaps.combined,
-                            Set.unionMany [ uniVarsAddedHere; combinedUniVarsMaps.uniVarsAddedHere ])
-                        (inferredHead.self, inferredHead.constrained, Set.empty)
+                            unifiedType.self, combinedUniVarsMaps)
+                        (inferredHead.self, inferredHead.constrained)
                         rest
 
-                let contentType =
-                    instantiateTypeVarsInPolyType uniVarsAddedHere uniVarsMap unifiedType
+                //let contentType = instantiateTypeVarsInPolyType Set.empty uniVarsMap unifiedType
 
-                Sacuv.make (Types.listTypeOf contentType.self) contentType.constrained
+                Sacuv.make (Types.listTypeOf unifiedType) uniVarsMap
 
 
         | Ast.TupleVal (first, second) ->
@@ -1593,10 +1642,7 @@ module TypeInference =
                   funcRequiredResult.constrained ]
                 |> combineUnificationVarMapsSeq
 
-            instantiateTypeVarsInPolyType
-                (Set.add newUniVar combinedUnifVarMap.uniVarsAddedHere)
-                combinedUnifVarMap.combined
-                returnType
+            instantiateTypeVarsInPolyType (Set.singleton newUniVar) combinedUnifVarMap returnType
 
 
 
@@ -1607,7 +1653,9 @@ module TypeInference =
     and resolveNamesTopologically
         (namesMap : TypedNamesMap)
         (namesAndExprs : Ast.LetBindingSingle seq)
-        : BindingsResolutionResult =
+        : {| inferredTypes : TypedLocalNamesMap
+             constrained : UnificationVarsMap |}
+        =
 
         /// These don't need to be inferred because they already have explicit type annotations.
         /// @TODO: however! we still need to type check them internally
@@ -1624,11 +1672,11 @@ module TypeInference =
             |> sortBindingsTopologically
 
 
-        let localNamesMap, uniVarsMap, uniVarsAddedHere =
+        let localNamesMap, uniVarsMap =
             orderedBindings
             |> List.fold
-                (fun (localNamesMap, uniVarsMap, uniVarsAddedHere) stronglyConnectedComponent ->
-                    let combinedNamesMap = addLocalNamesMap localNamesMap namesMap
+                (fun (localNamesMap, uniVarsMap) stronglyConnectedComponent ->
+                    let combinedNamesMap : TypedNamesMap = addLocalNamesMap localNamesMap namesMap
 
                     match stronglyConnectedComponent with
                     | DG.One (name, expr) ->
@@ -1658,15 +1706,11 @@ module TypeInference =
                         let combinedMapResult =
                             combineTwoUnificationVarMaps uniVarsMap inferredType.constrained
 
-                        let withThisNewUniVarAdded =
-                            match newUniVarOpt with
-                            | Some newUniVar -> Set.add newUniVar uniVarsAddedHere
-                            | None -> uniVarsAddedHere
-
-                        withThisBindingAdded,
-                        combinedMapResult.combined,
-                        Set.union combinedMapResult.uniVarsAddedHere withThisNewUniVarAdded
-
+                        instantiateTypeVarsInUniVarsMapAndLocalNamesMap
+                            Set.empty
+                            (newUniVarOpt |> Option.toList |> Set.ofList)
+                            withThisBindingAdded
+                            combinedMapResult
 
 
 
@@ -1687,10 +1731,10 @@ module TypeInference =
                                 combinedNamesMap
 
 
-                        let newLocalNamesMap, newUniVarsMap, uniVarsAddedHere' =
+                        let newLocalNamesMap, newUniVarsMap =
                             namesAndBindings
                             |> Seq.fold
-                                (fun (localNamesMap, uniVarsMap, uniVarsAddedHere') (name, expr) ->
+                                (fun (localNamesMap, uniVarsMap) (name, expr) ->
                                     let inferredType = inferTypeFromExpr withNewUniVarsAdded expr
 
                                     let withThisBindingAdded : TypedLocalNamesMap =
@@ -1699,24 +1743,20 @@ module TypeInference =
                                     let combinedMapResult =
                                         combineTwoUnificationVarMaps uniVarsMap inferredType.constrained
 
-                                    withThisBindingAdded,
-                                    combinedMapResult.combined,
-                                    Set.union uniVarsAddedHere' combinedMapResult.uniVarsAddedHere)
-                                (localNamesMap, uniVarsMap, Set.empty)
+                                    withThisBindingAdded, combinedMapResult)
+                                (localNamesMap, uniVarsMap)
 
+                        instantiateTypeVarsInUniVarsMapAndLocalNamesMap
+                            Set.empty
+                            (newUniVars |> Seq.map snd |> Set.ofSeq)
+                            newLocalNamesMap
+                            newUniVarsMap
 
-                        let withThisNewUniVarAdded =
-                            Seq.map snd newUniVars
-                            |> Set.ofSeq
-                            |> Set.union uniVarsAddedHere
-                            |> Set.union uniVarsAddedHere'
+                )
+                (namesWithTypeAnnotations, Map.empty)
 
-                        newLocalNamesMap, newUniVarsMap, withThisNewUniVarAdded)
-                (namesWithTypeAnnotations, Map.empty, Set.empty)
-
-        { inferredTypes = localNamesMap
-          constrained = uniVarsMap
-          unificationVarsIntroducedHere = uniVarsAddedHere }
+        {| inferredTypes = localNamesMap
+           constrained = uniVarsMap |}
 
 
 
@@ -1740,8 +1780,8 @@ module TypeInference =
         let sanitisedType : SelfAndConstrainedUnificationVars =
             instantiateTypeVarsInPolyTypeContents
                 (Set.ofSeq bodyResult.self.forall)
-                (Set.union bindingsResolutionResult.unificationVarsIntroducedHere combinedUniVarMap.uniVarsAddedHere)
-                combinedUniVarMap.combined
+                Set.empty
+                combinedUniVarMap
                 bodyResult.self.typeExpr
 
         sanitisedType
@@ -1890,13 +1930,12 @@ module TypeInference =
                                     combineTwoUnificationVarMaps state.constrained unificationResult.constrained
 
                                 unificationResult.self,
-                                {| constrained = combineResult.combined
+                                {| constrained = combineResult
 
                                    unificationVarsIntroducedHere =
                                     Set.union
                                         state.unificationVarsIntroducedHere
-                                        unificationResult.unificationVarsIntroducedHere
-                                    |> Set.union combineResult.uniVarsAddedHere |})
+                                        unificationResult.unificationVarsIntroducedHere |})
                             {| constrained = Map.empty
                                unificationVarsIntroducedHere = Set.empty |}
 
@@ -2148,46 +2187,37 @@ module TypeInference =
         =
         let (NEL (first, rest)) = types
 
-        let combinedType, combinedUnificationMap, uniVarsAddedHere =
+        let combinedType, combinedUnificationMap =
             rest
             |> List.fold
-                (fun (combinedType, combinedUniMap, uniVars) polyType ->
+                (fun (combinedType, combinedUniMap) polyType ->
                     let result = unifyTwoTypeContentsResults combinedType (Ok polyType)
 
                     let combineResult = combineTwoUnificationVarMaps combinedUniMap result.constrained
 
-                    result.self, combineResult.combined, Set.union uniVars combineResult.uniVarsAddedHere)
-                (Ok first, Map.empty, Set.empty)
+                    result.self, combineResult)
+                (Ok first, Map.empty)
 
-        match combinedType with
-        | Ok okPtc ->
-            let result =
-                instantiateTypeVarsInPolyTypeContents Set.empty uniVarsAddedHere combinedUnificationMap okPtc
-
-            {| self = Ok result.self
-               constrained = result.constrained |}
-        | Error e ->
-            //{| self = Error e
-            //   constrained = Map.empty |}
-            failwith
-                "@TODO: implement the error case here – probably with the use of a version of the instantiateTypeVarsInPolyTypeContents that works on Results"
+        {| self = combinedType |> Result.map Types.makeEmptyPolyType
+           constrained = combinedUnificationMap |}
 
 
     and unifyManyTypes (types : PolyType nel) : SelfAndConstrainedUnificationVars =
         let (NEL (first, rest)) = types
 
-        let combinedType, combinedUnificationMap, uniVarsAddedHere =
+        let combinedType, combinedUnificationMap =
             rest
             |> List.fold
-                (fun (combinedType, combinedUniMap, uniVars) polyType ->
+                (fun (combinedType, combinedUniMap) polyType ->
                     let result = unifyTwoTypes combinedType polyType
 
                     let combineResult = combineTwoUnificationVarMaps combinedUniMap result.constrained
 
-                    result.self, combineResult.combined, Set.union uniVars combineResult.uniVarsAddedHere)
-                (first, Map.empty, Set.empty)
+                    result.self, combineResult)
+                (first, Map.empty)
 
-        instantiateTypeVarsInPolyType uniVarsAddedHere combinedUnificationMap combinedType
+        //instantiateTypeVarsInPolyType uniVarsAddedHere combinedUnificationMap combinedType
+        Sacuv.make combinedType combinedUnificationMap
 
 
 
@@ -2287,18 +2317,18 @@ module TypeInference =
 
         /// For those keys which are not shared, just simply add them in
         and singleFolder
-            ((uniVars, uniVarsMap) : UnificationVarId set * UnificationVarsMap)
+            (uniVarsMap : UnificationVarsMap)
             (uniVar : UnificationVarId)
             (contents : UnifResOrRedirect)
-            : UnificationVarId set * UnificationVarsMap =
-            uniVars, Map.add uniVar contents uniVarsMap
+            : UnificationVarsMap =
+            Map.add uniVar contents uniVarsMap
 
         and folder
-            ((uniVars, uniVarsMap) : UnificationVarId set * UnificationVarsMap)
+            (uniVarsMap : UnificationVarsMap)
             (uniVar : UnificationVarId)
             (contents1 : UnifResOrRedirect)
             (contents2 : UnifResOrRedirect)
-            : UnificationVarId set * UnificationVarsMap =
+            : UnificationVarsMap =
             match contents1, contents2 with
             | UnifRedirect redirect1, UnifRedirect redirect2 ->
                 // @TODO: I think we need to follow the redirects for both of these and then unify the results at the end... and then make sure all 3 of these redirects are pointing to that unified result
@@ -2309,7 +2339,7 @@ module TypeInference =
 
                 if fst firstRedirectResult = fst secondRedirectResult then
                     // Do they point to the same thing already
-                    uniVars, Map.add uniVar (UnifRedirect (fst firstRedirectResult)) uniVarsMap
+                    Map.add uniVar (UnifRedirect (fst firstRedirectResult)) uniVarsMap
 
                 else
                     let unifiedResult =
@@ -2323,9 +2353,11 @@ module TypeInference =
                     let combineResult =
                         combineTwoUnificationVarMaps uniVarsMap unifiedResult.constrained
 
-                    Set.union combineResult.uniVarsAddedHere unifiedResult.unificationVarsIntroducedHere,
-                    combineResult.combined
-                    |> Map.add uniVar (UnifResult (unifiedResult.self, combinedTypeVars))
+                    let newUniVarsMap =
+                        combineResult
+                        |> Map.add uniVar (UnifResult (unifiedResult.self, combinedTypeVars))
+
+                    instantiateTypeVarsInUniVarsMap Set.empty unifiedResult.unificationVarsIntroducedHere newUniVarsMap
 
             | UnifRedirect redirect, UnifResult (res, typeVars) ->
                 // @TODO: I think we need to follow the redirect and then unify that redirect result with the result here... and then make sure we have two of the redirects (uniVar and redirect) pointing to that unified result
@@ -2334,7 +2366,7 @@ module TypeInference =
 
                 if fst redirectResult = uniVar then
                     // The redirect already points to this result
-                    uniVars, Map.add uniVar (UnifResult (res, typeVars)) uniVarsMap
+                    Map.add uniVar (UnifResult (res, typeVars)) uniVarsMap
 
                 else
                     let unifiedResult = unifyTwoTypeContentsResultsOpts (snd redirectResult |> fst) res
@@ -2345,16 +2377,18 @@ module TypeInference =
                     let combineResult =
                         combineTwoUnificationVarMaps uniVarsMap unifiedResult.constrained
 
-                    Set.union combineResult.uniVarsAddedHere unifiedResult.unificationVarsIntroducedHere,
-                    combineResult.combined
-                    |> Map.add uniVar (UnifResult (unifiedResult.self, combinedTypeVars))
+                    let newUniVarsMap =
+                        combineResult
+                        |> Map.add uniVar (UnifResult (unifiedResult.self, combinedTypeVars))
+
+                    instantiateTypeVarsInUniVarsMap Set.empty unifiedResult.unificationVarsIntroducedHere newUniVarsMap
 
             | UnifResult (res, typeVars), UnifRedirect redirect ->
                 let redirectResult = UnificationVarsMap.findUnificationVarResult redirect map2
 
                 if fst redirectResult = uniVar then
                     // The redirect already points to this result
-                    uniVars, Map.add uniVar (UnifResult (res, typeVars)) uniVarsMap
+                    Map.add uniVar (UnifResult (res, typeVars)) uniVarsMap
 
                 else
                     let unifiedResult = unifyTwoTypeContentsResultsOpts (snd redirectResult |> fst) res
@@ -2365,11 +2399,11 @@ module TypeInference =
                     let combineResult =
                         combineTwoUnificationVarMaps uniVarsMap unifiedResult.constrained
 
+                    let newUniVarsMap =
+                        combineResult
+                        |> Map.add uniVar (UnifResult (unifiedResult.self, combinedTypeVars))
 
-                    Set.union combineResult.uniVarsAddedHere unifiedResult.unificationVarsIntroducedHere,
-                    combineResult.combined
-                    |> Map.add uniVar (UnifResult (unifiedResult.self, combinedTypeVars))
-
+                    instantiateTypeVarsInUniVarsMap Set.empty unifiedResult.unificationVarsIntroducedHere newUniVarsMap
 
 
             | UnifResult (res1, typeVars1), UnifResult (res2, typeVars2) ->
@@ -2380,34 +2414,21 @@ module TypeInference =
                 let combineResult =
                     combineTwoUnificationVarMaps uniVarsMap unifiedResult.constrained
 
-                Set.union combineResult.uniVarsAddedHere unifiedResult.unificationVarsIntroducedHere,
-                combineResult.combined
-                |> Map.add uniVar (UnifResult (unifiedResult.self, combinedTypeVars))
+                let newUniVarsMap =
+                    combineResult
+                    |> Map.add uniVar (UnifResult (unifiedResult.self, combinedTypeVars))
+
+                instantiateTypeVarsInUniVarsMap Set.empty unifiedResult.unificationVarsIntroducedHere newUniVarsMap
 
 
-        let uniVarsAddedHere, combinedMap =
-            Map.foldAllEntries singleFolder singleFolder folder map1 map2 (Set.empty, Map.empty)
-
-        {| combined = combinedMap
-           uniVarsAddedHere = uniVarsAddedHere |}
-
+        Map.foldAllEntries singleFolder singleFolder folder map1 map2 Map.empty
 
 
 
 
 
-    and combineUnificationVarMapsSeq
-        (maps : UnificationVarsMap seq)
-        : {| combined : UnificationVarsMap
-             uniVarsAddedHere : UnificationVarId set |}
-        =
-        let uniVarsAddedHere, combinedMap =
-            maps
-            |> Seq.fold
-                (fun (newUniVars, map) thisMap ->
-                    let combineResult = combineTwoUnificationVarMaps thisMap map
-                    Set.union combineResult.uniVarsAddedHere newUniVars, combineResult.combined)
-                (Set.empty, Map.empty)
 
-        {| combined = combinedMap
-           uniVarsAddedHere = uniVarsAddedHere |}
+
+    and combineUnificationVarMapsSeq (maps : UnificationVarsMap seq) : UnificationVarsMap =
+        maps
+        |> Seq.fold (fun map thisMap -> combineTwoUnificationVarMaps thisMap map) Map.empty
