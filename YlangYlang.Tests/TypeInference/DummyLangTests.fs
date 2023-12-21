@@ -6,11 +6,22 @@ open Expecto
 
 open DummyLang
 open DummyLang.AbstractSyntaxTree
+open QualifiedSyntaxTree.Names
+open FsToolkit.ErrorHandling
+
+module Sacuv = DummyLang.SelfAndConstrainedUnificationVars
 
 
 let private makePolyType typeContents =
     { forall = List.empty
       typeExpr = typeContents }
+
+
+
+let private makePolyTypeWith typeVars typeContents =
+    { forall = List.ofSeq typeVars
+      typeExpr = typeContents }
+
 
 
 [<Tests>]
@@ -20,9 +31,9 @@ let testTypeInference () =
         [ testTheory "Infer the type of some primitive literals" [ str "hello", Types.strType; int 42, Types.intType ]
           <| fun (expr, type_) ->
               let result = TypeInference.inferTypeFromExpr Map.empty expr
-              let expectedType = result.self.typeExpr
+              let expectedType = result.self |> Result.map _.typeExpr
 
-              Expect.equal expectedType type_ (sprintf "Expected %A but got %A" type_ expectedType)
+              Expect.equal expectedType (Ok type_) (sprintf "Expected %A but got %A" type_ expectedType)
 
           testTheory
               "Infer the type of more complex expressions with substitutions"
@@ -31,33 +42,154 @@ let testTypeInference () =
               let result = TypeInference.inferTypeFromExpr Map.empty expr
               let expectedType = result.self
 
-              Expect.equal expectedType type_ (sprintf "Expected %A but got %A" type_ expectedType)
+              Expect.equal expectedType (Ok type_) (sprintf "Expected %A but got %A" type_ expectedType)
+
+
+
+
+
+
+
+          test "Unify two polytypes" {
+              let makeTypeVar () = TypeVariableId (System.Guid.NewGuid ())
+
+              let typeVar1 = makeTypeVar ()
+              let typeVar2 = makeTypeVar ()
+
+              let tuple1 =
+                  Types.tupleTypeOf (makePolyTypeWith [ typeVar1 ] (TypeVariable typeVar1)) (makePolyType Types.strType)
+
+              let tuple2 =
+                  Types.tupleTypeOf (makePolyType Types.intType) (makePolyTypeWith [ typeVar2 ] (TypeVariable typeVar2))
+
+              let result = TypeInference.unifyTwoTypes tuple1 tuple2
+
+              let expected =
+                  Types.tupleTypeOf (makePolyType Types.intType) (makePolyType Types.strType)
+                  |> Ok
+
+              Expect.equal
+                  result.self
+                  expected
+                  "Two tuple types with concrete types in one slot and type vars in the other unify into a tuple with both slots concretised"
+          }
+
 
 
           testTheory
-              "Let polymorphism!"
-              [ letBindings
+              "Let polymorphism & other adventures"
+              [ """
+                let
+                  makeTuple a = (a, 7)
+                in
+                makeTuple "bla" : (String, Int)
+                """,
+                letBindings
+                    (NEL.make (letBinding "makeTuple" None (lambda "a" (tuple (name "a") (int 7)))))
+                    (apply (name "makeTuple") (str "bla")),
+                Types.tupleTypeOf (makePolyType Types.strType) (makePolyType Types.intType)
+                """
+                let
+                  makeList a = [a]
+                in
+                makeList "bla" : List String
+                """,
+                letBindings
+                    (NEL.make (letBinding "makeList" None (lambda "a" (list [ name "a" ]))))
+                    (apply (name "makeList") (str "bla")),
+                Types.listTypeOf (makePolyType Types.strType)
+
+                """
+                let
+                  makeIntList b = [0, b]
+                in
+                makeIntList : Int -> List Int
+                """,
+                letBindings
+                    (NEL.make (letBinding "makeIntList" None (lambda "b" (list [ int 0; name "b" ]))))
+                    (name "makeIntList"),
+                Types.funcTypeOf (makePolyType Types.intType) (Types.listTypeOf (makePolyType Types.intType))
+
+                """
+                let
+                  identity x = x
+                in
+                identity 7 : Int
+                """,
+                letBindings
                     (NEL.make (letBinding "identity" None (lambda "x" (name "x"))))
                     (apply (name "identity") (int 7)),
                 makePolyType Types.intType
 
+                """
+                let
+                  identity x = x
+                in
+                identity "blabla" : String
+                """,
                 letBindings
                     (NEL.make (letBinding "identity" None (lambda "x" (name "x"))))
                     (apply (name "identity") (str "blabla")),
                 makePolyType Types.strType
 
+                """
+                let
+                  identity x = x
+                in
+                (identity 7, identity "blabla") : (Int, String)
+                """,
                 letBindings
                     (NEL.make (letBinding "identity" None (lambda "x" (name "x"))))
                     (tuple (apply (name "identity") (int 7)) (apply (name "identity") (str "blabla"))),
                 Types.tupleTypeOf (makePolyType Types.intType) (makePolyType Types.strType) ]
-          <| fun (expr, type_) ->
+          <| fun (msg, expr, expectedType) ->
               let result = TypeInference.inferTypeFromExpr Map.empty expr
-              let expectedType = result.self
-
-              Expect.equal expectedType type_ (sprintf "Expected %A but got %A" type_ expectedType)
 
 
+              Expect.equal result.self (Ok expectedType) msg
 
 
+          test "Infer the type of a function application in steps" {
+
+              let result =
+                  result {
+                      let identityFunc = lambda "x" (name "x")
+
+                      let! identityFuncType =
+                          TypeInference.inferTypeFromExpr Map.empty identityFunc |> Sacuv.sequenceResult
+
+                      let appliedToInt = apply identityFunc (int 7)
+
+                      let appliedToIntType =
+                          TypeInference.inferTypeFromExpr
+                              (Map.singleton (LocalLower (LowerIdent "identity")) identityFuncType.self)
+                              appliedToInt
+
+                      let appliedToStr = apply identityFunc (str "blabla")
+
+                      let appliedToStrType =
+                          TypeInference.inferTypeFromExpr
+                              (Map.singleton (LocalLower (LowerIdent "identity")) identityFuncType.self)
+                              appliedToStr
+
+                      let appliedToTuple = apply identityFunc (tuple (int 7) (str "blabla"))
+
+                      let! appliedToTupleType =
+                          TypeInference.inferTypeFromExpr
+                              (Map.singleton (LocalLower (LowerIdent "identity")) identityFuncType.self)
+                              appliedToTuple
+                          |> Sacuv.sequenceResult
+
+
+                      return appliedToTupleType.self
+                  }
+
+              Expect.equal
+                  result
+                  (Types.tupleTypeOf (makePolyType Types.intType) (makePolyType Types.strType)
+                   |> Ok)
+                  "Expected a tuple type"
+
+          }
 
           ]
