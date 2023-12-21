@@ -13,29 +13,57 @@ module C = ConcreteSyntaxTree
 module Names =
 
     /// E.g. `module Page.Investigate.Aggregations`
-    type ModulePath = | ModulePath of string nel
+    type ModulePath =
+        | ModulePath of string nel
+
+        override this.ToString () =
+            let (ModulePath segments) = this
+            String.join "." (NEL.toList segments)
 
     /// A local alias for a module. E.g. `import Thing.Thang as Th`. Can't consist of multiple segments.
-    type ModuleAlias = | ModuleAlias of string
+    type ModuleAlias =
+        | ModuleAlias of string
+
+        override this.ToString () =
+            let (ModuleAlias str) = this
+            str
 
 
     /// For names of types, type aliases, and constructors; but NOT for module paths. Use `ModulePath` for those.
-    type UpperIdent = | UpperIdent of string
+    type UpperIdent =
+        | UpperIdent of string
+
+        override this.ToString () =
+            let (UpperIdent str) = this
+            str
 
     /// For names of values, parameters or destructured fields
-    type LowerIdent = | LowerIdent of string
+    type LowerIdent =
+        | LowerIdent of string
+
+        override this.ToString () =
+            let (LowerIdent str) = this
+            str
 
 
     type RecordFieldName = | RecordFieldName of string
 
 
     /// Fully qualified type or type alias name
-    type FullyQualifiedUpperIdent = | FullyQualifiedUpperIdent of module_ : ModulePath * name : UpperIdent
+    type FullyQualifiedUpperIdent =
+        | FullyQualifiedUpperIdent of module_ : ModulePath * name : UpperIdent
+
+        override this.ToString () =
+            let (FullyQualifiedUpperIdent (module_, name)) = this
+            string module_ + "." + string name
 
     /// Fully qualified named value
     type FullyQualifiedTopLevelLowerIdent =
         | FullyQualifiedTopLevelLowerIdent of module_ : ModulePath * name : LowerIdent
 
+        override this.ToString () =
+            let (FullyQualifiedTopLevelLowerIdent (module_, name)) = this
+            string module_ + "." + string name
 
 
     /// For imports under an aliased module name
@@ -49,10 +77,20 @@ module Names =
         | FullyQualifiedUpper of FullyQualifiedUpperIdent
         | LocalUpper of UpperIdent
 
+        override this.ToString () =
+            match this with
+            | FullyQualifiedUpper upper -> string upper
+            | LocalUpper upper -> string upper
+
+
     type LowerNameValue =
         | FullyQualifiedLower of FullyQualifiedTopLevelLowerIdent
         | LocalLower of LowerIdent
 
+        override this.ToString () =
+            match this with
+            | FullyQualifiedLower lower -> string lower
+            | LocalLower lower -> string lower
 
 
 
