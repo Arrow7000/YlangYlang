@@ -6,6 +6,9 @@ open Expecto
 
 open DummyLang
 open DummyLang.AbstractSyntaxTree
+
+module AST = DummyLang.AbstractSyntaxTree
+
 open QualifiedSyntaxTree.Names
 open FsToolkit.ErrorHandling
 
@@ -144,10 +147,132 @@ let testTypeInference () =
                 Types.tupleTypeOf (makePolyType Types.intType) (makePolyType Types.strType) ]
           <| fun (msg, expr, expectedType) ->
               let result = TypeInference.inferTypeFromExpr Map.empty expr
-
-
               Expect.equal result.self (Ok expectedType) msg
 
+          test "Test recursive definition" {
+              (*
+
+              let
+                factorial n =
+                  if n <= 0 then 1 else n * factorial (n - 1)
+              in factorial 5 : Int
+
+              *)
+
+              let factorial : Expr =
+                  letBindings
+                      (NEL.make (
+                          letBinding
+                              "factorial"
+                              None
+                              (lambda
+                                  "n"
+                                  (ifThenElse
+                                      (infixOp (LowerIdent "<=") (name "n") (int 0))
+                                      (int 1)
+                                      (infixOp
+                                          (LowerIdent "*")
+                                          (name "n")
+                                          (apply (name "factorial") (infixOp (LowerIdent "-") (name "n") (int 1))))))
+                      ))
+                      (apply (name "factorial") (int 5))
+
+              let mult =
+                  LowerIdent "*",
+                  Types.infixOpTypeOf
+                      (makePolyType Types.intType)
+                      (makePolyType Types.intType)
+                      (makePolyType Types.intType)
+
+              let minus =
+                  LowerIdent "-",
+                  Types.infixOpTypeOf
+                      (makePolyType Types.intType)
+                      (makePolyType Types.intType)
+                      (makePolyType Types.intType)
+
+              let lte =
+                  LowerIdent "<=",
+                  Types.infixOpTypeOf
+                      (makePolyType Types.intType)
+                      (makePolyType Types.intType)
+                      (makePolyType Types.boolType)
+
+              let namesMap : TypedNamesMap =
+                  [ mult; minus; lte ] |> List.map (Tuple.mapFst LocalLower) |> Map.ofList
+
+              let result = TypeInference.inferTypeFromExpr namesMap factorial
+
+              Expect.equal
+                  result.self
+                  (Ok <| Types.makeEmptyPolyType Types.intType)
+                  "Factorial expression should have type Int"
+          }
+
+          test "Test mutually recursive functions" {
+              (*
+
+              let
+                isEven n =
+                  if n == 0 then true else isOdd (n - 1)
+
+                isOdd n =
+                  if n == 0 then false else isEven (n - 1)
+
+              in isEven 5 : Int
+
+              *)
+
+              let factorial : Expr =
+                  letBindings
+                      (NEL.new_
+                          (letBinding
+                              "isEven"
+                              None
+                              (lambda
+                                  "n"
+                                  (ifThenElse
+                                      (infixOp (LowerIdent "==") (name "n") (int 0))
+                                      (name "true")
+                                      (apply (name "isOdd") (infixOp (LowerIdent "-") (name "n") (int 1))))))
+                          [ letBinding
+                                "isOdd"
+                                None
+                                (lambda
+                                    "n"
+                                    (ifThenElse
+                                        (infixOp (LowerIdent "==") (name "n") (int 0))
+                                        (name "false")
+                                        (apply (name "isEven") (infixOp (LowerIdent "-") (name "n") (int 1))))) ])
+                      (apply (name "isEven") (int 5))
+
+              let minus =
+                  LowerIdent "-",
+                  Types.infixOpTypeOf
+                      (makePolyType Types.intType)
+                      (makePolyType Types.intType)
+                      (makePolyType Types.intType)
+
+              let eq =
+                  LowerIdent "==",
+                  Types.infixOpTypeOf
+                      (makePolyType Types.intType)
+                      (makePolyType Types.intType)
+                      (makePolyType Types.boolType)
+
+              let true_ = LowerIdent "true", makePolyType Types.boolType
+              let false_ = LowerIdent "false", makePolyType Types.boolType
+
+              let namesMap : TypedNamesMap =
+                  [ minus; eq; true_; false_ ] |> List.map (Tuple.mapFst LocalLower) |> Map.ofList
+
+              let result = TypeInference.inferTypeFromExpr namesMap factorial
+
+              Expect.equal
+                  result.self
+                  (Ok <| Types.makeEmptyPolyType Types.boolType)
+                  "Mutually recursive functions should have type Bool"
+          }
 
           test "Infer the type of a function application in steps" {
 
@@ -159,6 +284,7 @@ let testTypeInference () =
                           TypeInference.inferTypeFromExpr Map.empty identityFunc |> Sacuv.sequenceResult
 
                       let appliedToInt = apply identityFunc (int 7)
+
 
                       let appliedToIntType =
                           TypeInference.inferTypeFromExpr

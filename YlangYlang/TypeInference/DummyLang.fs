@@ -95,7 +95,7 @@ type UnificationResult = Result<PolyTypeContents, UnificationError>
 /// Instantiating a type variable with a fresh unification variable is done by following that unification variable's redirect chain until you get to the root entry, and then adding that type variable to the set of type variables in the root.
 type UnifResOrRedirect =
     /// Unification result
-    | UnifResult of Result<PolyTypeContents, UnificationError> option * TypeVariableId set
+    | UnifResult of Result<PolyTypeContents, UnificationError> option
     /// Redirect to another unification variable to represent that they are unified with each other
     | UnifRedirect of UnificationVarId
 
@@ -113,17 +113,17 @@ module UnificationVarsMap =
         | Some v -> v
         | None ->
             // If a uniVar doesn't have any constraints yet it may not be in the uniVarsmap, so we just return as if it was in the map with no constraints
-            UnifResult (None, Set.empty)
+            UnifResult None
 
     let rec findUnificationVarResult
         (uniVar : UnificationVarId)
         (map : UnificationVarsMap)
-        : UnificationVarId * (UnificationResult option * TypeVariableId set) =
+        : UnificationVarId * UnificationResult option =
         match findByUnificationVar uniVar map with
         | UnifRedirect redirectUniVar -> findUnificationVarResult redirectUniVar map
-        | UnifResult (res, typeVars) ->
+        | UnifResult res ->
             // Return the result as well as the final unification variable at that location
-            uniVar, (res, typeVars)
+            uniVar, res
 
 
     type private UnificationVarResultWithSteps =
@@ -132,7 +132,6 @@ module UnificationVarsMap =
             hops : UnificationVarId list
             finalUnificationVar : UnificationVarId
             result : UnificationResult option
-            typeVars : TypeVariableId set
         }
 
 
@@ -145,11 +144,10 @@ module UnificationVarsMap =
             { result with
                 hops = redirectUniVar :: result.hops }
 
-        | UnifResult (res, typeVars) ->
+        | UnifResult res ->
             { hops = List.empty
               finalUnificationVar = uniVar
-              result = res
-              typeVars = typeVars }
+              result = res }
 
 
 
@@ -158,8 +156,7 @@ module UnificationVarsMap =
     type CoupledConstraints =
         { finalUniVar : UnificationVarId
           otherUniVars : UnificationVarId set
-          result : UnificationResult option
-          typeVars : TypeVariableId set }
+          result : UnificationResult option }
 
         member this.allUniVars : UnificationVarId set =
             Set.add this.finalUniVar this.otherUniVars
@@ -168,7 +165,7 @@ module UnificationVarsMap =
 
     /// Gets all the unification variables that have been unified with the given unification variable, via traversing all the redirects
     let getAllJoinedUnificationVars (uniVar : UnificationVarId) (map : UnificationVarsMap) : CoupledConstraints =
-        let finalUnivar, (res, typeVars) = findUnificationVarResult uniVar map
+        let finalUnivar, res = findUnificationVarResult uniVar map
 
         let linkedUnificationVars : UnificationVarId set =
             map
@@ -187,33 +184,32 @@ module UnificationVarsMap =
 
         { finalUniVar = finalUnivar
           otherUniVars = linkedUnificationVars
-          result = res
-          typeVars = typeVars }
+          result = res }
 
 
 
 
-    let getTypeVarConstraints (typeVar : TypeVariableId) (map : UnificationVarsMap) : CoupledConstraints option =
-        let firstContainingTypeVar =
-            map
-            |> Map.tryPick (fun uniVar redirectOrResult ->
-                match redirectOrResult with
-                | UnifRedirect _ -> None
-                | UnifResult (res, typeVars) ->
-                    if Set.contains typeVar typeVars then
-                        Some (uniVar, (res, typeVars))
+//let getTypeVarConstraints (typeVar : TypeVariableId) (map : UnificationVarsMap) : CoupledConstraints option =
+//    let firstContainingTypeVar =
+//        map
+//        |> Map.tryPick (fun uniVar redirectOrResult ->
+//            match redirectOrResult with
+//            | UnifRedirect _ -> None
+//            | UnifResult (res) ->
+//                if Set.contains typeVar typeVars then
+//                    Some (uniVar, (res))
 
-                    else
-                        None)
+//                else
+//                    None)
 
-        firstContainingTypeVar
-        |> Option.map (fun (uniVar, (res, typeVars)) ->
-            let result = getAllJoinedUnificationVars uniVar map
+//    firstContainingTypeVar
+//    |> Option.map (fun (uniVar, (res, typeVars)) ->
+//        let result = getAllJoinedUnificationVars uniVar map
 
-            { finalUniVar = uniVar
-              otherUniVars = result.otherUniVars
-              typeVars = typeVars
-              result = res })
+//        { finalUniVar = uniVar
+//          otherUniVars = result.otherUniVars
+//          typeVars = typeVars
+//          result = res })
 
 
 
@@ -501,7 +497,7 @@ module TypeInference =
     type private TypeReplacement =
         {
             unificationVarsToReplace : UnificationVarId set
-            typeVarsToReplace : TypeVariableId set
+            //typeVarsToReplace : TypeVariableId set
 
             toReplaceWith : Result<PolyTypeContents, UnificationError>
             /// If a new type var is created here we'll declare it here
@@ -528,11 +524,11 @@ module TypeInference =
                 PTC.UnificationVar uniVar
 
         | TypeVariable typeVar ->
-            if Set.contains typeVar tr.typeVarsToReplace then
-                replacement ()
+            //if Set.contains typeVar tr.typeVarsToReplace then
+            //    replacement ()
 
-            else
-                TypeVariable typeVar
+            //else
+            TypeVariable typeVar
 
         | PrimitiveType prim -> PrimitiveType prim
         | ParametricType (name, ptcs) -> ParametricType (name, List.map (applyTypeReplacement tr) ptcs)
@@ -559,13 +555,13 @@ module TypeInference =
 
         { typeExpr = result
           forall =
-            let newForAlls =
-                polyType.forall
-                |> List.filter (fun typeVar -> Set.contains typeVar normInstr.typeVarsToReplace |> not)
+            //let newForAlls =
+            //    polyType.forall
+            //|> List.filter (fun typeVar -> Set.contains typeVar normInstr.typeVarsToReplace |> not)
 
             match normInstr.newTypeVarOpt with
-            | Some newTypeVar -> newTypeVar :: newForAlls
-            | None -> newForAlls }
+            | Some newTypeVar -> newTypeVar :: polyType.forall
+            | None -> polyType.forall }
 
 
     let private applyTypeReplacementToPolyTypeResult
@@ -596,14 +592,9 @@ module TypeInference =
                 // @TODO: we should probably remove this from the filter if it's in the set of uniVars to remove – but only do this once I'm sure that no redirect chains will be broken!
                 UnifRedirect uniVar
 
-            | UnifResult (typeResultOpt, typeVars) ->
-                let newTypeVars : TypeVariableId set =
-                    Set.difference typeVars tr.typeVarsToReplace
-                    |> match tr.newTypeVarOpt with
-                       | Some newTypeVar -> Set.add newTypeVar
-                       | None -> id
+            | UnifResult (typeResultOpt) ->
 
-                UnifResult (applyTypeReplacementToPtcResultOpt tr typeResultOpt, newTypeVars))
+                UnifResult (applyTypeReplacementToPtcResultOpt tr typeResultOpt))
 
 
 
@@ -618,161 +609,165 @@ module TypeInference =
 
     /// Get the coupled constraints for the provided typeVars and uniVars from the given uniVarsMap
     let getCoupledConstraintsSet
-        (typeVarsToReplace : TypeVariableId set)
+        //(typeVarsToReplace : TypeVariableId set)
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (unificationVarsMap : UnificationVarsMap)
         : UnificationVarsMap.CoupledConstraints set =
         let matchesForUniVars : UnificationVarsMap.CoupledConstraints set =
             unificationVarsWeCanEliminate
             |> Set.map (fun uniVar -> UnificationVarsMap.getAllJoinedUnificationVars uniVar unificationVarsMap)
-
-        let matchesForTypeVars : UnificationVarsMap.CoupledConstraints set =
-            typeVarsToReplace
-            |> Set.choose (fun typeVar -> UnificationVarsMap.getTypeVarConstraints typeVar unificationVarsMap)
+        //let matchesForTypeVars : UnificationVarsMap.CoupledConstraints set =
+        //    typeVarsToReplace
+        //    |> Set.choose (fun typeVar -> UnificationVarsMap.getTypeVarConstraints typeVar unificationVarsMap)
 
         // This should now include all the entries that any of the uniVars and typeVars here touch
-        Set.union matchesForUniVars matchesForTypeVars
+        //Set.union matchesForUniVars matchesForTypeVars
 
+        matchesForUniVars
 
 
 
     let private coupledConstraintToTypeReplacement
-        (typeVarsWeCanEliminate : TypeVariableId set)
+        //(typeVarsWeCanEliminate : TypeVariableId set)
         (uniVarsWeCanEliminate : UnificationVarId set)
         (constrs : UnificationVarsMap.CoupledConstraints)
         (uniVarsMap : UnificationVarsMap)
         : {| replacementInstruction : TypeReplacement
              replacedUniVarsMap : UnificationVarsMap |}
         =
-        let typeVarsInUniVarsMap =
-            uniVarsMap
-            |> Map.toList
-            |> List.choose (fun (_, redirectOrResult) ->
-                match redirectOrResult with
-                | UnifRedirect _ -> None
-                | UnifResult (_, typeVars) -> Some typeVars)
-            |> Set.unionMany
+        //let typeVarsInUniVarsMap =
+        //    uniVarsMap
+        //    |> Map.toList
+        //    |> List.choose (fun (_, redirectOrResult) ->
+        //        match redirectOrResult with
+        //        | UnifRedirect _ -> None
+        //        | UnifResult (_, typeVars) -> Some typeVars)
+        //    |> Set.unionMany
 
-        if Set.isNotEmpty typeVarsInUniVarsMap then
-            failwith "well fuckadeecuck something's fucked"
-        else
-            let overlap : OverlapCheckResult =
-                /// We need to eliminate the eliminatable uniVars and typeVars from the coupled constraints, and then we determine what the type replacement instruction should be based on what's left
-                let remainingUniVars = Set.difference constrs.allUniVars uniVarsWeCanEliminate
-                let remainingTypeVars = Set.difference constrs.typeVars typeVarsWeCanEliminate
+        //if Set.isNotEmpty typeVarsInUniVarsMap then
+        //    failwith "well fuckadeecuck something's fucked"
+        //else
+        let overlap =
+            /// We need to eliminate the eliminatable uniVars and typeVars from the coupled constraints, and then we determine what the type replacement instruction should be based on what's left
+            //let remainingUniVars =
+            Set.difference constrs.allUniVars uniVarsWeCanEliminate
+        //let remainingTypeVars = Set.difference constrs.typeVars typeVarsWeCanEliminate
 
-                match Set.toList remainingUniVars, Set.toList remainingTypeVars with
-                | [], [] -> FullOverlap
+        //match Set.toList remainingUniVars, Set.toList remainingTypeVars with
+        //| [], [] -> FullOverlap
 
-                | [], typeVar :: [] -> SingleTypeVarLeft typeVar
-                | [], headTypeVar :: neckTypeVar :: restTypeVars ->
-                    MultipleTypeVarsLeft (TOM.new_ headTypeVar neckTypeVar restTypeVars)
+        //| [], typeVar :: [] -> SingleTypeVarLeft typeVar
+        //| [], headTypeVar :: neckTypeVar :: restTypeVars ->
+        //    MultipleTypeVarsLeft (TOM.new_ headTypeVar neckTypeVar restTypeVars)
 
-                | uniVar :: [], typeVars -> PartialUniVarOverlap ((NEL.make uniVar), typeVars)
-                | headUniVar :: restUniVars, typeVars ->
-                    PartialUniVarOverlap ((NEL.new_ headUniVar restUniVars), typeVars)
-
-
-
-            let makeNormalisationInstruction'
-                (rplcmnt : UnificationResult)
-                (newTypeVarOpt : TypeVariableId option)
-                : TypeReplacement =
-                { unificationVarsToReplace = constrs.allUniVars
-                  typeVarsToReplace = constrs.typeVars
-
-                  toReplaceWith = rplcmnt
-                  newTypeVarOpt = newTypeVarOpt }
+        //| uniVar :: [], typeVars -> PartialUniVarOverlap ((NEL.make uniVar), typeVars)
+        //| headUniVar :: restUniVars, typeVars ->
+        //    PartialUniVarOverlap ((NEL.new_ headUniVar restUniVars), typeVars)
 
 
-            let typeReplInstr, uniVarsMapWithKeysRemoved =
-                match overlap with
-                | OverlapCheckResult.SingleTypeVarLeft typeVar ->
-                    // @TODO: I'm not actually sure about the logic here... but I think it's wrong. I don't think we should be doing any replacements until we have a full overlap removal, because otherwise I think we're prematurely replacing typeVars with concrete types, even though it's possible that this typeVar is going to get unified with a uniVar with lots of constraints, and so it's only after unifying these constraints (constrs.result) with those other constraints that we get the final replacement concrete type. Otherwise... I think we'd just be replacing this with a concrete type, and you will have destroyed the full unification of the substitution to this typeVar.
-                    match constrs.result with
-                    | Some unificationResult ->
-                        makeNormalisationInstruction' unificationResult None,
-                        uniVarsMap |> Map.removeKeys constrs.allUniVars
 
-                    | None ->
-                        makeNormalisationInstruction' (Ok (PTC.TypeVariable typeVar)) None,
-                        uniVarsMap |> Map.removeKeys constrs.allUniVars
+        let makeNormalisationInstruction'
+            (rplcmnt : UnificationResult)
+            (newTypeVarOpt : TypeVariableId option)
+            : TypeReplacement =
+            { unificationVarsToReplace = constrs.allUniVars
+              //typeVarsToReplace = constrs.typeVars
+
+              toReplaceWith = rplcmnt
+              newTypeVarOpt = newTypeVarOpt }
 
 
-                | OverlapCheckResult.MultipleTypeVarsLeft typeVars ->
-                    // @TODO: question: at what point do we remove this uniVar and replace its instances with a concrete type, if we have no way of knowing at what point it is safe to replace this uniVar?
-                    // @TODO: actually... I wonder if actually instead of adding a uniVar in the map to hold all these typeVars together, if we actually need to just replace all the instances of these typeVars with one single typeVar, representing the fact that they are now all unified? Hm I was thinking that maybe not, because what if there are other instances of some of these typeVars outside of this map that won't be swapped out this way? But... maybe that's not actualy a problem, because if there are other instances of these typeVars outside of this map, then they must be unified with something else, and so they will be swapped out with that something else, and so they will be unified with the typeVar that we're replacing these typeVars with here, and so they will be swapped out with that typeVar, and so we don't need to worry about them. I think that's right? I think that's right.
-                    let newUniVar = makeNewUniVar ()
+        let typeReplInstr, uniVarsMapWithKeysRemoved =
+            match Set.toList overlap with
+            //| OverlapCheckResult.SingleTypeVarLeft typeVar ->
+            //    // @TODO: I'm not actually sure about the logic here... but I think it's wrong. I don't think we should be doing any replacements until we have a full overlap removal, because otherwise I think we're prematurely replacing typeVars with concrete types, even though it's possible that this typeVar is going to get unified with a uniVar with lots of constraints, and so it's only after unifying these constraints (constrs.result) with those other constraints that we get the final replacement concrete type. Otherwise... I think we'd just be replacing this with a concrete type, and you will have destroyed the full unification of the substitution to this typeVar.
+            //    match constrs.result with
+            //    | Some unificationResult ->
+            //        makeNormalisationInstruction' unificationResult None,
+            //        uniVarsMap |> Map.removeKeys constrs.allUniVars
 
-                    makeNormalisationInstruction' (Ok (PTC.UnificationVar newUniVar)) None,
+            //    | None ->
+            //        makeNormalisationInstruction' (Ok (PTC.TypeVariable typeVar)) None,
+            //        uniVarsMap |> Map.removeKeys constrs.allUniVars
+
+
+            //| OverlapCheckResult.MultipleTypeVarsLeft typeVars ->
+            //    // @TODO: question: at what point do we remove this uniVar and replace its instances with a concrete type, if we have no way of knowing at what point it is safe to replace this uniVar?
+            //    // @TODO: actually... I wonder if actually instead of adding a uniVar in the map to hold all these typeVars together, if we actually need to just replace all the instances of these typeVars with one single typeVar, representing the fact that they are now all unified? Hm I was thinking that maybe not, because what if there are other instances of some of these typeVars outside of this map that won't be swapped out this way? But... maybe that's not actualy a problem, because if there are other instances of these typeVars outside of this map, then they must be unified with something else, and so they will be swapped out with that something else, and so they will be unified with the typeVar that we're replacing these typeVars with here, and so they will be swapped out with that typeVar, and so we don't need to worry about them. I think that's right? I think that's right.
+            //    let newUniVar = makeNewUniVar ()
+
+            //    makeNormalisationInstruction' (Ok (PTC.UnificationVar newUniVar)) None,
+            //    uniVarsMap
+            //    |> Map.removeKeys constrs.allUniVars
+            //    |> Map.add newUniVar (UnifResult (constrs.result, Set.ofSeq typeVars))
+
+
+            //| OverlapCheckResult.PartialUniVarOverlap (uniVarsLeft, typeVars) ->
+            | head :: rest ->
+                let uniVarsLeft = NEL.new_ head rest
+
+                if NEL.contains<_> constrs.finalUniVar uniVarsLeft then
+                    let uniVarToPointTo = constrs.finalUniVar
+
+                    makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
                     uniVarsMap
                     |> Map.removeKeys constrs.allUniVars
-                    |> Map.add newUniVar (UnifResult (constrs.result, Set.ofSeq typeVars))
+                    |> Map.add constrs.finalUniVar (UnifResult (constrs.result))
+
+                else
+                    /// The uniVar containing the result didn't make the cut so we have to promote one of the other ones to be the one containing the result
+                    let (NEL (head, rest)) = uniVarsLeft
+                    let uniVarToPointTo = head
+
+                    makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
+                    uniVarsMap
+                    |> Map.removeKeys constrs.allUniVars
+                    |> Map.addBulk (rest |> Seq.map (fun uniVar -> uniVar, UnifRedirect uniVarToPointTo))
+                    |> Map.add uniVarToPointTo (UnifResult (constrs.result))
 
 
-                | OverlapCheckResult.PartialUniVarOverlap (uniVarsLeft, typeVars) ->
-                    if NEL.contains<_> constrs.finalUniVar uniVarsLeft then
-                        let uniVarToPointTo = constrs.finalUniVar
+            | [] ->
+                // So this is the juicy case (I think)!!!
+                // This is the case where we actually put the logic of whether we replace the things referencing these coupled constraints with a concrete type (or type clash error) or if we generalise it with a new type variable if it's `None`!
+                // In other words, this is where we do either substitution or generalisation!!!
 
-                        makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
-                        uniVarsMap
-                        |> Map.removeKeys constrs.allUniVars
-                        |> Map.add constrs.finalUniVar (UnifResult (constrs.result, Set.ofSeq typeVars))
-
-                    else
-                        /// The uniVar containing the result didn't make the cut so we have to promote one of the other ones to be the one containing the result
-                        let (NEL (head, rest)) = uniVarsLeft
-                        let uniVarToPointTo = head
-
-                        makeNormalisationInstruction' (Ok (PTC.UnificationVar uniVarToPointTo)) None,
-                        uniVarsMap
-                        |> Map.removeKeys constrs.allUniVars
-                        |> Map.addBulk (rest |> Seq.map (fun uniVar -> uniVar, UnifRedirect uniVarToPointTo))
-                        |> Map.add uniVarToPointTo (UnifResult (constrs.result, Set.ofSeq typeVars))
+                // @TODO: important! I think we need to arrange the normalisation instructions in a DAG, and then do a topological sort on them so that we can apply each norminstr in order, so that we don't end up doing a replacement containing old uniVars/typeVars after those have already been removed!
 
 
-                | OverlapCheckResult.FullOverlap ->
-                    // So this is the juicy case (I think)!!!
-                    // This is the case where we actually put the logic of whether we replace the things referencing these coupled constraints with a concrete type (or type clash error) or if we generalise it with a new type variable if it's `None`!
-                    // In other words, this is where we do either substitution or generalisation!!!
+                match constrs.result with
+                | None ->
+                    // So we can generalise this bitch
 
-                    // @TODO: important! I think we need to arrange the normalisation instructions in a DAG, and then do a topological sort on them so that we can apply each norminstr in order, so that we don't end up doing a replacement containing old uniVars/typeVars after those have already been removed!
+                    let newTypeVar = makeNewTypeVar ()
 
+                    makeNormalisationInstruction' (Ok (PTC.TypeVariable newTypeVar)) (Some newTypeVar),
+                    uniVarsMap |> Map.removeKeys constrs.allUniVars
 
-                    match constrs.result with
-                    | None ->
-                        // So we can generalise this bitch
+                | Some result ->
+                    match result with
+                    | Ok constraint_ ->
+                        // so we need to replace the uniVar by this specific constraint
+                        makeNormalisationInstruction' (Ok constraint_) None,
 
-                        let newTypeVar = makeNewTypeVar ()
-
-                        makeNormalisationInstruction' (Ok (PTC.TypeVariable newTypeVar)) (Some newTypeVar),
                         uniVarsMap |> Map.removeKeys constrs.allUniVars
 
-                    | Some result ->
-                        match result with
-                        | Ok constraint_ ->
-                            // so we need to replace the uniVar by this specific constraint
-                            makeNormalisationInstruction' (Ok constraint_) None,
+                    | Error e ->
+                        makeNormalisationInstruction' (Error e) None,
 
-                            uniVarsMap |> Map.removeKeys constrs.allUniVars
+                        uniVarsMap |> Map.removeKeys constrs.allUniVars
 
-                        | Error e ->
-                            makeNormalisationInstruction' (Error e) None,
-
-                            uniVarsMap |> Map.removeKeys constrs.allUniVars
-
-            {| replacementInstruction = typeReplInstr
-               replacedUniVarsMap = applyTypeReplacementToUniVarsMap typeReplInstr uniVarsMapWithKeysRemoved |}
+        {| replacementInstruction = typeReplInstr
+           replacedUniVarsMap = applyTypeReplacementToUniVarsMap typeReplInstr uniVarsMapWithKeysRemoved |}
 
 
 
     let private replaceCoupledConstraintsInUniVarsMap
-        (typeVarsToReplace : TypeVariableId set)
+        //(typeVarsToReplace : TypeVariableId set)
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (constrs : UnificationVarsMap.CoupledConstraints)
         (uniVarsMap : UnificationVarsMap)
         : UnificationVarsMap =
-        coupledConstraintToTypeReplacement typeVarsToReplace unificationVarsWeCanEliminate constrs uniVarsMap
+        coupledConstraintToTypeReplacement unificationVarsWeCanEliminate constrs uniVarsMap
         |> _.replacedUniVarsMap
 
 
@@ -780,19 +775,19 @@ module TypeInference =
 
     /// @TODO: we should use this in `combineTwoUnificationVarMaps` to simplify stuff massively by not needing to pass `.uniVarsAddedHere` out from all over the place
     let instantiateTypeVarsInUniVarsMap
-        (typeVarsToReplace : TypeVariableId set)
+        //(typeVarsToReplace : TypeVariableId set)
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (unificationVarsMap : UnificationVarsMap)
         : UnificationVarsMap =
         let matchesForBoth =
-            getCoupledConstraintsSet typeVarsToReplace unificationVarsWeCanEliminate unificationVarsMap
+            getCoupledConstraintsSet unificationVarsWeCanEliminate unificationVarsMap
 
         matchesForBoth
         |> Set.toList
         |> List.fold
             (fun varsMap coupledConstraints ->
                 replaceCoupledConstraintsInUniVarsMap
-                    Set.empty
+                    //Set.empty
                     unificationVarsWeCanEliminate
                     coupledConstraints
                     varsMap)
@@ -805,13 +800,13 @@ module TypeInference =
 
 
     let instantiateTypeVarsInUniVarsMapAndLocalNamesMap
-        (typeVarsToReplace : TypeVariableId set)
+        //(typeVarsToReplace : TypeVariableId set)
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (localNamesMap : TypedLocalNamesMap)
         (unificationVarsMap : UnificationVarsMap)
         : TypedLocalNamesMap * UnificationVarsMap =
         let matchesForBoth =
-            getCoupledConstraintsSet typeVarsToReplace unificationVarsWeCanEliminate unificationVarsMap
+            getCoupledConstraintsSet unificationVarsWeCanEliminate unificationVarsMap
 
         matchesForBoth
         |> Set.toList
@@ -819,7 +814,7 @@ module TypeInference =
             (fun (namesMap, varsMap) coupledConstraints ->
                 let replacement =
                     coupledConstraintToTypeReplacement
-                        Set.empty
+                        //Set.empty
                         unificationVarsWeCanEliminate
                         coupledConstraints
                         varsMap
@@ -831,14 +826,14 @@ module TypeInference =
 
 
     let private replaceCoupledConstraintsInTypeAndUniVarsMap
-        (typeVarsToReplace : TypeVariableId set)
+        //(typeVarsToReplace : TypeVariableId set)
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (constrs : UnificationVarsMap.CoupledConstraints)
         (uniVarsMap : UnificationVarsMap)
         (type_ : PolyTypeContents)
         : SelfAndConstrainedUnificationVars =
         let replacement =
-            coupledConstraintToTypeReplacement typeVarsToReplace unificationVarsWeCanEliminate constrs uniVarsMap
+            coupledConstraintToTypeReplacement unificationVarsWeCanEliminate constrs uniVarsMap
 
         let normalisedPtc = applyTypeReplacement replacement.replacementInstruction type_
 
@@ -852,28 +847,28 @@ module TypeInference =
 
     /// @TODO: we probably do still need to do this to prevent old uniVars from sticking around... maybe? Unless we only ever add things onto a local names map inside a scope and never pass it up out of a scope, in which case we may not need to? But tbh we do instantiate+replace uniVars and typeVars quite frequently, even not only when passing constraints up a scope, so maybe there is a good chance we'd be using a names map with out of date uniVars/typeVars inside it?
     let private replaceCoupledConstraintsInTypedLocalNamesMap
-        (typeVarsToReplace : TypeVariableId set)
+        //(typeVarsToReplace : TypeVariableId set)
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (constrs : UnificationVarsMap.CoupledConstraints)
         (localNamesMap : TypedLocalNamesMap)
         (uniVarsMap : UnificationVarsMap)
         : TypedLocalNamesMap * UnificationVarsMap =
         let replacement =
-            coupledConstraintToTypeReplacement typeVarsToReplace unificationVarsWeCanEliminate constrs uniVarsMap
+            coupledConstraintToTypeReplacement unificationVarsWeCanEliminate constrs uniVarsMap
 
         applyNormInstrToTypedNamesMap replacement.replacementInstruction localNamesMap, replacement.replacedUniVarsMap
 
 
 
     let private replaceCoupledConstraintsInSacuv
-        (typeVarsToReplace : TypeVariableId set)
+        //(typeVarsToReplace : TypeVariableId set)
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (coupledConstraints : UnificationVarsMap.CoupledConstraints)
         (uniVarsMap : UnificationVarsMap)
         (type_ : PolyType)
         : SelfAndConstrainedUnificationVars =
         replaceCoupledConstraintsInTypeAndUniVarsMap
-            (Set.ofList type_.forall |> Set.union typeVarsToReplace)
+            //(Set.ofList type_.forall |> Set.union typeVarsToReplace)
             unificationVarsWeCanEliminate
             coupledConstraints
             uniVarsMap
@@ -881,14 +876,14 @@ module TypeInference =
 
 
     let private replaceCoupledConstraintsInSacuv'
-        (typeVarsToReplace : TypeVariableId set)
+        //(typeVarsToReplace : TypeVariableId set)
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (constrs : UnificationVarsMap.CoupledConstraints)
         (uniVarsMap : UnificationVarsMap)
         (polyTypeResult : Result<PolyType, UnificationError>)
         : SelfAndConstrainedUnificationVars =
         let replacement =
-            coupledConstraintToTypeReplacement typeVarsToReplace unificationVarsWeCanEliminate constrs uniVarsMap
+            coupledConstraintToTypeReplacement unificationVarsWeCanEliminate constrs uniVarsMap
 
         let normalisedPolyType =
             applyTypeReplacementToPolyTypeResult replacement.replacementInstruction polyTypeResult
@@ -901,13 +896,13 @@ module TypeInference =
 
 
     let concretiseAndGeneralise
-        (typeVarsToReplace : TypeVariableId set)
+        //(typeVarsToReplace : TypeVariableId set)
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (unificationVarsMap : UnificationVarsMap)
         (type_ : PolyTypeContents)
         : SelfAndConstrainedUnificationVars =
         let matchesForBoth =
-            getCoupledConstraintsSet typeVarsToReplace unificationVarsWeCanEliminate unificationVarsMap
+            getCoupledConstraintsSet unificationVarsWeCanEliminate unificationVarsMap
 
         matchesForBoth
         |> Set.toList
@@ -922,9 +917,9 @@ module TypeInference =
                     *)
                         //"^see above comment"
 
-                        (sacuv.self
-                         |> Result.map (_.forall >> Set.ofList)
-                         |> Result.defaultValue Set.empty)
+                        //(sacuv.self
+                        // |> Result.map (_.forall >> Set.ofList)
+                        // |> Result.defaultValue Set.empty)
                         unificationVarsWeCanEliminate
                         coupledConstraints
                         sacuv.constrained
@@ -942,7 +937,7 @@ module TypeInference =
         (type_ : PolyType)
         : SelfAndConstrainedUnificationVars =
         concretiseAndGeneralise
-            (Set.ofList type_.forall)
+            //(Set.ofList type_.forall)
             unificationVarsWeCanEliminate
             unificationVarsMap
             type_.typeExpr
@@ -957,24 +952,24 @@ module TypeInference =
             unificationVarsWeCanEliminate
             |> Set.map (fun uniVar -> UnificationVarsMap.getAllJoinedUnificationVars uniVar unificationVarsMap)
 
-        let matchesForTypeVars : UnificationVarsMap.CoupledConstraints set =
-            type_
-            |> Result.map (_.forall >> Set.ofList)
-            |> Result.defaultValue Set.empty
-            |> Set.choose (fun typeVar -> UnificationVarsMap.getTypeVarConstraints typeVar unificationVarsMap)
+        //let matchesForTypeVars : UnificationVarsMap.CoupledConstraints set =
+        //    type_
+        //    |> Result.map (_.forall >> Set.ofList)
+        //    |> Result.defaultValue Set.empty
+        //    |> Set.choose (fun typeVar -> UnificationVarsMap.getTypeVarConstraints typeVar unificationVarsMap)
 
-        /// This should now include all the entries that any of the uniVars and typeVars here touch
-        let matchesForBoth : UnificationVarsMap.CoupledConstraints set =
-            Set.union matchesForUniVars matchesForTypeVars
+        ///// This should now include all the entries that any of the uniVars and typeVars here touch
+        //let matchesForBoth : UnificationVarsMap.CoupledConstraints set =
+        //    Set.union matchesForUniVars matchesForTypeVars
 
-        matchesForBoth
+        matchesForUniVars
         |> Set.toList
         |> List.fold
             (fun sacuv coupledConstraints ->
                 replaceCoupledConstraintsInSacuv'
-                    (sacuv.self
-                     |> Result.map (_.forall >> Set.ofList)
-                     |> Result.defaultValue Set.empty)
+                    //(sacuv.self
+                    // |> Result.map (_.forall >> Set.ofList)
+                    // |> Result.defaultValue Set.empty)
                     unificationVarsWeCanEliminate
                     coupledConstraints
                     sacuv.constrained
@@ -1100,6 +1095,7 @@ module TypeInference =
         | Ast.IfElse (condition, thenExpr, elseExpr) ->
             let condRequirement = Types.boolType |> Types.makeEmptyPolyType |> Ok
 
+            /// @TODO: so atm we're not actually doing anything with the self type of this, just like we're not doing anything with the inferred type of an expression when it has a type annotation. We need to surface any errors for both those constructs!
             let condType =
                 inferTypeFromExpr namesMap condition
                 |> unifyTwoSacuvs (Sacuv.makeEmpty condRequirement)
@@ -1107,37 +1103,21 @@ module TypeInference =
             let thenType = inferTypeFromExpr namesMap thenExpr
             let elseType = inferTypeFromExpr namesMap elseExpr
 
-            unifyMultipleSacuvs (NEL.new_ condType [ thenType; elseType ])
+            let combinedReturnType = unifyTwoSacuvs thenType elseType
+
+            let combinedUniVarsMaps =
+                combineTwoUnificationVarMaps condType.constrained combinedReturnType.constrained
+
+            Sacuv.make combinedReturnType.self combinedUniVarsMaps
 
 
         | Ast.InfixOp (op, left, right) ->
-            let opType =
-                match Map.tryFind (LocalLower op) namesMap with
-                | Some t -> Ok t
-                | None -> Error (UndefinedName (LocalLower op))
+            // This is effectively just applying the function with the infix op's name to two parameters, so we rewrite it as if it were a simple function application
 
-            let leftType = inferTypeFromExpr namesMap left
-            let rightType = inferTypeFromExpr namesMap right
+            let withLeftApplied = Ast.FuncApplication (Ast.NamedVal op, left)
+            let withRightApplied = Ast.FuncApplication (withLeftApplied, right)
 
-            match opType, leftType.self, rightType.self with
-            | Ok opType_, Ok leftType_, Ok rightType_ ->
-                let opResultUniVar = makeNewUniVar ()
-                let opResultType = PTC.UnificationVar opResultUniVar |> Types.makeEmptyPolyType
-
-                let requiredType = Types.infixOpTypeOf leftType_ rightType_ opResultType
-
-                let unificationResult = unifyTwoTypes requiredType opType_
-
-                combineUnificationVarMapsSeq
-                    [ leftType.constrained; rightType.constrained; unificationResult.constrained ]
-                // @TODO: need to run this through the concretise/generalise function to remove opResultUniVar!
-                |> Sacuv.make unificationResult.self
-
-            | Error e, _, _
-            | _, Error e, _
-            | _, _, Error e ->
-                combineTwoUnificationVarMaps leftType.constrained rightType.constrained
-                |> Sacuv.make (Error e)
+            inferTypeFromExpr namesMap withRightApplied
 
 
 
@@ -1199,12 +1179,14 @@ module TypeInference =
                         | Ok okSelf ->
                             let withThisBindingAdded : TypedLocalNamesMap = Map.add name okSelf localNamesMap
 
+                            let result =
+                                instantiateTypeVarsInUniVarsMapAndLocalNamesMap
+                                    //Set.empty
+                                    (newUniVarOpt |> Option.toList |> Set.ofList)
+                                    withThisBindingAdded
+                                    combinedMapResult
 
-                            instantiateTypeVarsInUniVarsMapAndLocalNamesMap
-                                Set.empty
-                                (newUniVarOpt |> Option.toList |> Set.ofList)
-                                withThisBindingAdded
-                                combinedMapResult
+                            result
 
                         | Error e -> localNamesMap, combinedMapResult
 
@@ -1243,7 +1225,7 @@ module TypeInference =
                                 (localNamesMap, uniVarsMap)
 
                         instantiateTypeVarsInUniVarsMapAndLocalNamesMap
-                            Set.empty
+                            //Set.empty
                             (newUniVars |> Seq.map snd |> Set.ofSeq)
                             newLocalNamesMap
                             newUniVarsMap
@@ -1322,22 +1304,28 @@ module TypeInference =
 
     and unifyTwoTypes (type1 : PolyType) (type2 : PolyType) : SelfAndConstrainedUnificationVars =
 
-        let makeNormInstrToReplaceTypeVarWithUniVar
-            (typeVar : TypeVariableId)
-            (uniVar : UnificationVarId)
-            : TypeReplacement =
-            { unificationVarsToReplace = Set.empty
-              typeVarsToReplace = Set.singleton typeVar
-              toReplaceWith = PTC.UnificationVar uniVar |> Ok
-              newTypeVarOpt = None }
+        let rec swapTypeVarWithUniVar typeVar uniVar (polyType : PolyTypeContents) =
+            match polyType with
+            | UnificationVar id -> UnificationVar id
+            | PrimitiveType prim -> PrimitiveType prim
+            | ParametricType (name, typeParams) ->
+                ParametricType (name, List.map (swapTypeVarWithUniVar typeVar uniVar) typeParams)
 
-        let swapTypeVarWithUniVar
-            (typeVar : TypeVariableId)
-            (uniVar : UnificationVarId)
-            (type_ : PolyTypeContents)
-            : PolyTypeContents =
-            let normInstr = makeNormInstrToReplaceTypeVarWithUniVar typeVar uniVar
-            applyTypeReplacement normInstr type_
+            | TypeVariable tv ->
+                if tv = typeVar then
+                    UnificationVar uniVar
+                else
+                    TypeVariable tv
+
+
+        //let makeNormInstrToReplaceTypeVarWithUniVar
+        //    (typeVar : TypeVariableId)
+        //    (uniVar : UnificationVarId)
+        //    : TypeReplacement =
+        //    { unificationVarsToReplace = Set.empty
+        //      typeVarsToReplace = Set.singleton typeVar
+        //      toReplaceWith = PTC.UnificationVar uniVar |> Ok
+        //      newTypeVarOpt = None }
 
 
         let allTypeVars = type1.forall @ type2.forall
@@ -1361,7 +1349,7 @@ module TypeInference =
         match unified.self with
         | Ok okSelf ->
             concretiseAndGeneralise
-                (Set.ofList allTypeVars)
+                //(Set.ofList allTypeVars)
                 (Set.ofList <| List.map snd typeVarsToUniVar)
                 unified.constrained
                 okSelf.typeExpr
@@ -1438,35 +1426,35 @@ module TypeInference =
                 /// The logic here being that we redirect one unification var to the other one. By convention we make the self type be the smaller uniVar, add an entry in the unification map to point it to the bigger one.
                 /// The bigger one will keep pointing to whatever it's pointing to in other unification maps, and the smaller one in other maps will be unified with the bigger one, which will result in unifying the bigger one with a concrete type.
                 let constrained : UnificationVarsMap =
-                    Map.singleton smallerUniVar (UnifResult (PTC.UnificationVar biggerUniVar |> Ok |> Some, Set.empty))
+                    Map.singleton smallerUniVar (UnifResult (PTC.UnificationVar biggerUniVar |> Ok |> Some))
 
                 { self = PTC.UnificationVar smallerUniVar |> Types.makeEmptyPolyType |> Ok
                   constrained = constrained }
 
 
-        | PTC.TypeVariable typeVar1, PTC.TypeVariable typeVar2 ->
-            if typeVar1 = typeVar2 then
-                { self = type1 |> Types.makeEmptyPolyType |> Ok
-                  constrained = Map.empty }
+        //| PTC.TypeVariable typeVar1, PTC.TypeVariable typeVar2 ->
+        //    if typeVar1 = typeVar2 then
+        //        { self = type1 |> Types.makeEmptyPolyType |> Ok
+        //          constrained = Map.empty }
 
-            else
-                let newUnificationVar = makeNewUniVar ()
+        //    else
+        //        let newUnificationVar = makeNewUniVar ()
 
-                let uniVarsMap : UnificationVarsMap =
-                    Map.singleton newUnificationVar (UnifResult (None, Set.ofSeq [ typeVar1; typeVar2 ]))
+        //        let uniVarsMap : UnificationVarsMap =
+        //            Map.singleton newUnificationVar (UnifResult (None, Set.ofSeq [ typeVar1; typeVar2 ]))
 
-                concretiseAndGeneralise
-                    Set.empty
-                    (Set.singleton newUnificationVar)
-                    uniVarsMap
-                    (PTC.UnificationVar newUnificationVar)
+        //        concretiseAndGeneralise
+        //            Set.empty
+        //            (Set.singleton newUnificationVar)
+        //            uniVarsMap
+        //            (PTC.UnificationVar newUnificationVar)
 
 
 
         | PTC.UnificationVar uniVar, PTC.PrimitiveType prim
         | PTC.PrimitiveType prim, PTC.UnificationVar uniVar ->
             let uniVarsMap : UnificationVarsMap =
-                Map.singleton uniVar (UnifResult (PTC.PrimitiveType prim |> Ok |> Some, Set.empty))
+                Map.singleton uniVar (UnifResult (PTC.PrimitiveType prim |> Ok |> Some))
 
             { self = PTC.UnificationVar uniVar |> Types.makeEmptyPolyType |> Ok
               constrained = uniVarsMap }
@@ -1475,7 +1463,7 @@ module TypeInference =
         | PTC.UnificationVar uniVar, PTC.ParametricType (name, typeParams)
         | PTC.ParametricType (name, typeParams), PTC.UnificationVar uniVar ->
             let uniVarsMap : UnificationVarsMap =
-                Map.singleton uniVar (UnifResult (PTC.ParametricType (name, typeParams) |> Ok |> Some, Set.empty))
+                Map.singleton uniVar (UnifResult (PTC.ParametricType (name, typeParams) |> Ok |> Some))
 
             { self = PTC.UnificationVar uniVar |> Types.makeEmptyPolyType |> Ok
               constrained = uniVarsMap }
@@ -1665,30 +1653,30 @@ module TypeInference =
     ///     - but it's a lil tricky cuz unifying the values actually results in its own uniVarsMap to be outputted, so we need to recursively merge that in to the one that we're accumulating in the fold as we go
     ///
     and combineTwoUnificationVarMaps (map1 : UnificationVarsMap) (map2 : UnificationVarsMap) : UnificationVarsMap =
-        let makeTypeVarToUniVarMap (uniVarsMap : UnificationVarsMap) : Map<TypeVariableId, UnificationVarId> =
-            uniVarsMap
-            |> Map.toList
-            |> List.collect (fun (uniVar, value) ->
-                match value with
-                | UnifResult (_, typeVars) -> typeVars |> Set.toList |> List.map (fun typeVar -> typeVar, uniVar)
-                | UnifRedirect _ -> List.empty)
-            |> Map.ofList
+        //let makeTypeVarToUniVarMap (uniVarsMap : UnificationVarsMap) : Map<TypeVariableId, UnificationVarId> =
+        //    uniVarsMap
+        //    |> Map.toList
+        //    |> List.collect (fun (uniVar, value) ->
+        //        match value with
+        //        | UnifResult (_, typeVars) -> typeVars |> Set.toList |> List.map (fun typeVar -> typeVar, uniVar)
+        //        | UnifRedirect _ -> List.empty)
+        //    |> Map.ofList
 
-        /// This should get all the entries in the uniVarsMap that are linked with the input type vars because they have some overlap – although this does require a pre-computed map of typeVar to (final) uniVar. But tbh we could probably just use the `UnificationVarsMap.getTypeVarConstraints` function for that – albeit that one will be slower. So: fine for now but optimise later.
-        let getTypeVarsFromMap
-            (typeVars : TypeVariableId set)
-            (typeVarToUniVarMap : Map<TypeVariableId, UnificationVarId>)
-            (uniVarsMap : UnificationVarsMap)
-            =
-            typeVars
-            |> Set.choose (fun typeVar -> Map.tryFind typeVar typeVarToUniVarMap)
-            |> Set.map (fun uniVar -> UnificationVarsMap.findUnificationVarResult uniVar uniVarsMap)
+        ///// This should get all the entries in the uniVarsMap that are linked with the input type vars because they have some overlap – although this does require a pre-computed map of typeVar to (final) uniVar. But tbh we could probably just use the `UnificationVarsMap.getTypeVarConstraints` function for that – albeit that one will be slower. So: fine for now but optimise later.
+        //let getTypeVarsFromMap
+        //    (typeVars : TypeVariableId set)
+        //    (typeVarToUniVarMap : Map<TypeVariableId, UnificationVarId>)
+        //    (uniVarsMap : UnificationVarsMap)
+        //    =
+        //    typeVars
+        //    |> Set.choose (fun typeVar -> Map.tryFind typeVar typeVarToUniVarMap)
+        //    |> Set.map (fun uniVar -> UnificationVarsMap.findUnificationVarResult uniVar uniVarsMap)
 
 
         /// I.e. insert a uniVar into the uniVarsMap, ensuring that the natural harmony between the uniVar chains in their rightful order is maintained
         let insertItemIntoUniVarsMapWithoutFuckingUpTheChains
             (newUniVarToInsert : UnificationVarId)
-            (itemToInsert : Result<PolyTypeContents, UnificationError> option * TypeVariableId set)
+            (itemToInsert : Result<PolyTypeContents, UnificationError> option)
             (uniVarAlreadyInTheMap : UnificationVarId)
             (uniVarsMap : UnificationVarsMap)
             : UnificationVarsMap =
@@ -1706,17 +1694,15 @@ module TypeInference =
                 |> Map.add newUniVarToInsert (UnifRedirect finalUniVar)
 
 
-        let typeVarsInMapToResult
-            (typeVarsInMap : (UnificationVarId * (UnificationResult option * TypeVariableId set)) nel)
-            =
+        let typeVarsInMapToResult (typeVarsInMap : (UnificationVarId * (UnificationResult option)) nel) =
             typeVarsInMap
-            |> NEL.map (fun (uniVarId, (typeResultOpt, typeVars)) ->
+            |> NEL.map (fun (uniVarId, (typeResultOpt)) ->
                 match typeResultOpt with
                 | Some typeRes ->
                     match typeRes with
-                    | Ok type_ -> Ok (uniVarId, (Some type_, typeVars))
-                    | Error e -> Error (uniVarId, (e, typeVars))
-                | None -> Ok (uniVarId, (None, typeVars)))
+                    | Ok type_ -> Ok (uniVarId, (Some type_))
+                    | Error e -> Error (uniVarId, (e))
+                | None -> Ok (uniVarId, (None)))
             |> NEL.sequenceResult
 
 
@@ -1728,77 +1714,77 @@ module TypeInference =
 
 
 
-        /// This takes a unified `UnificationResult` thingy, we pass that into here, and then this function actually checks if we need to do another unification based on any typeVars overlap in the uniVarsMap
-        let insertSingleItemIntoUniVarsMap
-            (uniVar : UnificationVarId)
-            (typeResultOpt : UnificationResult option)
-            (allCombinedTypeVars : TypeVariableId set)
-            (uniVarsMap : UnificationVarsMap)
-            : UnificationVarsMap =
-            let typeVarToUniVarMap = makeTypeVarToUniVarMap uniVarsMap
+        ///// This takes a unified `UnificationResult` thingy, we pass that into here, and then this function actually checks if we need to do another unification based on any typeVars overlap in the uniVarsMap
+        //let insertSingleItemIntoUniVarsMap
+        //    (uniVar : UnificationVarId)
+        //    (typeResultOpt : UnificationResult option)
+        //    (allCombinedTypeVars : TypeVariableId set)
+        //    (uniVarsMap : UnificationVarsMap)
+        //    : UnificationVarsMap =
+        //    //let typeVarToUniVarMap = makeTypeVarToUniVarMap uniVarsMap
 
-            /// The items containing overlap in typeVars with this contents item's type vars
-            let typeVarsInMap =
-                getTypeVarsFromMap allCombinedTypeVars typeVarToUniVarMap uniVarsMap
+        //    ///// The items containing overlap in typeVars with this contents item's type vars
+        //    //let typeVarsInMap =
+        //    //    getTypeVarsFromMap allCombinedTypeVars typeVarToUniVarMap uniVarsMap
 
-            match Set.toList typeVarsInMap with
-            | [] -> uniVarsMap |> Map.add uniVar (UnifResult (typeResultOpt, allCombinedTypeVars))
-            | head :: tail ->
+        //    match Set.toList typeVarsInMap with
+        //    | [] -> uniVarsMap |> Map.add uniVar (UnifResult (typeResultOpt, allCombinedTypeVars))
+        //    | head :: tail ->
 
-                let overlappingEntriesList = NEL.new_ head tail |> typeVarsInMapToResult
+        //        let overlappingEntriesList = NEL.new_ head tail |> typeVarsInMapToResult
 
-                match overlappingEntriesList with
-                | Ok typesList ->
-                    let polyTypeContents = Seq.toList typesList |> List.choose (snd >> fst)
+        //        match overlappingEntriesList with
+        //        | Ok typesList ->
+        //            let polyTypeContents = Seq.toList typesList |> List.choose (snd >> fst)
 
-                    match polyTypeContents with
-                    | [] ->
-                        insertItemIntoUniVarsMapWithoutFuckingUpTheChains
-                            uniVar
-                            (typeResultOpt, Seq.map (snd >> snd) typesList |> Set.unionMany)
-                            (typesList |> NEL.head |> fst)
-                            uniVarsMap
+        //            match polyTypeContents with
+        //            | [] ->
+        //                insertItemIntoUniVarsMapWithoutFuckingUpTheChains
+        //                    uniVar
+        //                    (typeResultOpt, Seq.map (snd >> snd) typesList |> Set.unionMany)
+        //                    (typesList |> NEL.head |> fst)
+        //                    uniVarsMap
 
-                    | head :: tail ->
-                        let unifiedResult = unifyManyTypeContents (NEL.new_ head tail)
+        //            | head :: tail ->
+        //                let unifiedResult = unifyManyTypeContents (NEL.new_ head tail)
 
-                        let withItemToInsert =
-                            unifyTwoTypeResultsOpts
-                                (Some unifiedResult.self)
-                                (typeResultOpt |> Option.map (Result.map Types.makeEmptyPolyType))
+        //                let withItemToInsert =
+        //                    unifyTwoTypeResultsOpts
+        //                        (Some unifiedResult.self)
+        //                        (typeResultOpt |> Option.map (Result.map Types.makeEmptyPolyType))
 
-                        let combinedUniVarsMaps =
-                            combineTwoUnificationVarMaps unifiedResult.constrained withItemToInsert.constrained
+        //                let combinedUniVarsMaps =
+        //                    combineTwoUnificationVarMaps unifiedResult.constrained withItemToInsert.constrained
 
-                        let uniVarsMapWithNewItemInserted =
-                            insertItemIntoUniVarsMapWithoutFuckingUpTheChains
-                                uniVar
-                                (withItemToInsert.self |> Option.map (Result.map _.typeExpr),
-                                 Seq.map (snd >> snd) typesList |> Set.unionMany)
-                                (typesList |> NEL.head |> fst)
-                                combinedUniVarsMaps
+        //                let uniVarsMapWithNewItemInserted =
+        //                    insertItemIntoUniVarsMapWithoutFuckingUpTheChains
+        //                        uniVar
+        //                        (withItemToInsert.self |> Option.map (Result.map _.typeExpr),
+        //                         Seq.map (snd >> snd) typesList |> Set.unionMany)
+        //                        (typesList |> NEL.head |> fst)
+        //                        combinedUniVarsMaps
 
-                        //combineTwoUnificationVarMaps unifiedResult.constrained uniVarsMapWithNewItemInserted
-                        let instantiated =
-                            uniVarsMapWithNewItemInserted
-                            |> instantiateTypeVarsInUniVarsMap
-                                (unifiedResult.self
-                                 |> Result.map _.forall
-                                 |> Result.defaultValue List.empty
-                                 |> Set.ofList)
-                                Set.empty
+        //                //combineTwoUnificationVarMaps unifiedResult.constrained uniVarsMapWithNewItemInserted
+        //                let instantiated =
+        //                    uniVarsMapWithNewItemInserted
+        //                    |> instantiateTypeVarsInUniVarsMap
+        //                        (unifiedResult.self
+        //                         |> Result.map _.forall
+        //                         |> Result.defaultValue List.empty
+        //                         |> Set.ofList)
+        //                        Set.empty
 
-                        instantiated
+        //                instantiated
 
 
-                | Error e ->
-                    let firstErr = NEL.head e
+        //        | Error e ->
+        //            let firstErr = NEL.head e
 
-                    insertItemIntoUniVarsMapWithoutFuckingUpTheChains
-                        uniVar
-                        (Error (snd firstErr |> fst) |> Some, Seq.map (snd >> snd) e |> Set.unionMany)
-                        (fst firstErr)
-                        uniVarsMap
+        //            insertItemIntoUniVarsMapWithoutFuckingUpTheChains
+        //                uniVar
+        //                (Error (snd firstErr |> fst) |> Some, Seq.map (snd >> snd) e |> Set.unionMany)
+        //                (fst firstErr)
+        //                uniVarsMap
 
 
 
@@ -1815,8 +1801,10 @@ module TypeInference =
             (contents : UnifResOrRedirect)
             : UnificationVarsMap =
             match contents with
-            | UnifResult (typeResultOpt, typeVars) ->
-                insertSingleItemIntoUniVarsMap uniVar typeResultOpt typeVars uniVarsMap
+            | UnifResult (typeResultOpt) ->
+                //insertSingleItemIntoUniVarsMap uniVar typeResultOpt typeVars uniVarsMap
+                uniVarsMap |> Map.add uniVar (UnifResult (typeResultOpt))
+
             | UnifRedirect redirectId -> Map.add uniVar (UnifRedirect redirectId) uniVarsMap
 
 
@@ -1841,37 +1829,35 @@ module TypeInference =
 
                 else
                     let unifiedResult =
-                        unifyTwoTypeContentsResultsOpts
-                            (snd firstRedirectResult |> fst)
-                            (snd secondRedirectResult |> fst)
+                        unifyTwoTypeContentsResultsOpts (snd firstRedirectResult) (snd secondRedirectResult)
 
-                    let combinedTypeVars : TypeVariableId set =
-                        Set.union (snd firstRedirectResult |> snd) (snd secondRedirectResult |> snd)
+                    //let combinedTypeVars : TypeVariableId set =
+                    //    Set.union (snd firstRedirectResult |> snd) (snd secondRedirectResult |> snd)
 
                     let combineResult =
                         combineTwoUnificationVarMaps uniVarsMap unifiedResult.constrained
 
                     let newUniVarsMap =
                         combineResult
-                        |> Map.add
-                            uniVar
-                            (UnifResult (unifiedResult.self |> Option.map (Result.map _.typeExpr), combinedTypeVars))
+                        |> Map.add uniVar (UnifResult (unifiedResult.self |> Option.map (Result.map _.typeExpr)))
 
-                    insertSingleItemIntoUniVarsMap
-                        uniVar
-                        (unifiedResult.self |> Option.map (Result.map _.typeExpr))
-                        combinedTypeVars
-                        newUniVarsMap
+                    //insertSingleItemIntoUniVarsMap
+                    //    uniVar
+                    //    (unifiedResult.self |> Option.map (Result.map _.typeExpr))
+                    //    combinedTypeVars
+                    //    newUniVarsMap
+                    newUniVarsMap
+                    |> Map.add uniVar (UnifResult (unifiedResult.self |> Option.map (Result.map _.typeExpr)))
                     |> instantiateTypeVarsInUniVarsMap
-                        (unifiedResult.self
-                         |> Option.map (Result.map _.forall >> Result.defaultValue List.empty)
-                         |> Option.defaultValue List.empty
-                         |> Set.ofList)
+                        //(unifiedResult.self
+                        // |> Option.map (Result.map _.forall >> Result.defaultValue List.empty)
+                        // |> Option.defaultValue List.empty
+                        // |> Set.ofList)
                         Set.empty
 
 
-            | (UnifRedirect redirect, redirectMap), (UnifResult (res, typeVars), _)
-            | (UnifResult (res, typeVars), _), (UnifRedirect redirect, redirectMap) ->
+            | (UnifRedirect redirect, redirectMap), (UnifResult (res), _)
+            | (UnifResult (res), _), (UnifRedirect redirect, redirectMap) ->
                 // @TODO: I think we need to follow the redirect and then unify that redirect result with the result here... and then make sure we have two of the redirects (uniVar and redirect) pointing to that unified result
 
                 let redirectResult =
@@ -1879,39 +1865,39 @@ module TypeInference =
 
                 if fst redirectResult = uniVar then
                     // The redirect already points to this result
-                    Map.add uniVar (UnifResult (res, typeVars)) uniVarsMap
+                    Map.add uniVar (UnifResult (res)) uniVarsMap
 
                 else
-                    let unifiedResult = unifyTwoTypeContentsResultsOpts (snd redirectResult |> fst) res
+                    let unifiedResult = unifyTwoTypeContentsResultsOpts (snd redirectResult) res
 
-                    let combinedTypeVars : TypeVariableId set =
-                        Set.union (snd redirectResult |> snd) typeVars
+                    //let combinedTypeVars : TypeVariableId set =
+                    //    Set.union (snd redirectResult |> snd) typeVars
 
                     let combineResult =
                         combineTwoUnificationVarMaps uniVarsMap unifiedResult.constrained
 
                     let newUniVarsMap =
                         combineResult
-                        |> Map.add
-                            uniVar
-                            (UnifResult (unifiedResult.self |> Option.map (Result.map _.typeExpr), combinedTypeVars))
+                        |> Map.add uniVar (UnifResult (unifiedResult.self |> Option.map (Result.map _.typeExpr)))
 
-                    insertSingleItemIntoUniVarsMap
-                        uniVar
-                        (unifiedResult.self |> Option.map (Result.map _.typeExpr))
-                        combinedTypeVars
-                        newUniVarsMap
+                    newUniVarsMap
+                    |> Map.add uniVar (UnifResult (unifiedResult.self |> Option.map (Result.map _.typeExpr)))
+                    //insertSingleItemIntoUniVarsMap
+                    //    uniVar
+                    //    (unifiedResult.self |> Option.map (Result.map _.typeExpr))
+                    //    combinedTypeVars
+                    //    newUniVarsMap
                     |> instantiateTypeVarsInUniVarsMap
-                        (unifiedResult.self
-                         |> Option.map (Result.map _.forall >> Result.defaultValue List.empty)
-                         |> Option.defaultValue List.empty
-                         |> Set.ofList)
+                        //(unifiedResult.self
+                        // |> Option.map (Result.map _.forall >> Result.defaultValue List.empty)
+                        // |> Option.defaultValue List.empty
+                        // |> Set.ofList)
                         Set.empty
 
 
 
-            | (UnifResult (res1, typeVars1), _), (UnifResult (res2, typeVars2), _) ->
-                let combinedTypeVars : TypeVariableId set = Set.union typeVars1 typeVars2
+            | (UnifResult (res1), _), (UnifResult (res2), _) ->
+                //let combinedTypeVars : TypeVariableId set = Set.union typeVars1 typeVars2
 
                 let unifiedResult = unifyTwoTypeContentsResultsOpts res1 res2
 
@@ -1920,20 +1906,20 @@ module TypeInference =
 
                 let newUniVarsMap =
                     combineResult
-                    |> Map.add
-                        uniVar
-                        (UnifResult (unifiedResult.self |> Option.map (Result.map _.typeExpr), combinedTypeVars))
+                    |> Map.add uniVar (UnifResult (unifiedResult.self |> Option.map (Result.map _.typeExpr)))
 
-                insertSingleItemIntoUniVarsMap
-                    uniVar
-                    (unifiedResult.self |> Option.map (Result.map _.typeExpr))
-                    combinedTypeVars
-                    newUniVarsMap
+                newUniVarsMap
+                |> Map.add uniVar (UnifResult (unifiedResult.self |> Option.map (Result.map _.typeExpr)))
+                //insertSingleItemIntoUniVarsMap
+                //    uniVar
+                //    (unifiedResult.self |> Option.map (Result.map _.typeExpr))
+                //    combinedTypeVars
+                //    newUniVarsMap
                 |> instantiateTypeVarsInUniVarsMap
-                    (unifiedResult.self
-                     |> Option.map (Result.map _.forall >> Result.defaultValue List.empty)
-                     |> Option.defaultValue List.empty
-                     |> Set.ofList)
+                    //(unifiedResult.self
+                    // |> Option.map (Result.map _.forall >> Result.defaultValue List.empty)
+                    // |> Option.defaultValue List.empty
+                    // |> Set.ofList)
                     Set.empty
 
 
