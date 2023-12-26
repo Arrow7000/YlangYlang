@@ -149,12 +149,66 @@ let testTypeInference () =
               let result = TypeInference.inferTypeFromExpr Map.empty expr
               Expect.equal result.self (Ok expectedType) msg
 
+
+          test "Test let polymorphism with types that still have some polymorphic slots open" {
+              (*
+            
+              let
+                maybe = none
+              
+                strList = ["hi", maybe]
+              
+                intList = [9, maybe]
+
+              in (strList, intList) : (List (Maybe String), List (Maybe Int))
+              
+              *)
+              let maybeTypeParam1 = TypeVariableId (System.Guid.NewGuid ())
+              let maybeTypeParam2 = TypeVariableId (System.Guid.NewGuid ())
+
+              let concreteMaybeType typeParam = Types.makeParametricType "Maybe" [ typeParam ]
+
+              let none =
+                  LocalLower (LowerIdent "none"),
+                  makePolyTypeWith [ maybeTypeParam1 ] (concreteMaybeType (TypeVariable maybeTypeParam1))
+
+              let just =
+                  LocalLower (LowerIdent "just"),
+                  makePolyTypeWith
+                      [ maybeTypeParam2 ]
+                      (Types.makeParametricType
+                          "Arrow"
+                          [ TypeVariable maybeTypeParam2
+                            concreteMaybeType (TypeVariable maybeTypeParam2) ])
+
+              let namesMap = Map.ofList [ none; just ]
+
+              let expr =
+                  letBindings
+                      (NEL.new_
+                          (letBinding "maybe" None (name "none"))
+                          [ letBinding "strList" None (AST.list [ apply (name "just") (AST.str "hi"); name "maybe" ])
+                            letBinding "intList" None (AST.list [ apply (name "just") (AST.int 9); name "maybe" ]) ])
+                      (tuple (name "strList") (name "intList"))
+
+              let expected =
+                  Types.tupleTypeOf
+                      (concreteMaybeType Types.strType |> makePolyType |> Types.listTypeOf)
+                      (concreteMaybeType Types.intType |> makePolyType |> Types.listTypeOf)
+
+
+              let result = TypeInference.inferTypeFromExpr namesMap expr
+
+              Expect.equal result.self (Ok expected) "Expected a tuple of List String and List Int"
+          }
           test "Test recursive definition" {
               (*
 
               let
                 factorial n =
-                  if n <= 0 then 1 else n * factorial (n - 1)
+                  if n <= 0 then 1
+                  else n * factorial (n - 1)
+
               in factorial 5 : Int
 
               *)
@@ -223,6 +277,29 @@ let testTypeInference () =
 
               *)
 
+              let minus =
+                  LowerIdent "-",
+                  Types.infixOpTypeOf
+                      (makePolyType Types.intType)
+                      (makePolyType Types.intType)
+                      (makePolyType Types.intType)
+
+              let eq =
+                  LowerIdent "==",
+                  Types.infixOpTypeOf
+                      (makePolyType Types.intType)
+                      (makePolyType Types.intType)
+                      (makePolyType Types.boolType)
+
+
+              // We need true and false values because DummyLang doesn't currently support type variant literals
+              let true_ = LowerIdent "true", makePolyType Types.boolType
+              let false_ = LowerIdent "false", makePolyType Types.boolType
+
+              let namesMap : TypedNamesMap =
+                  [ minus; eq; true_; false_ ] |> List.map (Tuple.mapFst LocalLower) |> Map.ofList
+
+
               let factorial : Expr =
                   letBindings
                       (NEL.new_
@@ -245,26 +322,6 @@ let testTypeInference () =
                                         (name "false")
                                         (apply (name "isEven") (infixOp (LowerIdent "-") (name "n") (int 1))))) ])
                       (apply (name "isEven") (int 5))
-
-              let minus =
-                  LowerIdent "-",
-                  Types.infixOpTypeOf
-                      (makePolyType Types.intType)
-                      (makePolyType Types.intType)
-                      (makePolyType Types.intType)
-
-              let eq =
-                  LowerIdent "==",
-                  Types.infixOpTypeOf
-                      (makePolyType Types.intType)
-                      (makePolyType Types.intType)
-                      (makePolyType Types.boolType)
-
-              let true_ = LowerIdent "true", makePolyType Types.boolType
-              let false_ = LowerIdent "false", makePolyType Types.boolType
-
-              let namesMap : TypedNamesMap =
-                  [ minus; eq; true_; false_ ] |> List.map (Tuple.mapFst LocalLower) |> Map.ofList
 
               let result = TypeInference.inferTypeFromExpr namesMap factorial
 
