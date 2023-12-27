@@ -12,18 +12,16 @@ let testStronglyConnectedGraphs () =
     testList
         "Test strongly connected graphs collection"
         [ test "Test strongly connected graph" {
-
-              let oom items =
-                  match items with
-                  | [] -> failwith "Needs to have at least one item"
-                  | x :: [] -> One x
-                  | x :: y :: rest -> More (TOM.new_ x y rest)
+              let makeNonRec item = SingleNonRec (item, item)
+              let makeSelfRec item = SingleSelfRec (item, item)
+              let makeMutualRec items = items |> TOM.map Tuple.clone |> TOM.ofSeq |> MutualRecursive
 
               /// Lil helper function to get a consistent ordering of the `More` case, because the order of that isn't guaranteed or important in the algorithm, but a different ordering in the result vs the expected would fail the test
               let sortMoreContents oom =
                   match oom with
-                  | One x -> One x
-                  | More tom -> TOM.toList tom |> List.sort |> TOM.ofSeq |> More
+                  | SingleNonRec (name, x) -> SingleNonRec (name, x)
+                  | SingleSelfRec (name, x) -> SingleSelfRec (name, x)
+                  | MutualRecursive tom -> TOM.toList tom |> List.sort |> TOM.ofSeq |> MutualRecursive
 
               let graph : Map<char, char seq> =
                   [ 'a', []
@@ -50,13 +48,13 @@ let testStronglyConnectedGraphs () =
                   |> List.map sortMoreContents
 
               let expected =
-                  [ oom [ 'a' ]
-                    oom [ 'b'; 'c' ]
-                    oom [ 'd' ]
-                    oom [ 'e' ]
-                    oom [ 'f'; 'g'; 'h' ]
-                    oom [ 'i' ]
-                    oom [ 'j' ] ]
+                  [ makeNonRec 'a'
+                    makeMutualRec (TOM.make 'b' 'c')
+                    makeNonRec 'd'
+                    makeNonRec 'e'
+                    makeMutualRec (TOM.new_ 'f' 'g' [ 'h' ])
+                    makeSelfRec 'i'
+                    makeNonRec 'j' ]
                   |> List.map sortMoreContents
 
               Expect.equal

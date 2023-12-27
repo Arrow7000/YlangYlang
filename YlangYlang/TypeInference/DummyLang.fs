@@ -389,12 +389,13 @@ let rec private getNamesUsedInExpr (namesToLookOutFor : LowerIdent set) (expr : 
 
 let private sortBindingsTopologically
     (namesAndExprs : (LowerIdent * Ast.Expr) seq)
-    : DG.OneOrMore<LowerIdent * Ast.Expr> list =
+    : DG.StronglyConnectedGraph<Ast.Expr, LowerIdent> list =
     let bindingNames = namesAndExprs |> Seq.map fst |> Set.ofSeq
     let getDependencies = snd >> getNamesUsedInExpr bindingNames >> Set.toSeq
 
     DG.getStronglyConnectedComponents<LowerIdent * Ast.Expr, LowerIdent> fst getDependencies namesAndExprs
     |> DG.sortOneOrMoreTopologically fst getDependencies
+    |> List.map (DG.SCC.map snd)
 
 
 
@@ -941,24 +942,34 @@ module TypeInference =
 
                     // @TODO: we should surface any inference errors instead of just ignoring them and skipping that step in the fold!
                     match stronglyConnectedComponent with
-                    | DG.One (name, expr) ->
-                        let isNameUsedRecursively =
-                            getNamesUsedInExpr (Set.singleton name) expr |> Set.contains name
+                    | DG.SingleNonRec (name, expr) ->
+                        let inferredType = inferTypeFromExpr combinedNamesMap expr
 
-                        let newUniVarOpt =
-                            if isNameUsedRecursively then
-                                Some (makeNewUniVar ())
-                            else
-                                None
+                        let combinedMapResult =
+                            combineTwoUnificationVarMaps uniVarsMap inferredType.constrained
+
+                        match inferredType.self with
+                        | Ok okSelf ->
+                            let withThisBindingAdded : TypedLocalNamesMap = Map.add name okSelf localNamesMap
+
+                            let result =
+                                instantiateTypeVarsInUniVarsMapAndLocalNamesMap
+                                    Set.empty
+                                    withThisBindingAdded
+                                    combinedMapResult
+
+                            result
+
+                        | Error e -> localNamesMap, combinedMapResult
+
+                    | DG.SingleSelfRec (name, expr) ->
+                        let newUniVar = makeNewUniVar ()
 
                         let withThisNameUniVarAdded : TypedNamesMap =
-                            match newUniVarOpt with
-                            | Some newUniVar ->
-                                Map.add
-                                    (LocalLower name)
-                                    (PTC.UnificationVar newUniVar |> Types.makeEmptyPolyType)
-                                    combinedNamesMap
-                            | None -> combinedNamesMap
+                            Map.add
+                                (LocalLower name)
+                                (PTC.UnificationVar newUniVar |> Types.makeEmptyPolyType)
+                                combinedNamesMap
 
                         let inferredType = inferTypeFromExpr withThisNameUniVarAdded expr
 
@@ -971,7 +982,7 @@ module TypeInference =
 
                             let result =
                                 instantiateTypeVarsInUniVarsMapAndLocalNamesMap
-                                    (newUniVarOpt |> Option.toList |> Set.ofList)
+                                    (Set.singleton newUniVar)
                                     withThisBindingAdded
                                     combinedMapResult
 
@@ -981,7 +992,7 @@ module TypeInference =
 
 
 
-                    | DG.More namesAndBindings ->
+                    | DG.MutualRecursive namesAndBindings ->
                         let newUniVars =
                             namesAndBindings |> Seq.map (fun (name, _) -> name, makeNewUniVar ())
 
