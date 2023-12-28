@@ -31,35 +31,39 @@ type TypeVariableId =
 type PolyTypeContents =
     /// Referencing a unification variable. To figure out what this unification var is you'll need to look into your local UnificationVarsMap (see below)
     | UnificationVar of UnificationVarId
-    /// Referencing a *type variable* (not a unification variable!), which if it gets replaced we need to somehow propagate the message upwards that all instances of this type variable need to be replaced with the same thing – we only stop propagating that message upwards when we get to the polytype where this type var is declared in
+    /// Referencing a *type variable* (not a unification variable!)
     | TypeVariable of TypeVariableId
-    /// A simple unparametric type, like `Int` or `String` or a parametric type, like `List a`, `Maybe a`, `Result e a`
+    /// A simple unparametric type like `Int` or `String`, or a parametric type like `List a`, `Maybe a`, `Result e a`
     | ConcreteType of ConcreteType
-
-
 
     override this.ToString () =
         match this with
         | UnificationVar uniVar -> string uniVar
         | TypeVariable typeVar -> string typeVar
-        | ConcreteType (ConcType (name, typeParams)) ->
-            match name with
-            | LocalUpper (UpperIdent "Arrow") ->
-                match typeParams with
-                | [ from; to_ ] -> string from + " -> " + string to_
-                | _ -> failwith "Arrow type should have exactly two type params"
-            | LocalUpper (UpperIdent "Tuple") ->
-                match typeParams with
-                | [ a; b ] -> "( " + string a + ", " + string b + " )"
-                | _ -> failwith "Tuple type should have exactly two type params"
-            | _ ->
-                match typeParams with
-                | [] -> string name // I.e. a primitive type
-                | first :: rest ->
-                    // I.e. a parametric type
-                    string name + " " + String.concat " " (first :: rest |> List.map string)
+        | ConcreteType concType -> string concType
 
-and ConcreteType = | ConcType of name : UpperNameValue * typeParams : PolyTypeContents list
+
+and ConcreteType =
+    | ConcType of name : UpperNameValue * typeParams : PolyTypeContents list
+
+    override this.ToString () =
+        let (ConcType (name, typeParams)) = this
+
+        match name with
+        | LocalUpper (UpperIdent "Arrow") ->
+            match typeParams with
+            | [ from; to_ ] -> string from + " -> " + string to_
+            | _ -> failwith "Arrow type should have exactly two type params"
+        | LocalUpper (UpperIdent "Tuple") ->
+            match typeParams with
+            | [ a; b ] -> "( " + string a + ", " + string b + " )"
+            | _ -> failwith "Tuple type should have exactly two type params"
+        | _ ->
+            match typeParams with
+            | [] -> string name // I.e. a primitive type
+            | first :: rest ->
+                // I.e. a parametric type
+                string name + " " + String.concat " " (first :: rest |> List.map string)
 
 
 
@@ -79,19 +83,29 @@ type PolyType =
         | _ :: _ -> "forall " + String.concat " " (this.forall |> List.map string) + ". " + bodyStr
 
 
-/// The context where we put the names with their type checked types
-type TypedNamesMap = Map<LowerNameValue, PolyType>
-
-/// A local context, we return these from functions that type check let bindings and top level declarations
-type TypedLocalNamesMap = Map<LowerIdent, PolyType>
 
 
 type UnificationError =
     | UnificationClash of ConcreteType * ConcreteType
     | UndefinedName of LowerNameValue
 
+
+
+/// The context where we put the names with their type checked types
+type TypedNamesMap = Map<LowerNameValue, Result<PolyType, UnificationError>>
+
+/// A local context, we return these from functions that type check let bindings and top level declarations
+type TypedLocalNamesMap = Map<LowerIdent, Result<PolyType, UnificationError>>
+
+
+
+
 /// Either a unified PolyTypeContents or a unification error
 type UnificationResult = Result<PolyTypeContents, UnificationError>
+
+
+
+
 
 /// A unification result or a redirect to another entry. Having multiple unification variables pointing to the same unification result lets us represent multiple unification variables that have been unified with each other. And having a set of type variables pointing to the same unification result lets us represent multiple type variables that have been unified with each other; and thereby also multiple unification variables that have been unified with multiple type variables.
 /// FYI having multiple unification variables unified with each other can take the form of multiple uniVars all redirecting to the same one, or multiple uniVars redirecting to each other in a chain, or a combination of both in a kind of tree structure where each entry points to its parent, and the root of the tree is the unification result.
@@ -107,7 +121,7 @@ type UnifResOrRedirect =
 /// @TODO: for the real thing, this should include information about the location of the error, so that we can give a nice error message to the user, ideally with the exact code causing the error, with the relevant parts highlighted
 type InnerTypeError =
     /// Although the binding has a type annotation, the value actually has a type error
-    | ErrorHiddenByAnnotation of annotated : PolyType * internalUnifError : (ConcreteType * ConcreteType)
+    | ErrorHiddenByAnnotation of unificationErr : UnificationError
 
     /// The binding doesn't have an internal type error, but the type doesn't match the declared annotation
     | AnnotationVsInferenceClash of
@@ -210,7 +224,7 @@ module UnificationVarsMap =
 type SelfAndConstrainedUnificationVars =
     { self : Result<PolyType, UnificationError>
       constrained : UnificationVarsMap
-      innerErrors : InnerTypeError seq }
+      innerErrors : InnerTypeError list }
 
 
 
@@ -219,7 +233,7 @@ module SelfAndConstrainedUnificationVars =
     let make self constrained : SelfAndConstrainedUnificationVars =
         { self = self
           constrained = constrained
-          innerErrors = Seq.empty }
+          innerErrors = List.empty }
 
 
     let makeWithErrs self constrained errs =
@@ -267,9 +281,17 @@ module Types =
         { forall = List.empty
           typeExpr = contents }
 
+
+    let typeVar = TypeVariable
+
+    /// Make a monomorphic type
+    let mono contents = makeEmptyPolyType contents
+
+
     let strType : PolyTypeContents = makePrimitiveType "String"
     let intType : PolyTypeContents = makePrimitiveType "Int"
     let boolType : PolyTypeContents = makePrimitiveType "Bool"
+    let unitType : PolyTypeContents = makePrimitiveType "Unit"
 
     let listTypeOf (t : PolyType) =
         { forall = t.forall
@@ -365,18 +387,24 @@ let private makeNewTypeVar () = System.Guid.NewGuid () |> TypeVariableId
 /// Gets all the value names referenced in an expression – note! need to specify that we're only interested in names defined at this scope and higher – internally defined let bindings or parameters should not be bubbled up because as far as the higher scopes are concerned those names do not exist.
 let rec private getNamesUsedInExpr (namesToLookOutFor : LowerIdent set) (expr : Ast.Expr) : LowerIdent set =
     match expr with
+    | Ast.NamedVal name ->
+        // The heart of this function
+        if Set.contains name namesToLookOutFor then
+            Set.singleton name
+        else
+            Set.empty
+
     | Ast.StrVal _ -> Set.empty
     | Ast.IntVal _ -> Set.empty
     | Ast.ListVal exprs -> Set.collect (getNamesUsedInExpr namesToLookOutFor) exprs
     | Ast.TupleVal (first, second) ->
         Set.union (getNamesUsedInExpr namesToLookOutFor first) (getNamesUsedInExpr namesToLookOutFor second)
 
-    | Ast.LambdaVal (_, body) -> getNamesUsedInExpr namesToLookOutFor body
-    | Ast.NamedVal name ->
-        if Set.contains name namesToLookOutFor then
-            Set.singleton name
-        else
-            Set.empty
+    | Ast.LambdaVal (param, body) ->
+        // Because if we reference the param name in the body then we're just referencing the param, not the shadowed name from the higher scope
+        let withParamRemoved = namesToLookOutFor |> Set.remove param
+
+        getNamesUsedInExpr withParamRemoved body
 
     | Ast.LetBindings (bindings, body) ->
         let namesBoundHere = bindings |> NEL.map _.name |> Set.ofSeq
@@ -401,14 +429,13 @@ let rec private getNamesUsedInExpr (namesToLookOutFor : LowerIdent set) (expr : 
         |> Set.unionMany
 
     | Ast.InfixOp (op, left, right) ->
-        let exprsNames =
-            Set.union (getNamesUsedInExpr namesToLookOutFor left) (getNamesUsedInExpr namesToLookOutFor right)
+        // This is just syntax sugar for function application
 
-        if Set.contains op namesToLookOutFor then
-            Set.add op exprsNames
+        let withLeftApplied = Ast.FuncApplication (Ast.NamedVal op, left)
+        let withRightApplied = Ast.FuncApplication (withLeftApplied, right)
 
-        else
-            exprsNames
+        getNamesUsedInExpr namesToLookOutFor withRightApplied
+
 
 
 
@@ -487,28 +514,31 @@ module TypeInference =
     let rec private applyTypeReplacementToConcType
         (tr : TypeReplacement)
         (polyTypeContents : ConcreteType)
-        : ConcreteType =
+        : Result<ConcreteType, UnificationError> =
         let (ConcType (name, ptcs)) = polyTypeContents
-        ConcType (name, List.map (applyTypeReplacement tr) ptcs)
+
+        let replacedTypeParams =
+            List.map (applyTypeReplacement tr) ptcs |> Result.sequenceList
+
+        match replacedTypeParams with
+        | Ok typeParams -> ConcType (name, typeParams) |> Ok
+        | Error e -> Error (NEL.head e)
 
 
-    and private applyTypeReplacement (tr : TypeReplacement) (polyTypeContents : PolyTypeContents) : PolyTypeContents =
-        /// @TODO: handle the error case here still
-        let replacement () =
-            match tr.toReplaceWith with
-            | Ok ptc -> ptc
-            | Error e -> failwith "@TODO: need to handle the error case here still"
-
+    and private applyTypeReplacement
+        (tr : TypeReplacement)
+        (polyTypeContents : PolyTypeContents)
+        : Result<PolyTypeContents, UnificationError> =
         match polyTypeContents with
         | PTC.UnificationVar uniVar ->
             if Set.contains uniVar tr.unificationVarsToReplace then
-                replacement ()
+                tr.toReplaceWith
 
             else
-                PTC.UnificationVar uniVar
+                PTC.UnificationVar uniVar |> Ok
 
-        | TypeVariable typeVar -> TypeVariable typeVar
-        | ConcreteType concType -> ConcreteType <| applyTypeReplacementToConcType tr concType
+        | TypeVariable typeVar -> TypeVariable typeVar |> Ok
+        | ConcreteType concType -> applyTypeReplacementToConcType tr concType |> Result.map ConcreteType
 
 
     let private applyTypeReplacementToUnificationError
@@ -517,7 +547,14 @@ module TypeInference =
         : UnificationError =
         match unifError with
         | UnificationClash (a, b) ->
-            UnificationClash (applyTypeReplacementToConcType tr a, applyTypeReplacementToConcType tr b)
+            let replacedA = applyTypeReplacementToConcType tr a
+            let replacedB = applyTypeReplacementToConcType tr b
+
+            match replacedA, replacedB with
+            | Ok replA, Ok replB -> UnificationClash (replA, replB)
+            | Error e, _
+            | _, Error e -> e
+
         | UndefinedName name -> UndefinedName name
 
     let private applyTypeReplacementToPtcResult
@@ -525,7 +562,7 @@ module TypeInference =
         (polyTypeContentsResult : UnificationResult)
         : UnificationResult =
         match polyTypeContentsResult with
-        | Ok polyTypeContents -> applyTypeReplacement tr polyTypeContents |> Ok
+        | Ok polyTypeContents -> applyTypeReplacement tr polyTypeContents
         | Error e -> applyTypeReplacementToUnificationError tr e |> Error
 
 
@@ -534,35 +571,53 @@ module TypeInference =
         (unifError : InnerTypeError)
         : InnerTypeError =
         match unifError with
-        | ErrorHiddenByAnnotation (annotated, (conc1, conc2)) ->
-            ErrorHiddenByAnnotation (
-                applyTypeReplacementToPolyType tr annotated,
-                (applyTypeReplacementToConcType tr conc1, applyTypeReplacementToConcType tr conc2)
-            )
+        | ErrorHiddenByAnnotation err ->
+            match err with
+            | UnificationClash (conc1, conc2) ->
+                let conc1Result = applyTypeReplacementToConcType tr conc1
+                let conc2Result = applyTypeReplacementToConcType tr conc2
+
+                match conc1Result, conc2Result with
+                | Ok conc1Ok, Ok conc2Ok -> UnificationClash (conc1Ok, conc2Ok) |> ErrorHiddenByAnnotation
+                | Error e, _
+                | _, Error e -> ErrorHiddenByAnnotation e
+
+            | UndefinedName name -> UndefinedName name |> ErrorHiddenByAnnotation
 
         | AnnotationVsInferenceClash (typeVars, annotated, inferred) ->
-            AnnotationVsInferenceClash (typeVars, applyTypeReplacement tr annotated, applyTypeReplacement tr inferred)
+            let annotatedResult = applyTypeReplacement tr annotated
+            let inferredResult = applyTypeReplacement tr inferred
+
+            match annotatedResult, inferredResult with
+            | Ok annotatedOk, Ok inferredOk -> AnnotationVsInferenceClash (typeVars, annotatedOk, inferredOk)
 
 
+            | Error e, _
+            | _, Error e -> ErrorHiddenByAnnotation e
 
 
-
-    and private applyTypeReplacementToPolyType (normInstr : TypeReplacement) (polyType : PolyType) : PolyType =
+    and private applyTypeReplacementToPolyType
+        (normInstr : TypeReplacement)
+        (polyType : PolyType)
+        : Result<PolyType, UnificationError> =
         let result = applyTypeReplacement normInstr polyType.typeExpr
 
-        { typeExpr = result
-          forall =
-            match normInstr.newTypeVarOpt with
-            | Some newTypeVar -> newTypeVar :: polyType.forall
-            | None -> polyType.forall }
-
+        match result with
+        | Ok result' ->
+            Ok
+                { typeExpr = result'
+                  forall =
+                    match normInstr.newTypeVarOpt with
+                    | Some newTypeVar -> newTypeVar :: polyType.forall
+                    | None -> polyType.forall }
+        | Error e -> Error e
 
     let private applyTypeReplacementToPolyTypeResult
         (tr : TypeReplacement)
         (polyTypeResult : Result<PolyType, UnificationError>)
         : Result<PolyType, UnificationError> =
         match polyTypeResult with
-        | Ok polyTypeContents -> applyTypeReplacementToPolyType tr polyTypeContents |> Ok
+        | Ok polyTypeContents -> applyTypeReplacementToPolyType tr polyTypeContents
         | Error e -> applyTypeReplacementToUnificationError tr e |> Error
 
 
@@ -596,9 +651,9 @@ module TypeInference =
     /// Works equally well with TypedNamesMaps and TypedLocalNamesMaps
     let private applyNormInstrToTypedNamesMap
         (tr : TypeReplacement)
-        (namesMap : Map<'Name, PolyType>)
-        : Map<'Name, PolyType> =
-        namesMap |> Map.map (fun _ -> applyTypeReplacementToPolyType tr)
+        (namesMap : Map<'Name, Result<PolyType, UnificationError>>)
+        : Map<'Name, Result<PolyType, UnificationError>> =
+        namesMap |> Map.map (fun _ -> applyTypeReplacementToPolyTypeResult tr)
 
 
     /// Get the coupled constraints for the provided typeVars and uniVars from the given uniVarsMap
@@ -662,9 +717,6 @@ module TypeInference =
                 // So this is the juicy case (I think)!!!
                 // This is the case where we actually put the logic of whether we replace the things referencing these coupled constraints with a concrete type (or type clash error) or if we generalise it with a new type variable if it's `None`!
                 // In other words, this is where we do either substitution or generalisation!!!
-
-                // @TODO: important! I think we need to arrange the normalisation instructions in a DAG, and then do a topological sort on them so that we can apply each norminstr in order, so that we don't end up doing a replacement containing old uniVars/typeVars after those have already been removed!
-
 
                 match constrs.result with
                 | None ->
@@ -759,7 +811,7 @@ module TypeInference =
 
         { self = normalisedPolyType
           constrained = replacement.replacedUniVarsMap
-          innerErrors = Seq.map (applyTypeReplacementToInnerError replacement.replacementInstruction) sacuv.innerErrors }
+          innerErrors = List.map (applyTypeReplacementToInnerError replacement.replacementInstruction) sacuv.innerErrors }
 
 
     let private replaceCoupledConstraintsInTypeUnificationResult
@@ -796,7 +848,7 @@ module TypeInference =
                 replaced)
             { self = Types.makeEmptyPolyType type_ |> Ok
               constrained = unificationVarsMap
-              innerErrors = Seq.empty }
+              innerErrors = List.empty }
 
 
     let concretiseAndGeneraliseTypeUnificationResult
@@ -847,7 +899,7 @@ module TypeInference =
                 replaceCoupledConstraintsInSacuv' unificationVarsWeCanEliminate coupledConstraints sacuv)
             { self = type_
               constrained = unificationVarsMap
-              innerErrors = Seq.empty }
+              innerErrors = List.empty }
 
 
 
@@ -905,7 +957,7 @@ module TypeInference =
 
             /// Add the new name with its unification variable type into the names map that we inject into the body inferencing function
             let withNewUnificationVarAddedForParam : TypedNamesMap =
-                Map.add (LocalLower param) paramPolyType namesMap
+                Map.add (LocalLower param) (Ok paramPolyType) namesMap
 
             let bodyInferenceResult : SelfAndConstrainedUnificationVars =
                 inferTypeFromExpr withNewUnificationVarAddedForParam body
@@ -921,10 +973,12 @@ module TypeInference =
 
 
         | Ast.NamedVal name ->
-            match Map.tryFind (LocalLower name) namesMap with
-            | Some t -> Sacuv.make (Ok t) Map.empty
-            | None -> Sacuv.make (Error (UndefinedName (LocalLower name))) Map.empty
+            let foundType =
+                match Map.tryFind (LocalLower name) namesMap with
+                | Some t -> t
+                | None -> Error (UndefinedName (LocalLower name))
 
+            Sacuv.make foundType Map.empty
 
         | Ast.LetBindings (bindings, body) -> resolveAllLetBindingsAndBody namesMap bindings body
 
@@ -966,7 +1020,6 @@ module TypeInference =
         | Ast.IfElse (condition, thenExpr, elseExpr) ->
             let condRequirement = Types.boolType |> Types.makeEmptyPolyType |> Ok
 
-            /// @TODO: so atm we're not actually doing anything with the self type of this, just like we're not doing anything with the inferred type of an expression when it has a type annotation. We need to surface any errors for both those constructs!
             let condType =
                 inferTypeFromExpr namesMap condition
                 |> unifyTwoSacuvs (Sacuv.makeEmpty condRequirement)
@@ -979,7 +1032,9 @@ module TypeInference =
             let combinedUniVarsMaps =
                 combineTwoUnificationVarMaps condType.constrained combinedReturnType.constrained
 
-            Sacuv.make combinedReturnType.self combinedUniVarsMaps
+            let combinedInnerErrs = condType.innerErrors @ combinedReturnType.innerErrors
+
+            Sacuv.makeWithErrs combinedReturnType.self combinedUniVarsMaps combinedInnerErrs
 
 
         | Ast.InfixOp (op, left, right) ->
@@ -997,25 +1052,36 @@ module TypeInference =
         (namesAndExprs : Ast.LetBindingSingle nel)
         : {| inferredTypes : TypedLocalNamesMap
              constrained : UnificationVarsMap
-             innerErrors : InnerTypeError seq |}
+             innerErrors : InnerTypeError list |}
         =
 
         /// These don't need to be inferred because they already have explicit type annotations.
         /// @TODO: however! we still need to type check them internally and surface any errors to the top level
         let namesWithTypeAnnotations : TypedLocalNamesMap =
             namesAndExprs
-            |> Seq.choose (fun binding -> binding.typeAnnotation |> Option.map (Tuple.makePair binding.name))
+            |> Seq.choose (fun binding -> binding.typeAnnotation |> Option.map (Ok >> Tuple.makePair binding.name))
             |> Map.ofSeq
 
-        let hasTypeAnnotation name = Map.tryFind (LocalLower name) namesMap |> Option.isSome
+        let hasTypeAnnotation name = Map.tryFind name namesMap |> Option.isSome
 
         /// But only if this isn't already in the map because it has an explicit type annotatino
         let addToLocalNamesMap name okSelf (localNamesMap : TypedLocalNamesMap) =
-            if hasTypeAnnotation name then
+            if hasTypeAnnotation (LocalLower name) then
                 localNamesMap
 
             else
                 Map.add name okSelf localNamesMap
+
+
+        /// But only if this isn't already in the map because it has an explicit type annotatino
+        let addToGlobalNamesMap name okSelf (namesMap : TypedNamesMap) =
+            if hasTypeAnnotation name then
+                namesMap
+
+            else
+                Map.add name okSelf namesMap
+
+
 
         let orderedBindings =
             namesAndExprs
@@ -1036,26 +1102,18 @@ module TypeInference =
                         let combinedMapResult =
                             combineTwoUnificationVarMaps uniVarsMap inferredType.constrained
 
-                        match inferredType.self with
-                        | Ok okSelf ->
-                            let withThisBindingAdded : TypedLocalNamesMap =
-                                addToLocalNamesMap name okSelf localNamesMap
+                        let withThisBindingAdded : TypedLocalNamesMap =
+                            addToLocalNamesMap name inferredType.self localNamesMap
 
-                            withThisBindingAdded, combinedMapResult, inferredType.innerErrors
-
-
-                        | Error e ->
-                            // @TODO: we should really add results into the names map types so that if a binding has a type error that we actually surface that error instead of a bizarre "name not defined" one
-                            localNamesMap, combinedMapResult, inferredType.innerErrors
-
+                        withThisBindingAdded, combinedMapResult, inferredType.innerErrors
 
                     | DG.SingleSelfRec (name, expr) ->
                         let newUniVar = makeNewUniVar ()
 
                         let withThisNameUniVarAdded : TypedNamesMap =
-                            Map.add
+                            addToGlobalNamesMap
                                 (LocalLower name)
-                                (PTC.UnificationVar newUniVar |> Types.makeEmptyPolyType)
+                                (PTC.UnificationVar newUniVar |> Types.makeEmptyPolyType |> Ok)
                                 combinedNamesMap
 
                         let inferredType = inferTypeFromExpr withThisNameUniVarAdded expr
@@ -1063,23 +1121,16 @@ module TypeInference =
                         let combinedMapResult =
                             combineTwoUnificationVarMaps uniVarsMap inferredType.constrained
 
-                        match inferredType.self with
-                        | Ok okSelf ->
-                            let withThisBindingAdded : TypedLocalNamesMap =
-                                addToLocalNamesMap name okSelf localNamesMap
+                        let withThisBindingAdded : TypedLocalNamesMap =
+                            addToLocalNamesMap name inferredType.self localNamesMap
 
-                            let result =
-                                instantiateTypeVarsInUniVarsMapAndLocalNamesMap
-                                    (Set.singleton newUniVar)
-                                    withThisBindingAdded
-                                    combinedMapResult
+                        let result =
+                            instantiateTypeVarsInUniVarsMapAndLocalNamesMap
+                                (Set.singleton newUniVar)
+                                withThisBindingAdded
+                                combinedMapResult
 
-                            fst result, snd result, inferredType.innerErrors
-
-                        | Error e ->
-                            // @TODO: we should really add results into the names map types so that if a binding has a type error that we actually surface that error instead of a bizarre "name not defined" one
-                            localNamesMap, combinedMapResult, inferredType.innerErrors
-
+                        fst result, snd result, inferredType.innerErrors
 
 
                     | DG.MutualRecursive namesAndBindings ->
@@ -1090,10 +1141,8 @@ module TypeInference =
                             newUniVars
                             |> Seq.fold
                                 (fun map (name, uniVar) ->
-                                    map
-                                    |> Map.add
-                                        (LocalLower name)
-                                        (PTC.UnificationVar uniVar |> Types.makeEmptyPolyType))
+                                    let typeToAdd = PTC.UnificationVar uniVar |> Types.makeEmptyPolyType |> Ok
+                                    addToGlobalNamesMap (LocalLower name) typeToAdd map)
                                 combinedNamesMap
 
 
@@ -1104,18 +1153,12 @@ module TypeInference =
                                     let inferredType = inferTypeFromExpr withNewUniVarsAdded expr
 
                                     let withThisBindingAdded : TypedLocalNamesMap =
-                                        match inferredType.self with
-                                        | Ok inferredSelf -> addToLocalNamesMap name inferredSelf localNamesMap
-                                        | Error e ->
-                                            // @TODO: we should really add results into the names map types so that if a binding has a type error that we actually surface that error instead of a bizarre "name not defined" one
-                                            localNamesMap
+                                        addToLocalNamesMap name inferredType.self localNamesMap
 
                                     let combinedMapResult =
                                         combineTwoUnificationVarMaps uniVarsMap inferredType.constrained
 
-                                    withThisBindingAdded,
-                                    combinedMapResult,
-                                    Seq.append innerErrs' inferredType.innerErrors)
+                                    withThisBindingAdded, combinedMapResult, innerErrs' @ inferredType.innerErrors)
                                 (localNamesMap, uniVarsMap, innerErrs)
 
 
@@ -1128,7 +1171,7 @@ module TypeInference =
                         fst instantiated, snd instantiated, innerErrs'
 
                 )
-                (namesWithTypeAnnotations, Map.empty, Seq.empty)
+                (namesWithTypeAnnotations, Map.empty, List.empty)
 
         {| inferredTypes = localNamesMap
            constrained = uniVarsMap
@@ -1230,7 +1273,6 @@ module TypeInference =
 
         let unified : TypeUnificationResult =
             unifyTwoTypeContents replacedType1 replacedType2
-
 
         match unified.unified with
         | Ok okSelf ->
@@ -1479,7 +1521,6 @@ module TypeInference =
             : UnificationVarsMap =
             match (contents1, map1), (contents2, map2) with
             | (UnifRedirect redirect1, _), (UnifRedirect redirect2, _) ->
-                // @TODO: I think we need to follow the redirects for both of these and then unify the results at the end... and then make sure all 3 of these redirects are pointing to that unified result
                 let firstRedirectResult = UnificationVarsMap.findUnificationVarResult redirect1 map1
 
                 let secondRedirectResult =
@@ -1503,8 +1544,6 @@ module TypeInference =
 
             | (UnifRedirect redirect, redirectMap), (UnifResult res, _)
             | (UnifResult res, _), (UnifRedirect redirect, redirectMap) ->
-                // @TODO: I think we need to follow the redirect and then unify that redirect result with the result here... and then make sure we have two of the redirects (uniVar and redirect) pointing to that unified result
-
                 let redirectResult =
                     UnificationVarsMap.findUnificationVarResult redirect redirectMap
 
@@ -1560,7 +1599,7 @@ module TypeInference =
 
         { self = combinedSelf.unified
           constrained = combinedUniVarMap
-          innerErrors = Seq.append sacuv1.innerErrors sacuv2.innerErrors }
+          innerErrors = sacuv1.innerErrors @ sacuv2.innerErrors }
 
 
 

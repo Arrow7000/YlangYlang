@@ -19,7 +19,7 @@ let private makePolyType typeContents =
     { forall = List.empty
       typeExpr = typeContents }
 
-
+let private mono = makePolyType
 
 let private makePolyTypeWith typeVars typeContents =
     { forall = List.ofSeq typeVars
@@ -171,6 +171,7 @@ let testTypeInference () =
               let none =
                   LocalLower (LowerIdent "none"),
                   makePolyTypeWith [ maybeTypeParam1 ] (concreteMaybeType (TypeVariable maybeTypeParam1))
+                  |> Ok
 
               let just =
                   LocalLower (LowerIdent "just"),
@@ -180,6 +181,7 @@ let testTypeInference () =
                           "Arrow"
                           [ TypeVariable maybeTypeParam2
                             concreteMaybeType (TypeVariable maybeTypeParam2) ])
+                  |> Ok
 
               let namesMap = Map.ofList [ none; just ]
 
@@ -237,6 +239,7 @@ let testTypeInference () =
                       (makePolyType Types.intType)
                       (makePolyType Types.intType)
                       (makePolyType Types.intType)
+                  |> Ok
 
               let minus =
                   LowerIdent "-",
@@ -244,6 +247,7 @@ let testTypeInference () =
                       (makePolyType Types.intType)
                       (makePolyType Types.intType)
                       (makePolyType Types.intType)
+                  |> Ok
 
               let lte =
                   LowerIdent "<=",
@@ -251,6 +255,7 @@ let testTypeInference () =
                       (makePolyType Types.intType)
                       (makePolyType Types.intType)
                       (makePolyType Types.boolType)
+                  |> Ok
 
               let namesMap : TypedNamesMap =
                   [ mult; minus; lte ] |> List.map (Tuple.mapFst LocalLower) |> Map.ofList
@@ -283,6 +288,7 @@ let testTypeInference () =
                       (makePolyType Types.intType)
                       (makePolyType Types.intType)
                       (makePolyType Types.intType)
+                  |> Ok
 
               let eq =
                   LowerIdent "==",
@@ -290,11 +296,12 @@ let testTypeInference () =
                       (makePolyType Types.intType)
                       (makePolyType Types.intType)
                       (makePolyType Types.boolType)
+                  |> Ok
 
 
               // We need true and false values because DummyLang doesn't currently support type variant literals
-              let true_ = LowerIdent "true", makePolyType Types.boolType
-              let false_ = LowerIdent "false", makePolyType Types.boolType
+              let true_ = LowerIdent "true", makePolyType Types.boolType |> Ok
+              let false_ = LowerIdent "false", makePolyType Types.boolType |> Ok
 
               let namesMap : TypedNamesMap =
                   [ minus; eq; true_; false_ ] |> List.map (Tuple.mapFst LocalLower) |> Map.ofList
@@ -332,47 +339,125 @@ let testTypeInference () =
           }
 
           test "Infer the type of a function application in steps" {
+              let identityFunc = lambda "x" (name "x")
 
-              let result =
-                  result {
-                      let identityFunc = lambda "x" (name "x")
+              let identityFuncType = TypeInference.inferTypeFromExpr Map.empty identityFunc
 
-                      let! identityFuncType =
-                          TypeInference.inferTypeFromExpr Map.empty identityFunc |> Sacuv.sequenceResult
+              let appliedToTuple = apply identityFunc (tuple (int 7) (str "blabla"))
 
-                      let appliedToInt = apply identityFunc (int 7)
-
-
-                      let appliedToIntType =
-                          TypeInference.inferTypeFromExpr
-                              (Map.singleton (LocalLower (LowerIdent "identity")) identityFuncType.self)
-                              appliedToInt
-
-                      let appliedToStr = apply identityFunc (str "blabla")
-
-                      let appliedToStrType =
-                          TypeInference.inferTypeFromExpr
-                              (Map.singleton (LocalLower (LowerIdent "identity")) identityFuncType.self)
-                              appliedToStr
-
-                      let appliedToTuple = apply identityFunc (tuple (int 7) (str "blabla"))
-
-                      let! appliedToTupleType =
-                          TypeInference.inferTypeFromExpr
-                              (Map.singleton (LocalLower (LowerIdent "identity")) identityFuncType.self)
-                              appliedToTuple
-                          |> Sacuv.sequenceResult
-
-
-                      return appliedToTupleType.self
-                  }
+              let appliedToTupleType =
+                  TypeInference.inferTypeFromExpr
+                      (Map.singleton (LocalLower (LowerIdent "identity")) identityFuncType.self)
+                      appliedToTuple
 
               Expect.equal
-                  result
+                  appliedToTupleType.self
                   (Types.tupleTypeOf (makePolyType Types.intType) (makePolyType Types.strType)
                    |> Ok)
                   "Expected a tuple type"
 
           }
 
-          ]
+
+          test "Skolemised type cannot work with two different types" {
+              (*
+              let
+                f maybe =
+                    let
+                        strList = [ just "hi", maybe ]
+                        intList = [ just 0, maybe ]
+                    in (strList, intList)
+              in f (just 9)
+              *)
+              let typeParam = TypeVariableId (System.Guid.NewGuid ())
+
+
+              let concreteMaybeType typeParam = Types.makeParametricType "Maybe" [ typeParam ]
+
+              let just =
+                  LocalLower (LowerIdent "just"),
+                  makePolyTypeWith
+                      [ typeParam ]
+                      (Types.makeParametricType
+                          "Arrow"
+                          [ TypeVariable typeParam; concreteMaybeType (TypeVariable typeParam) ])
+                  |> Ok
+
+              let namesMap = Map.ofList [ just ]
+
+              let expr =
+                  letBindings
+                      (NEL.make (
+                          letBinding
+                              "f"
+                              None
+                              (lambda
+                                  "maybe"
+                                  (letBindings
+                                      (NEL.new_
+                                          (letBinding
+                                              "strList"
+                                              None
+                                              (AST.list [ apply (name "just") (str "hi"); name "maybe" ]))
+                                          [ letBinding
+                                                "intList"
+                                                None
+                                                (AST.list [ apply (name "just") (int 0); name "maybe" ]) ])
+                                      (tuple (name "strList") (name "intList"))))
+                      ))
+                      (apply (name "f") (apply (name "just") (int 9)))
+
+              let result = TypeInference.inferTypeFromExpr namesMap expr
+
+              Expect.isError result.self "Skolems can't be polymorphic"
+          }
+          test "Prevent skolem from escaping" {
+              (*
+                let
+                    f x =
+                        let
+                            g : (a -> ()) -> ()
+                            g h = h x
+                        in x
+                in (f 10, f "boo")
+              *)
+
+              // This case throws an error in the Elm compiler, see https://github.com/elm/compiler/issues/2301
+
+              let typeParamA = TypeVariableId (System.Guid.NewGuid ())
+
+              let expr =
+                  letBindings
+                      (NEL.make (
+                          letBinding
+                              "f"
+                              None
+                              (lambda
+                                  "x"
+                                  (letBindings
+                                      (NEL.make (
+                                          letBinding
+                                              "g"
+                                              (Some (
+                                                  Types.funcTypeOf
+                                                      (Types.funcTypeOf
+                                                          (mono (Types.typeVar typeParamA))
+                                                          (mono Types.unitType))
+                                                      (mono Types.unitType)
+                                              ))
+                                              (lambda "h" (apply (name "h") (name "x")))
+                                      ))
+                                      (name "x")))
+                      ))
+                      (tuple (apply (name "f") (int 10)) (apply (name "f") (str "boo")))
+
+              let result = TypeInference.inferTypeFromExpr Map.empty expr
+
+              Expect.equal
+                  result.self
+                  (Ok (Types.tupleTypeOf (mono Types.intType) (mono Types.strType)))
+                  "Expected (Int, String)"
+
+              Expect.equal result.constrained Map.empty "Expected no constraints propagated up out of scope"
+              Expect.equal result.innerErrors List.empty "Expected no inner errors"
+          } ]
