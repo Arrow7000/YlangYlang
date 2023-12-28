@@ -9,11 +9,24 @@
 *)
 
 
-
 /// When putting items in a topologically sorted list, we need to treat the mutually recursive items like they are one thing, so we store them together
-type OneOrMore<'T> =
-    | One of 'T
-    | More of 'T tom
+type StronglyConnectedGraph<'T, 'Name> =
+    /// A single item that is not dependent on itself
+    | SingleNonRec of name : 'Name * 'T
+    /// A single item that is dependent on itself
+    | SingleSelfRec of name : 'Name * 'T
+    /// A group of items that are mutually recursive
+    | MutualRecursive of namesAndThings : ('Name * 'T) tom
+
+    static member map (f : 'T -> 'U) (item : SCC<'T, 'Name>) : SCC<'U, 'Name> =
+        match item with
+        | SingleNonRec (name, item') -> SingleNonRec (name, f item')
+        | SingleSelfRec (name, item') -> SingleSelfRec (name, f item')
+        | MutualRecursive tom -> MutualRecursive (tom |> TOM.map (Tuple.mapSnd f))
+
+
+/// Alias for StronglyConnectedGraph
+and SCC<'T, 'Name> = StronglyConnectedGraph<'T, 'Name>
 
 
 type private DepsMap<'T, 'Key when 'Key : comparison> = Map<'Key, 'T * 'Key seq>
@@ -118,24 +131,25 @@ let getStronglyConnectedComponents<'T, 'Key when 'Key : comparison and 'T : comp
     (getId : 'T -> 'Key)
     (getDependencies : 'T -> 'Key seq)
     (items : 'T seq)
-    : OneOrMore<'T> list =
+    : StronglyConnectedGraph<'T, 'Key> list =
     let dependencyMap = makeDependenciesMap getId getDependencies items
     let dependentsMap = flipDependenciesMapToDependentsMap dependencyMap
 
 
     /// This returns at least the node itself if it has no dependents. Otherwise it will return any strongly connected graphs the node is part of, along with the results from the node's dependents
     let rec recurser
-        (alreadyGatheredResults : OneOrMore<'T> set)
+        (alreadyGatheredResults : StronglyConnectedGraph<'T, 'Key> set)
         (stack : 'T list)
         (node : 'T)
-        : SccState<'T> option * OneOrMore<'T> set =
+        : SccState<'T> option * StronglyConnectedGraph<'T, 'Key> set =
         let nodeId = getId node
 
         let alreadyProcessedThisNode =
             alreadyGatheredResults
             |> Set.exists (function
-                | One item -> item = node
-                | More itemsTom -> TOM.exists<_> ((=) node) itemsTom)
+                | SingleNonRec (_, item) -> item = node
+                | SingleSelfRec (_, item) -> item = node
+                | MutualRecursive itemsTom -> TOM.exists<_> (snd >> (=) node) itemsTom)
 
 
         if alreadyProcessedThisNode then
@@ -150,6 +164,7 @@ let getStronglyConnectedComponents<'T, 'Key when 'Key : comparison and 'T : comp
                     match Map.tryFind key dependentsMap with
                     | None -> failwith $"Can't find key {key} in map"
                     | Some (item, _) -> item)
+                |> Seq.toList
 
 
             match checkIfNodeIsAlreadyInStack getId stack node with
@@ -166,9 +181,9 @@ let getStronglyConnectedComponents<'T, 'Key when 'Key : comparison and 'T : comp
 
             | None ->
 
-                match Seq.toList childNodes with
+                match childNodes with
                 | [] -> // This node is its own component
-                    None, One node |> Set.singleton
+                    None, SingleNonRec (getId node, node) |> Set.singleton
 
 
                 | firstChildNode :: otherChildNodes ->
@@ -194,7 +209,7 @@ let getStronglyConnectedComponents<'T, 'Key when 'Key : comparison and 'T : comp
                     match List.choose id theSccOpts with
                     | [] ->
                         // There are no SCC states returned, so this node is not part of any SCCs, so just return the completed SCCs, as well as this node as its own SCC
-                        None, Set.add (One node) theCompletedSccs
+                        None, Set.add (SingleNonRec (getId node, node)) theCompletedSccs
 
                     | headChildScc :: restChildSccs ->
                         let sccNel = NEL.new_ headChildScc restChildSccs
@@ -222,13 +237,14 @@ let getStronglyConnectedComponents<'T, 'Key when 'Key : comparison and 'T : comp
                                 failwith
                                     "There are zero nodes in a strongly connected graph. This should not be possible and likely indicates a bug."
 
-                            | node' :: [] -> None, Set.add (One node') theCompletedSccs
+                            | node' :: [] -> None, Set.add (SingleSelfRec (getId node', node')) theCompletedSccs
 
 
                             | head' :: neck' :: tail' ->
-                                let combinedNodesTom = TOM.new_ head' neck' tail'
+                                let combinedNodesTom =
+                                    TOM.new_ head' neck' tail' |> TOM.map (fun item -> getId item, item)
 
-                                None, Set.add (More combinedNodesTom) theCompletedSccs
+                                None, Set.add (MutualRecursive combinedNodesTom) theCompletedSccs
 
                         else
                             // Otherwise we humbly pass the combined information about the SCC that this is part of up to the caller
@@ -290,15 +306,16 @@ let rec sortTopologically<'T, 'Key when 'Key : comparison and 'T : comparison>
 let rec sortOneOrMoreTopologically<'T, 'Key when 'Key : comparison and 'T : comparison>
     (getId : 'T -> 'Key)
     (getDependencies : 'T -> 'Key seq)
-    (sccs : OneOrMore<'T> seq)
-    : OneOrMore<'T> list =
+    (sccs : StronglyConnectedGraph<'T, 'Key> seq)
+    : StronglyConnectedGraph<'T, 'Key> list =
 
-    let oomToSeq : OneOrMore<'T> -> 'T seq =
+    let oomToSeq : StronglyConnectedGraph<'T, 'Key> -> 'T seq =
         function
-        | One item -> Seq.singleton item
-        | More itemsTom -> itemsTom
+        | SingleNonRec (_, item) -> Seq.singleton item
+        | SingleSelfRec (_, item) -> Seq.singleton item
+        | MutualRecursive itemsTom -> itemsTom |> Seq.map snd
 
-    let getIdFromOneOrMore : OneOrMore<'T> -> 'Key set =
+    let getIdFromOneOrMore : StronglyConnectedGraph<'T, 'Key> -> 'Key set =
         oomToSeq >> Seq.map getId >> Set.ofSeq
 
 
@@ -317,14 +334,14 @@ let rec sortOneOrMoreTopologically<'T, 'Key when 'Key : comparison and 'T : comp
         | Some v -> v
 
 
-    let getDependenciesFromOneOrMore (oom : OneOrMore<'T>) : 'Key set seq =
+    let getDependenciesFromOneOrMore (oom : StronglyConnectedGraph<'T, 'Key>) : 'Key set seq =
         oomToSeq oom
         |> Seq.collect getDependencies
         |> Seq.map getKeyGroup
         |> Set.ofSeq // to remove duplicates
         |> Set.toSeq
 
-    let dependencyMap : DepsMap<OneOrMore<'T>, 'Key set> =
+    let dependencyMap : DepsMap<StronglyConnectedGraph<'T, 'Key>, 'Key set> =
         makeDependenciesMap getIdFromOneOrMore getDependenciesFromOneOrMore sccs
 
     sortTopologically dependencyMap

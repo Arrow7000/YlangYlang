@@ -72,7 +72,7 @@ let testTypeInference () =
                   |> Ok
 
               Expect.equal
-                  result.self
+                  result.unified
                   expected
                   "Two tuple types with concrete types in one slot and type vars in the other unify into a tuple with both slots concretised"
           }
