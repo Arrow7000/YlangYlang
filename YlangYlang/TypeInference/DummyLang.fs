@@ -26,6 +26,36 @@ type TypeVariableId =
 
 
 
+type SkolemId =
+    | SkolemId of System.Guid
+
+    override this.ToString () =
+        let (SkolemId id) = this
+        String.trim 8 (string id)
+
+/// E.g. `Bool`, `Maybe Int`, `Result Error a`, etc. In other words, a type expression.
+type TypeExpr =
+    /// This references a type expression in a type declaration, e.g.TypeExprJust a` in `Maybe a = Just a | Nothing`
+    | TypeExpr of label : UpperNameValue * params_ : TypeExpr list
+    /// This references a type param in the type declaration, e.g. the `a` in the `Just a` in the `Maybe a = Just a | Nothing`
+    | Skolem of name : LowerIdent
+
+    override this.ToString () =
+        match this with
+        | Skolem skolem -> string skolem
+        | TypeExpr (label, params_) ->
+            match params_ with
+            | [] -> string label
+            | first :: rest ->
+                "("
+                + string label
+                + " "
+                + String.concat " " (first :: rest |> List.map string)
+                + ")"
+
+
+
+
 
 
 type PolyTypeContents =
@@ -33,13 +63,17 @@ type PolyTypeContents =
     | UnificationVar of UnificationVarId
     /// Referencing a *type variable* (not a unification variable!)
     | TypeVariable of TypeVariableId
+    /// This is only available during a type `check` call – may not be unified with anything other than itself, or a uniVar
+    | Skolem of name : LowerIdent
     /// A simple unparametric type like `Int` or `String`, or a parametric type like `List a`, `Maybe a`, `Result e a`
     | ConcreteType of ConcreteType
+
 
     override this.ToString () =
         match this with
         | UnificationVar uniVar -> string uniVar
         | TypeVariable typeVar -> string typeVar
+        | Skolem (name, _) -> string name
         | ConcreteType concType -> string concType
 
 
@@ -93,6 +127,19 @@ type UnificationError =
 
 /// The context where we put the names with their type checked types
 type TypedNamesMap = Map<LowerNameValue, Result<PolyType, UnificationError>>
+
+/// This maps from constructor names to the parameters that the variant needs to the signature of the constructor; e.g. `String -> Int -> Maybe (String, Int)`.
+///
+///The list represents the parameters for this particular constructor
+type CtorNamesMap = Map<UpperNameValue, TypeExpr list * PolyType>
+
+
+type Ctx =
+    { ctorNamesMap : CtorNamesMap
+      skolemsInScope : LowerIdent set
+      typedNamesMap : TypedNamesMap }
+
+
 
 /// A local context, we return these from functions that type check let bindings and top level declarations
 type TypedLocalNamesMap = Map<LowerIdent, Result<PolyType, UnificationError>>
@@ -317,8 +364,17 @@ module Types =
 /// Module with a greatly simplified language but still containing all the key elements, so that we can test type inference and resolution with a simpler version before tackling the real thing
 module AbstractSyntaxTree =
 
+
+    //type TypeAnnotation =
+    //    | ConcreteTypeName of name : UpperIdent * typeParams : TypeAnnotation
+    //    /// This could either be an implicit new type variable or it could reference a type variable declared higher up. Only way to tell is to check if it's a new one or not.
+    //    | TypeVarName of name : LowerIdent
+
+
+
     type LetBindingSingle =
         { name : LowerIdent
+          //typeAnnotation : TypeAnnotation option
           typeAnnotation : PolyType option
           assignedExpr : Expr }
 
@@ -330,6 +386,8 @@ module AbstractSyntaxTree =
         | TupleVal of first : Expr * second : Expr
         | LambdaVal of param : LowerIdent * body : Expr
         | NamedVal of LowerIdent
+        /// Type constructor
+        | TypeCtor of name : UpperIdent
         | LetBindings of bindings : LetBindingSingle nel * body : Expr
         | FuncApplication of funcExpr : Expr * input : Expr
         | IfElse of condition : Expr * then_ : Expr * else_ : Expr
@@ -467,12 +525,9 @@ let addLocalNamesMap (localNamesMap : TypedLocalNamesMap) (namesMap : TypedNames
 
 
 
-let combineTwoLocalNamesMaps (map1 : TypedLocalNamesMap) (map2 : TypedLocalNamesMap) : TypedLocalNamesMap =
-    // @TODO: this should really throw an error if there are any name clashes so we don't get silently overwritten names
-    Map.merge map1 map2
-
-let combineMultipleLocalnamesMaps (maps : TypedLocalNamesMap seq) : TypedLocalNamesMap =
-    maps |> Seq.fold combineTwoLocalNamesMaps Map.empty
+let addLocalNamesMapToCtx (localNamesMap : TypedLocalNamesMap) (ctx : Ctx) : Ctx =
+    { ctx with
+        typedNamesMap = addLocalNamesMap localNamesMap ctx.typedNamesMap }
 
 
 
@@ -903,6 +958,60 @@ module TypeInference =
 
 
 
+    let convertTypeExprToPolyType
+        (skolemsInScope : LowerIdent set)
+        (typeExpr : TypeExpr)
+        : Map<LowerIdent, TypeVariableId> * PolyType =
+
+        let rec traverser
+            (skolemToTypeVarMapping : Map<LowerIdent, TypeVariableId>)
+            (typeExpr : TypeExpr)
+            : Map<LowerIdent, TypeVariableId> * PolyTypeContents =
+
+            match typeExpr with
+            | TypeExpr (label, params_) ->
+                let polyTypes, newSkolemMap =
+                    params_
+                    |> List.mapFold
+                        (fun newMap param ->
+                            let newNewMap, polyType = traverser newMap param
+                            polyType, newNewMap)
+                        skolemToTypeVarMapping
+
+                newSkolemMap, ConcType (label, polyTypes) |> ConcreteType
+
+            | TypeExpr.Skolem name ->
+                let typeVar =
+                    match Map.tryFind name skolemToTypeVarMapping with
+                    | None -> makeNewTypeVar ()
+                    | Some tv -> tv
+
+                Map.add name typeVar skolemToTypeVarMapping, Skolem name
+
+
+        let map, result = traverser Map.empty typeExpr
+
+        map,
+        { forall = map |> Map.values |> Seq.toList
+          typeExpr = result }
+
+
+
+    let check (ctx : Ctx) (expectedType : TypeExpr) (expr : Ast.Expr) : Result<unit, UnificationError> =
+        let skolemsToTypeVarsMap, convertedPolyType =
+            convertTypeExprToPolyType ctx.skolemsInScope expectedType
+
+        let ctxWithSkolemsAdded =
+            { ctx with
+                skolemsInScope = skolemsToTypeVarsMap |> Map.keys |> Set.ofSeq |> Set.union ctx.skolemsInScope }
+
+        //let skolemise typeVar = ()
+
+
+        match expr with
+        | Ast.StrVal str ->
+
+            ()
 
 
 
@@ -986,7 +1095,6 @@ module TypeInference =
         | Ast.FuncApplication (funcExpr, inputExpr) ->
             let inputType = inferTypeFromExpr namesMap inputExpr
 
-
             let funcExprType = inferTypeFromExpr namesMap funcExpr
 
             match inputType.self, funcExprType.self with
@@ -1047,6 +1155,27 @@ module TypeInference =
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     and resolveNamesTopologically
         (namesMap : TypedNamesMap)
         (namesAndExprs : Ast.LetBindingSingle nel)
@@ -1062,11 +1191,11 @@ module TypeInference =
             |> Seq.choose (fun binding -> binding.typeAnnotation |> Option.map (Ok >> Tuple.makePair binding.name))
             |> Map.ofSeq
 
-        let hasTypeAnnotation name = Map.tryFind name namesMap |> Option.isSome
+        let hasTypeAnnotation name namesMap = Map.tryFind name namesMap |> Option.isSome
 
         /// But only if this isn't already in the map because it has an explicit type annotatino
         let addToLocalNamesMap name okSelf (localNamesMap : TypedLocalNamesMap) =
-            if hasTypeAnnotation (LocalLower name) then
+            if hasTypeAnnotation name localNamesMap then
                 localNamesMap
 
             else
@@ -1075,7 +1204,7 @@ module TypeInference =
 
         /// But only if this isn't already in the map because it has an explicit type annotatino
         let addToGlobalNamesMap name okSelf (namesMap : TypedNamesMap) =
-            if hasTypeAnnotation name then
+            if hasTypeAnnotation name namesMap then
                 namesMap
 
             else
