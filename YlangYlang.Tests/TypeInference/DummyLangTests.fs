@@ -25,6 +25,9 @@ let private makePolyTypeWith typeVars typeContents =
     { forall = List.ofSeq typeVars
       typeExpr = typeContents }
 
+let private makeParametricTypeFromStr str = Types.makeParametricType (LocalUpper (UpperIdent str))
+
+
 
 
 [<Tests>]
@@ -33,7 +36,7 @@ let testTypeInference () =
         "Test type inference for the dummy language"
         [ testTheory "Infer the type of some primitive literals" [ str "hello", Types.strType; int 42, Types.intType ]
           <| fun (expr, type_) ->
-              let result = TypeInference.inferTypeFromExpr Map.empty expr
+              let result = TypeInference.inferTypeFromExpr Ctx.empty expr
               let expectedType = result.self |> Result.map _.typeExpr
 
               Expect.equal expectedType (Ok type_) (sprintf "Expected %A but got %A" type_ expectedType)
@@ -42,7 +45,7 @@ let testTypeInference () =
               "Infer the type of more complex expressions with substitutions"
               [ apply (lambda "bla" (int 43)) (str "bloo"), makePolyType Types.intType ]
           <| fun (expr, type_) ->
-              let result = TypeInference.inferTypeFromExpr Map.empty expr
+              let result = TypeInference.inferTypeFromExpr Ctx.empty expr
               let expectedType = result.self
 
               Expect.equal expectedType (Ok type_) (sprintf "Expected %A but got %A" type_ expectedType)
@@ -146,7 +149,7 @@ let testTypeInference () =
                     (tuple (apply (name "identity") (int 7)) (apply (name "identity") (str "blabla"))),
                 Types.tupleTypeOf (makePolyType Types.intType) (makePolyType Types.strType) ]
           <| fun (msg, expr, expectedType) ->
-              let result = TypeInference.inferTypeFromExpr Map.empty expr
+              let result = TypeInference.inferTypeFromExpr Ctx.empty expr
               Expect.equal result.self (Ok expectedType) msg
 
 
@@ -166,7 +169,7 @@ let testTypeInference () =
               let maybeTypeParam1 = TypeVariableId (System.Guid.NewGuid ())
               let maybeTypeParam2 = TypeVariableId (System.Guid.NewGuid ())
 
-              let concreteMaybeType typeParam = Types.makeParametricType "Maybe" [ typeParam ]
+              let concreteMaybeType typeParam = makeParametricTypeFromStr "Maybe" [ typeParam ]
 
               let none =
                   LocalLower (LowerIdent "none"),
@@ -177,7 +180,7 @@ let testTypeInference () =
                   LocalLower (LowerIdent "just"),
                   makePolyTypeWith
                       [ maybeTypeParam2 ]
-                      (Types.makeParametricType
+                      (makeParametricTypeFromStr
                           "Arrow"
                           [ TypeVariable maybeTypeParam2
                             concreteMaybeType (TypeVariable maybeTypeParam2) ])
@@ -199,7 +202,11 @@ let testTypeInference () =
                       (concreteMaybeType Types.intType |> makePolyType |> Types.listTypeOf)
 
 
-              let result = TypeInference.inferTypeFromExpr namesMap expr
+              let result =
+                  TypeInference.inferTypeFromExpr
+                      { Ctx.empty with
+                          typedNamesMap = namesMap }
+                      expr
 
               Expect.equal result.self (Ok expected) "Expected a tuple of List String and List Int"
           }
@@ -260,7 +267,11 @@ let testTypeInference () =
               let namesMap : TypedNamesMap =
                   [ mult; minus; lte ] |> List.map (Tuple.mapFst LocalLower) |> Map.ofList
 
-              let result = TypeInference.inferTypeFromExpr namesMap factorial
+              let result =
+                  TypeInference.inferTypeFromExpr
+                      { Ctx.empty with
+                          typedNamesMap = namesMap }
+                      factorial
 
               Expect.equal
                   result.self
@@ -330,7 +341,11 @@ let testTypeInference () =
                                         (apply (name "isEven") (infixOp (LowerIdent "-") (name "n") (int 1))))) ])
                       (apply (name "isEven") (int 5))
 
-              let result = TypeInference.inferTypeFromExpr namesMap factorial
+              let result =
+                  TypeInference.inferTypeFromExpr
+                      { Ctx.empty with
+                          typedNamesMap = namesMap }
+                      factorial
 
               Expect.equal
                   result.self
@@ -341,13 +356,14 @@ let testTypeInference () =
           test "Infer the type of a function application in steps" {
               let identityFunc = lambda "x" (name "x")
 
-              let identityFuncType = TypeInference.inferTypeFromExpr Map.empty identityFunc
+              let identityFuncType = TypeInference.inferTypeFromExpr Ctx.empty identityFunc
 
               let appliedToTuple = apply identityFunc (tuple (int 7) (str "blabla"))
 
               let appliedToTupleType =
                   TypeInference.inferTypeFromExpr
-                      (Map.singleton (LocalLower (LowerIdent "identity")) identityFuncType.self)
+                      { Ctx.empty with
+                          typedNamesMap = Map.singleton (LocalLower (LowerIdent "identity")) identityFuncType.self }
                       appliedToTuple
 
               Expect.equal
@@ -372,13 +388,13 @@ let testTypeInference () =
               let typeParam = TypeVariableId (System.Guid.NewGuid ())
 
 
-              let concreteMaybeType typeParam = Types.makeParametricType "Maybe" [ typeParam ]
+              let concreteMaybeType typeParam = makeParametricTypeFromStr "Maybe" [ typeParam ]
 
               let just =
                   LocalLower (LowerIdent "just"),
                   makePolyTypeWith
                       [ typeParam ]
-                      (Types.makeParametricType
+                      (makeParametricTypeFromStr
                           "Arrow"
                           [ TypeVariable typeParam; concreteMaybeType (TypeVariable typeParam) ])
                   |> Ok
@@ -407,7 +423,11 @@ let testTypeInference () =
                       ))
                       (apply (name "f") (apply (name "just") (int 9)))
 
-              let result = TypeInference.inferTypeFromExpr namesMap expr
+              let result =
+                  TypeInference.inferTypeFromExpr
+                      { Ctx.empty with
+                          typedNamesMap = namesMap }
+                      expr
 
               Expect.isError result.self "Skolems can't be polymorphic"
           }
@@ -423,8 +443,11 @@ let testTypeInference () =
               *)
 
               // This case throws an error in the Elm compiler, see https://github.com/elm/compiler/issues/2301
+              let arrowTypeExpr from to_ = TypeExpr (Types.arrowTypeName, [ from; to_ ])
+              let unitTypeExpr = TypeExpr (Types.unitTypeName, [])
 
-              let typeParamA = TypeVariableId (System.Guid.NewGuid ())
+              let typeAnnotation : TypeExpr =
+                  arrowTypeExpr (arrowTypeExpr (TypeExpr.Skolem (LowerIdent "a")) unitTypeExpr) unitTypeExpr
 
               let expr =
                   letBindings
@@ -438,20 +461,14 @@ let testTypeInference () =
                                       (NEL.make (
                                           letBinding
                                               "g"
-                                              (Some (
-                                                  Types.funcTypeOf
-                                                      (Types.funcTypeOf
-                                                          (mono (Types.typeVar typeParamA))
-                                                          (mono Types.unitType))
-                                                      (mono Types.unitType)
-                                              ))
+                                              (Some typeAnnotation)
                                               (lambda "h" (apply (name "h") (name "x")))
                                       ))
                                       (name "x")))
                       ))
                       (tuple (apply (name "f") (int 10)) (apply (name "f") (str "boo")))
 
-              let result = TypeInference.inferTypeFromExpr Map.empty expr
+              let result = TypeInference.inferTypeFromExpr Ctx.empty expr
 
               Expect.equal
                   result.self
@@ -459,5 +476,4 @@ let testTypeInference () =
                   "Expected (Int, String)"
 
               Expect.equal result.constrained Map.empty "Expected no constraints propagated up out of scope"
-              Expect.equal result.innerErrors List.empty "Expected no inner errors"
           } ]
