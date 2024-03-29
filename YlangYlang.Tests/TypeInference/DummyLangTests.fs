@@ -433,13 +433,13 @@ let testTypeInference () =
           }
           test "Prevent skolem from escaping" {
               (*
-                let
-                    f x =
-                        let
-                            g : (a -> ()) -> ()
-                            g h = h x
-                        in x
-                in (f 10, f "boo")
+               let
+                   f x =
+                       let
+                           g : (a -> ()) -> ()
+                           g h = h x
+                       in x
+               in (f 10, f "boo")
               *)
 
               // This case throws an error in the Elm compiler, see https://github.com/elm/compiler/issues/2301
@@ -476,4 +476,31 @@ let testTypeInference () =
                   "Expected (Int, String)"
 
               Expect.equal result.constrained Map.empty "Expected no constraints propagated up out of scope"
+          }
+
+          test "More specific type signature is allowed" {
+              (*
+              let
+                  f : Int -> Int
+                  f x = x
+              in f
+              *)
+
+              // This case throws an error in the Elm compiler, see https://github.com/elm/compiler/issues/2301
+              let arrowTypeExpr from to_ = TypeExpr (Types.arrowTypeName, [ from; to_ ])
+
+              let typeAnnotation : TypeExpr =
+                  arrowTypeExpr (TypeExpr (Types.intTypeName, [])) (TypeExpr (Types.intTypeName, []))
+
+              let expr =
+                  letBindings (NEL.make (letBinding "f" (Some typeAnnotation) (lambda "x" (name "x")))) (name "f")
+
+              let result = TypeInference.inferTypeFromExpr Ctx.empty expr
+
+
+              Expect.equal result.constrained Map.empty "Expected no constraints propagated up out of scope"
+
+              match result.self with
+              | Ok t -> Tests.printfn $"Success {t}"
+              | Error e -> Tests.failtest $"Expected {string typeAnnotation} but got {e}"
           } ]

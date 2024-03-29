@@ -1049,11 +1049,12 @@ and sod<'a> = SingleOrDuplicate<'a>
 
 module Tuple =
     let makePair a b = a, b
-    let makePairWithSnd b a = a, b
+    let makePairWithSnd (b : 'b) (a : 'a) = a, b
     let mapFst f (a, b) = f a, b
     let mapSnd f (a, b) = a, f b
     let mapBoth f g (a, b) = f a, g b
     let map f (a, b) = f a, f b
+    let clone x = x, x
 
     let sequenceResult (a, b) =
         match a, b with

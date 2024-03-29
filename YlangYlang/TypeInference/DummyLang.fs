@@ -129,6 +129,23 @@ type UnificationError =
     /// Skolems only unify with themselves, not with anything else
     | NarrowedSkolem of skolemName : LowerIdent * narrowedWith : PolyTypeContents
 
+    override this.ToString () =
+        match this with
+        | UnificationClash (conc1, conc2) -> "Unification clash: `" + string conc1 + "` and `" + string conc2 + "`"
+        | UndefinedName name -> "Undefined name: " + string name
+        | UndefinedTypeCtor name -> "Undefined type constructor: " + string name
+        | TriedToUnifyDifferentSkolems (skolem1, skolem2) ->
+            "Tried to unify different skolems: " + string skolem1 + " and " + string skolem2
+        | NarrowedSkolem (skolemName, narrowedWith) ->
+            "Narrowed skolem: " + string skolemName + " with " + string narrowedWith
+
+
+    static member makeClash conc1 conc2 =
+        // // Uncomment when debugging unexpected type errors
+        //failwith ("Unification clash: `" + string conc1 + "` and `" + string conc2 + "`")
+
+        UnificationClash (conc1, conc2)
+
 
 
 /// The context where we put the names with their type checked types
@@ -1263,16 +1280,36 @@ module TypeInference =
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     /// Given a type annotation of what the expression needs to be, check if the expression indeed has that type. Also ensure that the skolems are not narrowed or unified with anything else, because otherwise the type is actually less general than the one specified in the type annotation, which is wrong.
     let rec check (ctx : Ctx) (typeAnnotation : TypeExpr) (expr : Ast.Expr) : TypeCheckResult =
-        let expectedType : PolyType =
-            convertTypeExprToPolyType ctx.skolemsInScope typeAnnotation
 
 
+        let rec innerCheck (ctx' : Ctx) (typeAnnotation' : TypeExpr) (expr' : Ast.Expr) : TypeCheckResult =
 
-        let rec innerCheck (ctx : Ctx) (typeAnnotation' : TypeExpr) (expr : Ast.Expr) : TypeCheckResult =
+            let expectedType : PolyType =
+                convertTypeExprToPolyType ctx'.skolemsInScope typeAnnotation'
 
-            match typeAnnotation', expr with
+
+            match typeAnnotation', expr' with
             | Types.IsPrimitiveType Types.strTypeName, Ast.StrVal _ -> TypeCheckResult.emptyOk
             | Types.IsPrimitiveType Types.intTypeName, Ast.IntVal _ -> TypeCheckResult.emptyOk
 
@@ -1281,22 +1318,20 @@ module TypeInference =
                 TypeCheckResult.emptyOk
 
             | Types.IsListOf inner, Ast.ListVal (first :: rest) ->
-                let innerResult = innerCheck ctx inner first
+                let innerResult = innerCheck ctx' inner first
 
                 match innerResult.result with
                 | Error _ -> innerResult
                 | Ok () ->
                     let listType = Types.listTypeOfExpr inner
-                    let restResult = innerCheck ctx listType (Ast.ListVal rest)
+                    let restResult = innerCheck ctx' listType (Ast.ListVal rest)
 
-                    //{ result = restResult.result
-                    //  constrained = combineTwoUnificationVarMaps innerResult.constrained restResult.constrained }
                     tcrCombineUniVarsMap innerResult.constrained restResult
 
 
             | Types.IsTupleOf (a, b), Ast.TupleVal (valA, valB) ->
-                let resultA = innerCheck ctx a valA
-                let resultB = innerCheck ctx b valB
+                let resultA = innerCheck ctx' a valA
+                let resultB = innerCheck ctx' b valB
 
                 match resultA.result, resultB.result with
                 | Error e, _
@@ -1312,26 +1347,29 @@ module TypeInference =
 
                 let skolemsFromTypeExpr : LowerIdent set =
                     Set.union
-                        (getSkolemsFromTypeExpr ctx.skolemsInScope from)
-                        (getSkolemsFromTypeExpr ctx.skolemsInScope to_)
+                        (getSkolemsFromTypeExpr ctx'.skolemsInScope from)
+                        (getSkolemsFromTypeExpr ctx'.skolemsInScope to_)
 
 
                 let newCtx : Ctx =
-                    { ctx with
-                        skolemsInScope = Set.union skolemsFromTypeExpr ctx.skolemsInScope
+                    { ctx' with
+                        skolemsInScope = Set.union skolemsFromTypeExpr ctx'.skolemsInScope
                         typedNamesMap =
                             // Add parameter to the names map, with its type taken from the function's type annotation
-                            ctx.typedNamesMap
+                            ctx'.typedNamesMap
                             |> Map.add
                                 (LocalLower param)
-                                (Ok (replaceSkolemsInPtcAndMakePolytype ctx.skolemsInScope fromPolyTypeContents)) }
+                                (Ok (replaceSkolemsInPtcAndMakePolytype ctx'.skolemsInScope fromPolyTypeContents)) }
 
 
-                innerCheck newCtx to_ body
+                let bodyResult = innerCheck newCtx to_ body
+                bodyResult
+
+
 
 
             | _, Ast.NamedVal name ->
-                match Map.tryFind (LocalLower name) ctx.typedNamesMap with
+                match Map.tryFind (LocalLower name) ctx'.typedNamesMap with
                 | Some (Ok foundType') ->
 
                     let unified : TypeUnificationResult = unifyTwoTypes expectedType foundType'
@@ -1346,13 +1384,13 @@ module TypeInference =
                 | None -> TypeCheckResult.emptyErr (UndefinedName (LocalLower name))
 
             | _, Ast.TypeCtor name ->
-                match Map.tryFind (LocalUpper name) ctx.ctorNamesMap with
+                match Map.tryFind (LocalUpper name) ctx'.ctorNamesMap with
                 | Some ctorArrowOrFinalTypes ->
                     /// E.g. `Maybe a` for the `Nothing` constructor, or `String -> Result e String` for the `Ok` constructor
                     let ctorType = makeArrowTypeFromNel ctorArrowOrFinalTypes
 
                     let unified =
-                        unifyTwoTypeContents (convertTypeExprToPtc ctorType) (convertTypeExprToPtc typeAnnotation)
+                        unifyTwoTypeContents (convertTypeExprToPtc ctorType) (convertTypeExprToPtc typeAnnotation')
 
                     match unified.unified with
                     | Ok _ -> TypeCheckResult.makeOk unified.constrained
@@ -1365,7 +1403,7 @@ module TypeInference =
 
             | _, _ ->
                 // Defer to inferred type
-                let inferred = inferTypeFromExpr ctx expr
+                let inferred = inferTypeFromExpr ctx' expr'
 
                 match inferred.self with
                 | Ok inferredSelf ->
@@ -1789,7 +1827,9 @@ module TypeInference =
             | TypeVariable tv ->
                 match Map.tryFind tv typeVarToUniVarMap with
                 | Some uniVar -> UnificationVar uniVar
-                | None -> failwith "Each type variable should have a unification variable assigned to replace it"
+                | None ->
+                    failwith
+                        "Each type variable should have a unification variable assigned to replace it, so this should not be possible"
 
 
 
@@ -1855,11 +1895,11 @@ module TypeInference =
 
 
                 | Error _ ->
-                    { unified = UnificationClash (concType1, concType2) |> Error
+                    { unified = UnificationError.makeClash concType1 concType2 |> Error
                       constrained = Map.empty }
 
             else
-                { unified = UnificationClash (concType1, concType2) |> Error
+                { unified = UnificationError.makeClash concType1 concType2 |> Error
                   constrained = Map.empty }
 
 
