@@ -12,13 +12,10 @@ let cstNodeEncoder : Encoder<CstNode<'a>> =
 
 let cstNodeDecoder : Decoder<CstNode<'a>> = fun _ -> failwithf "Not implemented"
 
-let cstCoder =
-    Extra.empty
-    |> Extra.withCustom cstNodeEncoder cstNodeDecoder
+let cstCoder = Extra.empty |> Extra.withCustom cstNodeEncoder cstNodeDecoder
 
 
-let toJson result =
-    Encode.Auto.toString (2, value = result, extra = cstCoder)
+let toJson result = Encode.Auto.toString (2, value = result, extra = cstCoder)
 
 
 
@@ -34,11 +31,11 @@ let main argv =
         >> Result.mapError ParsingError
     )
     //|> tee (printfn "%A")
-    |> Result.map (
-        TypeChecker.typeCheckModule
-    //NameResolution.qualifyModule
-    //>> Result.mapError CanonicalisationError
-    )
+    //|> Result.map (
+    //    TypeChecker.typeCheckModule
+    ////NameResolution.qualifyModule
+    ////>> Result.mapError CanonicalisationError
+    //)
     |> printfn "%A"
 
     0
