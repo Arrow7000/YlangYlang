@@ -26,15 +26,17 @@ type TypeVariableId =
 
 
 
-type SkolemId =
-    | SkolemId of System.Guid
+//type SkolemId =
+//    | SkolemId of System.Guid
 
-    override this.ToString () =
-        let (SkolemId id) = this
-        String.trim 8 (string id)
+//    override this.ToString () =
+//        let (SkolemId id) = this
+//        String.trim 8 (string id)
 
 
 /// E.g. `Bool`, `Maybe Int`, `Result Error a`, etc. In other words, a type expression.
+///
+/// @TODO: need to explain what the difference is between this an a `PolyTypeContents`. I think the difference is that this does not contain any uniVars or typeVars.
 type TypeExpr =
     /// This references a type expression in a type declaration, e.g.TypeExpr (Just a)` in `Maybe a = Just a | Nothing`
     | TypeExpr of label : UpperNameValue * params_ : TypeExpr list
@@ -44,15 +46,23 @@ type TypeExpr =
     override this.ToString () =
         match this with
         | Skolem skolem -> string skolem
-        | TypeExpr (label, params_) ->
-            match params_ with
-            | [] -> string label
-            | first :: rest ->
-                "("
-                + string label
-                + " "
-                + String.concat " " (first :: rest |> List.map string)
-                + ")"
+        | TypeExpr (label, typeParams) ->
+            match label with
+            | LocalUpper (UpperIdent "Arrow") ->
+                match typeParams with
+                | [ from; to_ ] -> string from + " -> " + string to_
+                | _ -> failwith "Arrow type should have exactly two type params"
+            | LocalUpper (UpperIdent "Tuple") ->
+                match typeParams with
+                | [ a; b ] -> "( " + string a + ", " + string b + " )"
+                | _ -> failwith "Tuple type should have exactly two type params"
+            | _ ->
+                match typeParams with
+                | [] -> string label // I.e. a primitive type
+                | first :: rest ->
+                    // I.e. a parametric type
+                    string label + " " + String.concat " " (first :: rest |> List.map string)
+
 
 
 
@@ -64,7 +74,7 @@ type PolyTypeContents =
     | UnificationVar of UnificationVarId
     /// Referencing a *type variable* (not a unification variable!)
     | TypeVariable of TypeVariableId
-    /// This is only available during a type `check` call – may not be unified with anything other than itself, or a uniVar
+    /// This is only available during a type `check` call – may be unified with itself or a uniVar but nothing else!
     | Skolem of name : LowerIdent
     /// A simple unparametric type like `Int` or `String`, or a parametric type like `List a`, `Maybe a`, `Result e a`
     | ConcreteType of ConcreteType
@@ -115,7 +125,7 @@ type PolyType =
 
         match this.forall with
         | [] -> bodyStr
-        | _ :: _ -> "forall " + String.concat " " (this.forall |> List.map string) + ". " + bodyStr
+        | _ :: _ -> "forall " + String.concat " " (List.map string this.forall) + ". " + bodyStr
 
 
 
@@ -163,9 +173,7 @@ type Ctx =
       skolemsInScope : LowerIdent set
       typedNamesMap : TypedNamesMap }
 
-
-module Ctx =
-    let empty : Ctx =
+    static member empty : Ctx =
         { ctorNamesMap = Map.empty
           skolemsInScope = Set.empty
           typedNamesMap = Map.empty }
@@ -306,13 +314,13 @@ type SelfAndConstrainedUnificationVars =
 
 module SelfAndConstrainedUnificationVars =
     /// Make without errors
-    let make self constrained : SelfAndConstrainedUnificationVars =
-        { self = self
+    let make result constrained : SelfAndConstrainedUnificationVars =
+        { self = result
           constrained = constrained }
 
 
-    /// Make with only a self type, no constraineds and no errors
-    let makeEmpty self : SelfAndConstrainedUnificationVars = make self Map.empty
+    /// Make with only a self type, no constraineds
+    let makeEmpty result : SelfAndConstrainedUnificationVars = make result Map.empty
 
     let map f sacuv =
         { self = f sacuv.self
@@ -320,34 +328,36 @@ module SelfAndConstrainedUnificationVars =
 
 
 
-    /// Bubble up the result-ness of the .self field onto the record as a whole
-    let sequenceResult sacuv =
-        sacuv.self
-        |> Result.map (fun self ->
-            {| constrained = sacuv.constrained
-               self = self |})
+///// Bubble up the result-ness of the .self field onto the record as a whole
+//let sequenceResult sacuv =
+//    sacuv.self
+//    |> Result.map (fun self ->
+//        {| constrained = sacuv.constrained
+//           self = self |})
 
 
+/// @TODO: is there a specific reason this couldn't just be a `SelfAndConstrainedUnificationVars`?
 type TypeUnificationResult =
     { unified : Result<PolyType, UnificationError>
       constrained : UnificationVarsMap }
 
 
 
-
+/// The result of a check call, which is only done if we have an expected type we are checking the expression against
 type TypeCheckResult =
     { result : Result<unit, UnificationError>
       constrained : UnificationVarsMap }
 
 
+
 module TypeCheckResult =
 
-    let singleton res : TypeCheckResult =
-        { result = res
+    let singleton result : TypeCheckResult =
+        { result = result
           constrained = Map.empty }
 
-    let make res constrained : TypeCheckResult =
-        { result = res
+    let make result constrained : TypeCheckResult =
+        { result = result
           constrained = constrained }
 
     let makeOk = make (Ok ())
@@ -362,11 +372,7 @@ module TypeCheckResult =
 module Types =
     let makeTypeName = UpperIdent >> LocalUpper
 
-    [<Literal>]
-    let strTypeName' = "String"
-
-    let strTypeName = LocalUpper (UpperIdent strTypeName')
-
+    let strTypeName = makeTypeName "String"
     let intTypeName = makeTypeName "Int"
     let boolTypeName = makeTypeName "Bool"
     let unitTypeName = makeTypeName "Unit"
@@ -429,39 +435,13 @@ module Types =
     let listTypeOfExpr inner = TypeExpr (listTypeName, [ inner ])
 
 
+    (*
+    Active patterns for easier matching on the shape of a type expression
+    *)
 
-    //let (|IsPrimitiveType|_|) (name : UpperNameValue) (type_ : PolyTypeContents) =
-    //    match type_ with
-    //    | ConcreteType (ConcType (label, [])) when label = name -> Some ()
-    //    | _ -> None
-
-    //let (|IsListOf|_|) (type_ : PolyTypeContents) =
-    //    match type_ with
-    //    | ConcreteType (ConcType (label, [ typeParam ])) when label = listTypeName -> Some typeParam
-    //    | ConcreteType (ConcType (label, _)) when label = listTypeName ->
-    //        failwith "List types should have exactly one type parameter"
-    //    | _ -> None
-
-    //let (|IsTupleOf|_|) (type_ : PolyTypeContents) =
-    //    match type_ with
-    //    | ConcreteType (ConcType (label, [ a; b ])) -> Some (a, b)
-    //    | ConcreteType (ConcType (label, _)) when label = listTypeName ->
-    //        failwith "Tuple types should have exactly two type parameters"
-    //    | _ -> None
-
-    //let (|IsFuncTypeOf|_|) (type_ : PolyTypeContents) =
-    //    match type_ with
-    //    | ConcreteType (ConcType (label, [ from; to_ ])) when label = arrowTypeName -> Some (from, to_)
-    //    | ConcreteType (ConcType (label, _)) when label = arrowTypeName ->
-    //        failwith "Function types should have exactly two type parameters"
-    //    | _ -> None
-
-
-
-
-    let (|IsPrimitiveType|_|) (name : UpperNameValue) (type_ : TypeExpr) =
+    let (|IsPrimitiveType|_|) (typeName : UpperNameValue) (type_ : TypeExpr) =
         match type_ with
-        | TypeExpr (label, []) when label = name -> Some ()
+        | TypeExpr (label, []) when label = typeName -> Some ()
         | _ -> None
 
     let (|IsListOf|_|) (type_ : TypeExpr) =
@@ -472,8 +452,8 @@ module Types =
 
     let (|IsTupleOf|_|) (type_ : TypeExpr) =
         match type_ with
-        | TypeExpr (label, [ a; b ]) -> Some (a, b)
-        | TypeExpr (label, _) when label = listTypeName ->
+        | TypeExpr (label, [ a; b ]) when label = tupleTypeName -> Some (a, b)
+        | TypeExpr (label, _) when label = tupleTypeName ->
             failwith "Tuple types should have exactly two type parameters"
         | _ -> None
 
@@ -641,7 +621,7 @@ let private sortBindingsTopologically
 
 
 /// Add a local names map to a global one
-let addLocalNamesMap (localNamesMap : TypedLocalNamesMap) (namesMap : TypedNamesMap) : TypedNamesMap =
+let private addLocalNamesMap (localNamesMap : TypedLocalNamesMap) (namesMap : TypedNamesMap) : TypedNamesMap =
     localNamesMap
     |> Map.mapKeyVal (fun key v -> LocalLower key, v)
     // @TODO: this should really throw an error if there are any name clashes so we don't get silently overwritten names
@@ -649,7 +629,7 @@ let addLocalNamesMap (localNamesMap : TypedLocalNamesMap) (namesMap : TypedNames
 
 
 
-let addLocalNamesMapToCtx (localNamesMap : TypedLocalNamesMap) (ctx : Ctx) : Ctx =
+let private addLocalNamesMapToCtx (localNamesMap : TypedLocalNamesMap) (ctx : Ctx) : Ctx =
     { ctx with
         typedNamesMap = addLocalNamesMap localNamesMap ctx.typedNamesMap }
 
@@ -659,7 +639,7 @@ let addLocalNamesMapToCtx (localNamesMap : TypedLocalNamesMap) (ctx : Ctx) : Ctx
 
 
 /// Combine multiple polytypes and combine all their type variables in a single polytype forall clause
-let liftPolyTypesIntoPtc
+let private liftPolyTypesIntoPtc
     (makePolyTypeFromPtcs : PolyTypeContents list -> PolyTypeContents)
     (polyTypes : PolyType list)
     : PolyType =
@@ -756,50 +736,12 @@ module TypeInference =
         | Error e -> applyTypeReplacementToUnificationError tr e |> Error
 
 
-    let rec private applyTypeReplacementToInnerError
-        (tr : TypeReplacement)
-        (unifError : InnerTypeError)
-        : InnerTypeError =
-        match unifError with
-        | ErrorHiddenByAnnotation err ->
-            match err with
-            | UnificationClash (conc1, conc2) ->
-                let conc1Result = applyTypeReplacementToConcType tr conc1
-                let conc2Result = applyTypeReplacementToConcType tr conc2
-
-                match conc1Result, conc2Result with
-                | Ok conc1Ok, Ok conc2Ok -> UnificationClash (conc1Ok, conc2Ok) |> ErrorHiddenByAnnotation
-                | Error e, _
-                | _, Error e -> ErrorHiddenByAnnotation e
-
-            | UndefinedName name -> UndefinedName name |> ErrorHiddenByAnnotation
-            | NarrowedSkolem (skolemName, narrowedWith) ->
-                let replacedNarrowedWith = applyTypeReplacement tr narrowedWith
-
-                match replacedNarrowedWith with
-                | Ok replNarrowedWith -> NarrowedSkolem (skolemName, replNarrowedWith) |> ErrorHiddenByAnnotation
-                | Error e -> ErrorHiddenByAnnotation e
-
-            | TriedToUnifyDifferentSkolems (skolem1, skolem2) ->
-                TriedToUnifyDifferentSkolems (skolem1, skolem2) |> ErrorHiddenByAnnotation
-
-            | UndefinedTypeCtor name -> UndefinedTypeCtor name |> ErrorHiddenByAnnotation
-
-        | AnnotationVsInferenceClash (typeVars, annotated, inferred) ->
-            let annotatedResult = applyTypeReplacement tr annotated
-            let inferredResult = applyTypeReplacement tr inferred
-
-            match annotatedResult, inferredResult with
-            | Ok annotatedOk, Ok inferredOk -> AnnotationVsInferenceClash (typeVars, annotatedOk, inferredOk)
-
-
-            | Error e, _
-            | _, Error e -> ErrorHiddenByAnnotation e
 
 
 
 
-    and private applyTypeReplacementToPolyType
+
+    let private applyTypeReplacementToPolyType
         (normInstr : TypeReplacement)
         (polyType : PolyType)
         : Result<PolyType, UnificationError> =
@@ -860,7 +802,7 @@ module TypeInference =
 
 
     /// Get the coupled constraints for the provided typeVars and uniVars from the given uniVarsMap
-    let getCoupledConstraintsSet
+    let private getCoupledConstraintsSet
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (unificationVarsMap : UnificationVarsMap)
         : UnificationVarsMap.CoupledConstraints set =
@@ -959,7 +901,7 @@ module TypeInference =
 
 
 
-    let instantiateTypeVarsInUniVarsMap
+    let private instantiateTypeVarsInUniVarsMap
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (unificationVarsMap : UnificationVarsMap)
         : UnificationVarsMap =
@@ -979,7 +921,7 @@ module TypeInference =
 
 
 
-    let instantiateTypeVarsInUniVarsMapAndLocalNamesMap
+    let private instantiateTypeVarsInUniVarsMapAndLocalNamesMap
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (localNamesMap : TypedLocalNamesMap)
         (unificationVarsMap : UnificationVarsMap)
@@ -1032,7 +974,7 @@ module TypeInference =
 
 
 
-    let concretiseAndGeneraliseSacuv
+    let private concretiseAndGeneraliseSacuv
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (unificationVarsMap : UnificationVarsMap)
         (type_ : PolyTypeContents)
@@ -1052,7 +994,7 @@ module TypeInference =
               constrained = unificationVarsMap }
 
 
-    let concretiseAndGeneraliseTypeUnificationResult
+    let private concretiseAndGeneraliseTypeUnificationResult
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (unificationVarsMap : UnificationVarsMap)
         (type_ : PolyTypeContents)
@@ -1075,7 +1017,7 @@ module TypeInference =
               constrained = unificationVarsMap }
 
 
-    let instantiateTypeVarsInPolyType
+    let private instantiateTypeVarsInPolyType
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (unificationVarsMap : UnificationVarsMap)
         (type_ : PolyType)
@@ -1083,7 +1025,7 @@ module TypeInference =
         concretiseAndGeneraliseSacuv unificationVarsWeCanEliminate unificationVarsMap type_.typeExpr
 
 
-    let instantiateTypeVarsInPolyTypeResult
+    let private instantiateTypeVarsInPolyTypeResult
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (unificationVarsMap : UnificationVarsMap)
         (type_ : Result<PolyType, UnificationError>)
@@ -1106,7 +1048,7 @@ module TypeInference =
 
 
     /// Converts a type expression to a PolyTypeContents
-    let rec convertTypeExprToPolyTypeContents (typeExpr : TypeExpr) : PolyTypeContents =
+    let rec private convertTypeExprToPolyTypeContents (typeExpr : TypeExpr) : PolyTypeContents =
         match typeExpr with
         | TypeExpr (label, params_) ->
             ConcType (label, List.map convertTypeExprToPolyTypeContents params_)
@@ -1116,7 +1058,7 @@ module TypeInference =
 
 
     /// Converts a type expression to a PolyType, automatically generalising any skolems that are not already constrained
-    let rec convertTypeExprToPolyType (constrainedSkolems : LowerIdent set) (typeExpr : TypeExpr) : PolyType =
+    let rec private convertTypeExprToPolyType (constrainedSkolems : LowerIdent set) (typeExpr : TypeExpr) : PolyType =
 
         let rec traverser (typeExpr : TypeExpr) : PolyTypeContents =
             match typeExpr with
@@ -1145,7 +1087,7 @@ module TypeInference =
 
 
     /// Get all the skolems used in a PolyTypeContents
-    let rec getSkolems (ptc : PolyTypeContents) : LowerIdent set =
+    let rec private getSkolems (ptc : PolyTypeContents) : LowerIdent set =
         match ptc with
         | PTC.Skolem name -> Set.singleton name
         | PTC.TypeVariable _ -> Set.empty
@@ -1154,7 +1096,10 @@ module TypeInference =
 
 
 
-    let rec getSkolemsFromTypeExpr (unconstrainedSkolems : LowerIdent set) (typeExpr : TypeExpr) : LowerIdent set =
+    let rec private getSkolemsFromTypeExpr
+        (unconstrainedSkolems : LowerIdent set)
+        (typeExpr : TypeExpr)
+        : LowerIdent set =
         match typeExpr with
         | TypeExpr (_, params_) -> Set.collect (getSkolemsFromTypeExpr unconstrainedSkolems) params_
         | TypeExpr.Skolem name -> Set.singleton name
@@ -1162,12 +1107,18 @@ module TypeInference =
 
 
     /// Get all the skolems that are not already constrained because they're in scope
-    let getUnconstrainedSkolems (constrainedSkolems : LowerIdent set) (ptc : PolyTypeContents) : LowerIdent set =
+    let private getUnconstrainedSkolems
+        (constrainedSkolems : LowerIdent set)
+        (ptc : PolyTypeContents)
+        : LowerIdent set =
         Set.difference (getSkolems ptc) constrainedSkolems
 
 
     /// This takes any non-captured skolems from the type expression and generalises them to type variables
-    let replaceSkolemsInPtcAndMakePolytype (constrainedSkolems : LowerIdent set) (ptc : PolyTypeContents) : PolyType =
+    let private replaceSkolemsInPtcAndMakePolytype
+        (constrainedSkolems : LowerIdent set)
+        (ptc : PolyTypeContents)
+        : PolyType =
         let unconstrainedSkolems = getUnconstrainedSkolems constrainedSkolems ptc
 
         let skolemToTypeVarsMap : Map<LowerIdent, TypeVariableId> =
@@ -1203,11 +1154,11 @@ module TypeInference =
 
 
 
-    let primitiveTypeExpr label = TypeExpr (label, List.empty)
-    let parametricTypeExpr label typeParams = TypeExpr (label, typeParams)
-    let arrowTypeExpr from to_ = TypeExpr (Types.arrowTypeName, [ from; to_ ])
+    //let primitiveTypeExpr label = TypeExpr (label, List.empty)
+    //let parametricTypeExpr label typeParams = TypeExpr (label, typeParams)
+    let private arrowTypeExpr from to_ = TypeExpr (Types.arrowTypeName, [ from; to_ ])
 
-    let rec makeArrowTypeFromNel nel =
+    let rec private makeArrowTypeFromNel nel =
         let (NEL (head, rest)) = nel
 
         match rest with
@@ -1241,26 +1192,26 @@ module TypeInference =
         | TypeVar of string
         | Skolem of string
 
-    let handleOnlyBase (onlyBase : OnlyBase) =
+    let private handleOnlyBase (onlyBase : OnlyBase) =
         match onlyBase with
         | OnlyBase (Concrete (label, typeParams)) -> ()
         | OnlyBase (UniVar name) -> ()
 
-    let handleWithSkolem (withSkolem : WithSkolem) =
+    let private handleWithSkolem (withSkolem : WithSkolem) =
         match withSkolem with
         | WithSkolem.Base (Concrete (label, typeParams)) -> ()
         | WithSkolem.Base (UniVar name) -> ()
         | WithSkolem.Skolem name -> ()
 
 
-    let handleWithTypeVar (withTypeVar : WithTypeVar) =
+    let private handleWithTypeVar (withTypeVar : WithTypeVar) =
         match withTypeVar with
         | WithTypeVar.Base (Concrete (label, typeParams)) -> ()
         | WithTypeVar.Base (UniVar name) -> ()
         | WithTypeVar.TypeVar typeVar -> ()
 
 
-    let handleWithBoth (withBoth : WithBoth) =
+    let private handleWithBoth (withBoth : WithBoth) =
         match withBoth with
         | WithBoth.Base (Concrete (label, typeParams)) -> ()
         | WithBoth.Base (UniVar name) -> ()
@@ -1273,7 +1224,7 @@ module TypeInference =
 
 
     /// This is needed so we can unify two type expressions, one derived from an expression itself, and one from the type annotation
-    let rec convertTypeExprToPtc (typeExpr : TypeExpr) : PolyTypeContents =
+    let rec private convertTypeExprToPtc (typeExpr : TypeExpr) : PolyTypeContents =
         match typeExpr with
         | TypeExpr (label, params_) -> ConcType (label, List.map convertTypeExprToPtc params_) |> ConcreteType
         | TypeExpr.Skolem name -> PTC.Skolem name
@@ -1300,7 +1251,7 @@ module TypeInference =
 
 
     /// Given a type annotation of what the expression needs to be, check if the expression indeed has that type. Also ensure that the skolems are not narrowed or unified with anything else, because otherwise the type is actually less general than the one specified in the type annotation, which is wrong.
-    let rec check (ctx : Ctx) (typeAnnotation : TypeExpr) (expr : Ast.Expr) : TypeCheckResult =
+    let rec private check (ctx : Ctx) (typeAnnotation : TypeExpr) (expr : Ast.Expr) : TypeCheckResult =
 
 
         let rec innerCheck (ctx' : Ctx) (typeAnnotation' : TypeExpr) (expr' : Ast.Expr) : TypeCheckResult =
@@ -1429,11 +1380,11 @@ module TypeInference =
 
 
     /// Useful for when you only want to return one result, but you need to fold in the unification findings from a separate check or infer result
-    and tcrCombineUniVarsMap (uniVarsMap : UnificationVarsMap) (tcr : TypeCheckResult) : TypeCheckResult =
+    and private tcrCombineUniVarsMap (uniVarsMap : UnificationVarsMap) (tcr : TypeCheckResult) : TypeCheckResult =
         { result = tcr.result
           constrained = combineTwoUnificationVarMaps uniVarsMap tcr.constrained }
 
-    and tcrCombineAndResult uniVarMapA uniVarMapB result =
+    and private tcrCombineAndResult uniVarMapA uniVarMapB result =
         { result = result
           constrained = combineTwoUnificationVarMaps uniVarMapA uniVarMapB }
 
@@ -1601,7 +1552,7 @@ module TypeInference =
 
 
 
-    and resolveNamesTopologically
+    and private resolveNamesTopologically
         (ctx : Ctx)
         (namesAndExprs : Ast.LetBindingSingle nel)
         : {| inferredTypes : TypedLocalNamesMap
@@ -1753,7 +1704,7 @@ module TypeInference =
 
 
 
-    and resolveAllLetBindingsAndBody
+    and private resolveAllLetBindingsAndBody
         (ctx : Ctx)
         (letBindings : Ast.LetBindingSingle nel)
         (body : Ast.Expr)
@@ -1862,7 +1813,7 @@ module TypeInference =
 
 
 
-    and unifyTwoTypeContents (type1 : PolyTypeContents) (type2 : PolyTypeContents) : TypeUnificationResult =
+    and private unifyTwoTypeContents (type1 : PolyTypeContents) (type2 : PolyTypeContents) : TypeUnificationResult =
         match type1, type2 with
         | PTC.TypeVariable _, _
         | _, PTC.TypeVariable _ -> failwith "All type variables should have been swapped out for unification variables!"
@@ -1949,7 +1900,7 @@ module TypeInference =
 
 
 
-    and unifyTwoTypeContentsResults
+    and private unifyTwoTypeContentsResults
         (typeContentResult1 : Result<PolyTypeContents, UnificationError>)
         (typeContentResult2 : Result<PolyTypeContents, UnificationError>)
         : TypeUnificationResult =
@@ -1962,7 +1913,7 @@ module TypeInference =
               constrained = Map.empty }
 
 
-    and unifyTwoTypeResults
+    and private unifyTwoTypeResults
         (typeResult1 : Result<PolyType, UnificationError>)
         (typeResult2 : Result<PolyType, UnificationError>)
         : TypeUnificationResult =
@@ -1977,7 +1928,7 @@ module TypeInference =
 
 
 
-    and unifyTwoTypeResultsOpts
+    and private unifyTwoTypeResultsOpts
         (typeOpt1 : Result<PolyType, UnificationError> option)
         (typeOpt2 : Result<PolyType, UnificationError> option)
         : {| unified : Result<PolyType, UnificationError> option
@@ -2000,7 +1951,7 @@ module TypeInference =
                constrained = Map.empty |}
 
 
-    and unifyTwoTypeContentsResultsOpts
+    and private unifyTwoTypeContentsResultsOpts
         (typeOpt1 : Result<PolyTypeContents, UnificationError> option)
         (typeOpt2 : Result<PolyTypeContents, UnificationError> option)
         : {| unified : Result<PolyType, UnificationError> option
@@ -2023,7 +1974,7 @@ module TypeInference =
                constrained = Map.empty |}
 
 
-    and unifyTwoTypeContentsOpts
+    and private unifyTwoTypeContentsOpts
         (typeOpt1 : PolyTypeContents option)
         (typeOpt2 : PolyTypeContents option)
         : {| unified : Result<PolyType, UnificationError> option
@@ -2047,7 +1998,7 @@ module TypeInference =
 
 
 
-    and unifyManyTypeContents (types : PolyTypeContents nel) : TypeUnificationResult =
+    and private unifyManyTypeContents (types : PolyTypeContents nel) : TypeUnificationResult =
         let (NEL (first, rest)) = types
 
         let combinedType, combinedUnificationMap =
@@ -2067,7 +2018,7 @@ module TypeInference =
 
 
 
-    and unifyManyTypes (types : PolyType nel) : TypeUnificationResult =
+    and private unifyManyTypes (types : PolyType nel) : TypeUnificationResult =
         let (NEL (first, rest)) = types
 
         let combinedType, combinedUnificationMap =
@@ -2091,7 +2042,10 @@ module TypeInference =
 
 
 
-    and combineTwoUnificationVarMaps (map1 : UnificationVarsMap) (map2 : UnificationVarsMap) : UnificationVarsMap =
+    and private combineTwoUnificationVarMaps
+        (map1 : UnificationVarsMap)
+        (map2 : UnificationVarsMap)
+        : UnificationVarsMap =
         /// This function ensures that we not only combine items based on which uniVars they have in common, but also that we correctly unify them based on shared typeVars
         let rec singleFolder
             (uniVarsMap : UnificationVarsMap)
@@ -2174,12 +2128,12 @@ module TypeInference =
 
 
 
-    and combineUnificationVarMapsSeq : UnificationVarsMap seq -> UnificationVarsMap =
+    and private combineUnificationVarMapsSeq : UnificationVarsMap seq -> UnificationVarsMap =
         Seq.fold combineTwoUnificationVarMaps Map.empty
 
 
     /// Unify two `SelfAndConstrainedUnificationVars`s
-    and unifyTwoSacuvs
+    and private unifyTwoSacuvs
         (sacuv1 : SelfAndConstrainedUnificationVars)
         (sacuv2 : SelfAndConstrainedUnificationVars)
         : SelfAndConstrainedUnificationVars =
@@ -2193,6 +2147,8 @@ module TypeInference =
 
 
 
-    and unifyMultipleSacuvs (sacuvs : SelfAndConstrainedUnificationVars nel) : SelfAndConstrainedUnificationVars =
+    and private unifyMultipleSacuvs
+        (sacuvs : SelfAndConstrainedUnificationVars nel)
+        : SelfAndConstrainedUnificationVars =
         let (NEL (head, rest)) = sacuvs
         List.fold unifyTwoSacuvs head rest

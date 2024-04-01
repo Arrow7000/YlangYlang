@@ -5,7 +5,6 @@ open Expecto
 
 
 open DummyLang
-open DummyLang.AbstractSyntaxTree
 
 module AST = DummyLang.AbstractSyntaxTree
 
@@ -34,7 +33,9 @@ let private makeParametricTypeFromStr str = Types.makeParametricType (LocalUpper
 let testTypeInference () =
     testList
         "Test type inference for the dummy language"
-        [ testTheory "Infer the type of some primitive literals" [ str "hello", Types.strType; int 42, Types.intType ]
+        [ testTheory
+              "Infer the type of some primitive literals"
+              [ AST.str "hello", Types.strType; AST.int 42, Types.intType ]
           <| fun (expr, type_) ->
               let result = TypeInference.inferTypeFromExpr Ctx.empty expr
               let expectedType = result.self |> Result.map _.typeExpr
@@ -43,7 +44,7 @@ let testTypeInference () =
 
           testTheory
               "Infer the type of more complex expressions with substitutions"
-              [ apply (lambda "bla" (int 43)) (str "bloo"), makePolyType Types.intType ]
+              [ AST.apply (AST.lambda "bla" (AST.int 43)) (AST.str "bloo"), makePolyType Types.intType ]
           <| fun (expr, type_) ->
               let result = TypeInference.inferTypeFromExpr Ctx.empty expr
               let expectedType = result.self
@@ -90,9 +91,9 @@ let testTypeInference () =
                 in
                 makeTuple "bla" : (String, Int)
                 """,
-                letBindings
-                    (NEL.make (letBinding "makeTuple" None (lambda "a" (tuple (name "a") (int 7)))))
-                    (apply (name "makeTuple") (str "bla")),
+                AST.letBindings
+                    (NEL.make (AST.letBinding "makeTuple" None (AST.lambda "a" (AST.tuple (AST.name "a") (AST.int 7)))))
+                    (AST.apply (AST.name "makeTuple") (AST.str "bla")),
                 Types.tupleTypeOf (makePolyType Types.strType) (makePolyType Types.intType)
                 """
                 let
@@ -100,9 +101,9 @@ let testTypeInference () =
                 in
                 makeList "bla" : List String
                 """,
-                letBindings
-                    (NEL.make (letBinding "makeList" None (lambda "a" (list [ name "a" ]))))
-                    (apply (name "makeList") (str "bla")),
+                AST.letBindings
+                    (NEL.make (AST.letBinding "makeList" None (AST.lambda "a" (AST.list [ AST.name "a" ]))))
+                    (AST.apply (AST.name "makeList") (AST.str "bla")),
                 Types.listTypeOf (makePolyType Types.strType)
 
                 """
@@ -111,9 +112,11 @@ let testTypeInference () =
                 in
                 makeIntList : Int -> List Int
                 """,
-                letBindings
-                    (NEL.make (letBinding "makeIntList" None (lambda "b" (list [ int 0; name "b" ]))))
-                    (name "makeIntList"),
+                AST.letBindings
+                    (NEL.make (
+                        AST.letBinding "makeIntList" None (AST.lambda "b" (AST.list [ AST.int 0; AST.name "b" ]))
+                    ))
+                    (AST.name "makeIntList"),
                 Types.funcTypeOf (makePolyType Types.intType) (Types.listTypeOf (makePolyType Types.intType))
 
                 """
@@ -122,9 +125,9 @@ let testTypeInference () =
                 in
                 identity 7 : Int
                 """,
-                letBindings
-                    (NEL.make (letBinding "identity" None (lambda "x" (name "x"))))
-                    (apply (name "identity") (int 7)),
+                AST.letBindings
+                    (NEL.make (AST.letBinding "identity" None (AST.lambda "x" (AST.name "x"))))
+                    (AST.apply (AST.name "identity") (AST.int 7)),
                 makePolyType Types.intType
 
                 """
@@ -133,9 +136,9 @@ let testTypeInference () =
                 in
                 identity "blabla" : String
                 """,
-                letBindings
-                    (NEL.make (letBinding "identity" None (lambda "x" (name "x"))))
-                    (apply (name "identity") (str "blabla")),
+                AST.letBindings
+                    (NEL.make (AST.letBinding "identity" None (AST.lambda "x" (AST.name "x"))))
+                    (AST.apply (AST.name "identity") (AST.str "blabla")),
                 makePolyType Types.strType
 
                 """
@@ -144,9 +147,11 @@ let testTypeInference () =
                 in
                 (identity 7, identity "blabla") : (Int, String)
                 """,
-                letBindings
-                    (NEL.make (letBinding "identity" None (lambda "x" (name "x"))))
-                    (tuple (apply (name "identity") (int 7)) (apply (name "identity") (str "blabla"))),
+                AST.letBindings
+                    (NEL.make (AST.letBinding "identity" None (AST.lambda "x" (AST.name "x"))))
+                    (AST.tuple
+                        (AST.apply (AST.name "identity") (AST.int 7))
+                        (AST.apply (AST.name "identity") (AST.str "blabla"))),
                 Types.tupleTypeOf (makePolyType Types.intType) (makePolyType Types.strType) ]
           <| fun (msg, expr, expectedType) ->
               let result = TypeInference.inferTypeFromExpr Ctx.empty expr
@@ -189,12 +194,18 @@ let testTypeInference () =
               let namesMap = Map.ofList [ none; just ]
 
               let expr =
-                  letBindings
+                  AST.letBindings
                       (NEL.new_
-                          (letBinding "maybe" None (name "none"))
-                          [ letBinding "strList" None (AST.list [ apply (name "just") (AST.str "hi"); name "maybe" ])
-                            letBinding "intList" None (AST.list [ apply (name "just") (AST.int 9); name "maybe" ]) ])
-                      (tuple (name "strList") (name "intList"))
+                          (AST.letBinding "maybe" None (AST.name "none"))
+                          [ AST.letBinding
+                                "strList"
+                                None
+                                (AST.list [ AST.apply (AST.name "just") (AST.str "hi"); AST.name "maybe" ])
+                            AST.letBinding
+                                "intList"
+                                None
+                                (AST.list [ AST.apply (AST.name "just") (AST.int 9); AST.name "maybe" ]) ])
+                      (AST.tuple (AST.name "strList") (AST.name "intList"))
 
               let expected =
                   Types.tupleTypeOf
@@ -222,23 +233,25 @@ let testTypeInference () =
 
               *)
 
-              let factorial : Expr =
-                  letBindings
+              let factorial : AST.Expr =
+                  AST.letBindings
                       (NEL.make (
-                          letBinding
+                          AST.letBinding
                               "factorial"
                               None
-                              (lambda
+                              (AST.lambda
                                   "n"
-                                  (ifThenElse
-                                      (infixOp (LowerIdent "<=") (name "n") (int 0))
-                                      (int 1)
-                                      (infixOp
+                                  (AST.ifThenElse
+                                      (AST.infixOp (LowerIdent "<=") (AST.name "n") (AST.int 0))
+                                      (AST.int 1)
+                                      (AST.infixOp
                                           (LowerIdent "*")
-                                          (name "n")
-                                          (apply (name "factorial") (infixOp (LowerIdent "-") (name "n") (int 1))))))
+                                          (AST.name "n")
+                                          (AST.apply
+                                              (AST.name "factorial")
+                                              (AST.infixOp (LowerIdent "-") (AST.name "n") (AST.int 1))))))
                       ))
-                      (apply (name "factorial") (int 5))
+                      (AST.apply (AST.name "factorial") (AST.int 5))
 
               let mult =
                   LowerIdent "*",
@@ -318,28 +331,32 @@ let testTypeInference () =
                   [ minus; eq; true_; false_ ] |> List.map (Tuple.mapFst LocalLower) |> Map.ofList
 
 
-              let factorial : Expr =
-                  letBindings
+              let factorial : AST.Expr =
+                  AST.letBindings
                       (NEL.new_
-                          (letBinding
+                          (AST.letBinding
                               "isEven"
                               None
-                              (lambda
+                              (AST.lambda
                                   "n"
-                                  (ifThenElse
-                                      (infixOp (LowerIdent "==") (name "n") (int 0))
-                                      (name "true")
-                                      (apply (name "isOdd") (infixOp (LowerIdent "-") (name "n") (int 1))))))
-                          [ letBinding
+                                  (AST.ifThenElse
+                                      (AST.infixOp (LowerIdent "==") (AST.name "n") (AST.int 0))
+                                      (AST.name "true")
+                                      (AST.apply
+                                          (AST.name "isOdd")
+                                          (AST.infixOp (LowerIdent "-") (AST.name "n") (AST.int 1))))))
+                          [ AST.letBinding
                                 "isOdd"
                                 None
-                                (lambda
+                                (AST.lambda
                                     "n"
-                                    (ifThenElse
-                                        (infixOp (LowerIdent "==") (name "n") (int 0))
-                                        (name "false")
-                                        (apply (name "isEven") (infixOp (LowerIdent "-") (name "n") (int 1))))) ])
-                      (apply (name "isEven") (int 5))
+                                    (AST.ifThenElse
+                                        (AST.infixOp (LowerIdent "==") (AST.name "n") (AST.int 0))
+                                        (AST.name "false")
+                                        (AST.apply
+                                            (AST.name "isEven")
+                                            (AST.infixOp (LowerIdent "-") (AST.name "n") (AST.int 1))))) ])
+                      (AST.apply (AST.name "isEven") (AST.int 5))
 
               let result =
                   TypeInference.inferTypeFromExpr
@@ -354,11 +371,12 @@ let testTypeInference () =
           }
 
           test "Infer the type of a function application in steps" {
-              let identityFunc = lambda "x" (name "x")
+              let identityFunc = AST.lambda "x" (AST.name "x")
 
               let identityFuncType = TypeInference.inferTypeFromExpr Ctx.empty identityFunc
 
-              let appliedToTuple = apply identityFunc (tuple (int 7) (str "blabla"))
+              let appliedToTuple =
+                  AST.apply identityFunc (AST.tuple (AST.int 7) (AST.str "blabla"))
 
               let appliedToTupleType =
                   TypeInference.inferTypeFromExpr
@@ -402,26 +420,26 @@ let testTypeInference () =
               let namesMap = Map.ofList [ just ]
 
               let expr =
-                  letBindings
+                  AST.letBindings
                       (NEL.make (
-                          letBinding
+                          AST.letBinding
                               "f"
                               None
-                              (lambda
+                              (AST.lambda
                                   "maybe"
-                                  (letBindings
+                                  (AST.letBindings
                                       (NEL.new_
-                                          (letBinding
+                                          (AST.letBinding
                                               "strList"
                                               None
-                                              (AST.list [ apply (name "just") (str "hi"); name "maybe" ]))
-                                          [ letBinding
+                                              (AST.list [ AST.apply (AST.name "just") (AST.str "hi"); AST.name "maybe" ]))
+                                          [ AST.letBinding
                                                 "intList"
                                                 None
-                                                (AST.list [ apply (name "just") (int 0); name "maybe" ]) ])
-                                      (tuple (name "strList") (name "intList"))))
+                                                (AST.list [ AST.apply (AST.name "just") (AST.int 0); AST.name "maybe" ]) ])
+                                      (AST.tuple (AST.name "strList") (AST.name "intList"))))
                       ))
-                      (apply (name "f") (apply (name "just") (int 9)))
+                      (AST.apply (AST.name "f") (AST.apply (AST.name "just") (AST.int 9)))
 
               let result =
                   TypeInference.inferTypeFromExpr
@@ -450,23 +468,23 @@ let testTypeInference () =
                   arrowTypeExpr (arrowTypeExpr (TypeExpr.Skolem (LowerIdent "a")) unitTypeExpr) unitTypeExpr
 
               let expr =
-                  letBindings
+                  AST.letBindings
                       (NEL.make (
-                          letBinding
+                          AST.letBinding
                               "f"
                               None
-                              (lambda
+                              (AST.lambda
                                   "x"
-                                  (letBindings
+                                  (AST.letBindings
                                       (NEL.make (
-                                          letBinding
+                                          AST.letBinding
                                               "g"
                                               (Some typeAnnotation)
-                                              (lambda "h" (apply (name "h") (name "x")))
+                                              (AST.lambda "h" (AST.apply (AST.name "h") (AST.name "x")))
                                       ))
-                                      (name "x")))
+                                      (AST.name "x")))
                       ))
-                      (tuple (apply (name "f") (int 10)) (apply (name "f") (str "boo")))
+                      (AST.tuple (AST.apply (AST.name "f") (AST.int 10)) (AST.apply (AST.name "f") (AST.str "boo")))
 
               let result = TypeInference.inferTypeFromExpr Ctx.empty expr
 
@@ -493,7 +511,9 @@ let testTypeInference () =
                   arrowTypeExpr (TypeExpr (Types.intTypeName, [])) (TypeExpr (Types.intTypeName, []))
 
               let expr =
-                  letBindings (NEL.make (letBinding "f" (Some typeAnnotation) (lambda "x" (name "x")))) (name "f")
+                  AST.letBindings
+                      (NEL.make (AST.letBinding "f" (Some typeAnnotation) (AST.lambda "x" (AST.name "x"))))
+                      (AST.name "f")
 
               let result = TypeInference.inferTypeFromExpr Ctx.empty expr
 
