@@ -222,6 +222,10 @@ type UnificationVarsMap = Map<UnificationVarId, UnifResOrRedirect>
 
 
 
+type NewUnificationVarsMap = Map<UnificationVarId, Result<PolyTypeContents, UnificationError> option ref>
+
+
+
 
 module UnificationVarsMap =
     let private findByUnificationVar (uniVar : UnificationVarId) (map : UnificationVarsMap) : UnifResOrRedirect =
@@ -1390,6 +1394,10 @@ module TypeInference =
 
 
 
+
+
+
+
     and inferTypeFromExpr (ctx : Ctx) (expr : Ast.Expr) : SelfAndConstrainedUnificationVars =
         let namesMap = ctx.typedNamesMap
 
@@ -1813,7 +1821,20 @@ module TypeInference =
 
 
 
-    and private unifyTwoTypeContents (type1 : PolyTypeContents) (type2 : PolyTypeContents) : TypeUnificationResult =
+
+
+
+
+
+
+
+
+
+    and private unifyTwoTypeContents
+        (ctx : NewUnificationVarsMap)
+        (type1 : PolyTypeContents)
+        (type2 : PolyTypeContents)
+        : Result<PolyTypeContents, UnificationError> =
         match type1, type2 with
         | PTC.TypeVariable _, _
         | _, PTC.TypeVariable _ -> failwith "All type variables should have been swapped out for unification variables!"
@@ -1824,75 +1845,50 @@ module TypeInference =
             if name1 = name2 then
                 match List.zipList typeParams1 typeParams2 with
                 | Ok combinedTypeParams ->
-                    let paramsResults, unificationVarMap =
+                    let paramsResults =
                         combinedTypeParams
-                        |> List.mapFold
-                            (fun state (param1, param2) ->
-                                let unificationResult = unifyTwoTypeContents param1 param2
-
-                                let combineResult = combineTwoUnificationVarMaps state unificationResult.constrained
-
-                                unificationResult.unified, combineResult)
-                            Map.empty
-
-                    { unified =
-                        match Result.sequenceList paramsResults with
-                        | Ok unifiedParams ->
-                            liftPolyTypesIntoPtc (fun p -> PTC.ConcreteType <| ConcType (name1, p)) unifiedParams
-                            |> Ok
-                        | Error errs -> NEL.head errs |> Error
-
-                      constrained = unificationVarMap }
+                        |> List.map (fun (param1, param2) -> unifyTwoTypeContents ctx param1 param2)
 
 
-                | Error _ ->
-                    { unified = UnificationError.makeClash concType1 concType2 |> Error
-                      constrained = Map.empty }
+                    match Result.sequenceList paramsResults with
+                    | Ok unifiedParams -> ConcType (name1, unifiedParams) |> PTC.ConcreteType |> Ok
+                    | Error errs -> NEL.head errs |> Error
+
+                | Error _ -> UnificationError.makeClash concType1 concType2 |> Error
 
             else
-                { unified = UnificationError.makeClash concType1 concType2 |> Error
-                  constrained = Map.empty }
+                UnificationError.makeClash concType1 concType2 |> Error
 
 
         | PTC.UnificationVar uniVar1, PTC.UnificationVar uniVar2 ->
             if uniVar1 = uniVar2 then
-                { unified = type1 |> Types.makeEmptyPolyType |> Ok
-                  constrained = Map.empty }
+                Ok (PTC.UnificationVar uniVar1)
 
             else
-                /// Just so we have a consistent ordering so we avoid accidentally creating cycles of unification vars that don't lead anywhere
-                let smallerUniVar, biggerUniVar = sortItems uniVar1 uniVar2
+                unifyUniVars ctx uniVar1 uniVar2
 
-                /// The logic here being that we redirect one unification var to the other one. By convention we make the self type be the smaller uniVar, add an entry in the unification map to point it to the bigger one.
-                /// The bigger one will keep pointing to whatever it's pointing to in other unification maps, and the smaller one in other maps will be unified with the bigger one, which will result in unifying the bigger one with a concrete type.
-                let constrained : UnificationVarsMap =
-                    Map.singleton smallerUniVar (UnifResult (PTC.UnificationVar biggerUniVar |> Ok |> Some))
-
-                { unified = PTC.UnificationVar smallerUniVar |> Types.makeEmptyPolyType |> Ok
-                  constrained = constrained }
+                Ok (PTC.UnificationVar uniVar1)
 
 
         | PTC.UnificationVar uniVar, PTC.ConcreteType (ConcType (name, typeVars))
         | PTC.ConcreteType (ConcType (name, typeVars)), PTC.UnificationVar uniVar ->
-            let uniVarsMap : UnificationVarsMap =
-                Map.singleton uniVar (UnifResult (PTC.ConcreteType (ConcType (name, typeVars)) |> Ok |> Some))
 
-            { unified = PTC.UnificationVar uniVar |> Types.makeEmptyPolyType |> Ok
-              constrained = uniVarsMap }
+            constrainUniVarInCtx ctx uniVar (PTC.ConcreteType (ConcType (name, typeVars)))
+
+            PTC.UnificationVar uniVar |> Ok
+
 
         | PTC.Skolem name1, PTC.Skolem name2 ->
             if name1 = name2 then
-                { unified = Types.makeEmptyPolyType (PTC.Skolem name1) |> Ok
-                  constrained = Map.empty }
+                Ok (PTC.Skolem name1)
 
             else
-                { unified = TriedToUnifyDifferentSkolems (name1, name2) |> Error
-                  constrained = Map.empty }
+                TriedToUnifyDifferentSkolems (name1, name2) |> Error
+
 
         | PTC.Skolem name, t
-        | t, PTC.Skolem name ->
-            { unified = NarrowedSkolem (name, t) |> Error
-              constrained = Map.empty }
+        | t, PTC.Skolem name -> NarrowedSkolem (name, t) |> Error
+
 
 
 
@@ -1901,139 +1897,115 @@ module TypeInference =
 
 
     and private unifyTwoTypeContentsResults
+        (ctx : NewUnificationVarsMap)
         (typeContentResult1 : Result<PolyTypeContents, UnificationError>)
         (typeContentResult2 : Result<PolyTypeContents, UnificationError>)
-        : TypeUnificationResult =
+        : Result<PolyTypeContents, UnificationError> =
         match typeContentResult1, typeContentResult2 with
-        | Ok typeContent1, Ok typeContent2 -> unifyTwoTypeContents typeContent1 typeContent2
+        | Ok typeContent1, Ok typeContent2 -> unifyTwoTypeContents ctx typeContent1 typeContent2
 
         | Error e, _
-        | _, Error e ->
-            { unified = Error e
-              constrained = Map.empty }
-
-
-    and private unifyTwoTypeResults
-        (typeResult1 : Result<PolyType, UnificationError>)
-        (typeResult2 : Result<PolyType, UnificationError>)
-        : TypeUnificationResult =
-        match typeResult1, typeResult2 with
-        | Ok type1, Ok type2 -> unifyTwoTypes type1 type2
-
-        | Error e, _
-        | _, Error e ->
-            { unified = Error e
-              constrained = Map.empty }
+        | _, Error e -> Error e
 
 
 
 
-    and private unifyTwoTypeResultsOpts
-        (typeOpt1 : Result<PolyType, UnificationError> option)
-        (typeOpt2 : Result<PolyType, UnificationError> option)
-        : {| unified : Result<PolyType, UnificationError> option
-             constrained : UnificationVarsMap |}
-        =
-        match typeOpt1, typeOpt2 with
-        | Some type1, Some type2 ->
-            let result = unifyTwoTypeResults type1 type2
 
-            {| unified = Some result.unified
-               constrained = result.constrained |}
 
-        | Some type_, None
-        | None, Some type_ ->
-            {| unified = Some type_
-               constrained = Map.empty |}
 
-        | None, None ->
-            {| unified = None
-               constrained = Map.empty |}
+
+
+    /// Point two univars to the same thing
+    and private unifyUniVars
+        (ctx : NewUnificationVarsMap)
+        (uniVar1 : UnificationVarId)
+        (uniVar2 : UnificationVarId)
+        : unit =
+        match Map.tryFind uniVar1 ctx, Map.tryFind uniVar2 ctx with
+        | None, _
+        | _, None -> failwith "Any univar we unify should already be present in the univarsmap"
+        | Some v1, Some v2 ->
+            match v1.Value, v2.Value with
+            | None, None ->
+                // Both are unbound, so we can just point one to the other
+                v2.Value <- Some (Ok <| UnificationVar uniVar1)
+
+            | Some _, None -> v2.Value <- Some (Ok <| UnificationVar uniVar1)
+            | None, Some _ -> v1.Value <- Some (Ok <| UnificationVar uniVar2)
+
+            | Some result1, Some result2 ->
+                let unifiedResult = unifyTwoTypeContentsResults ctx result1 result2
+                v1.Value <- Some unifiedResult
+                v2.Value <- Some (Ok <| UnificationVar uniVar1)
+
+
+
+
+    /// Add a constraint to a univar
+    and private constrainUniVarInCtx
+        (ctx : NewUnificationVarsMap)
+        (uniVar : UnificationVarId)
+        (constraint_ : PolyTypeContents)
+        : unit =
+        match Map.tryFind uniVar ctx with
+        | None -> failwith "Any univar we unify should already be present in the univarsmap"
+        | Some value ->
+            match value.Value with
+            | None -> value.Value <- Some (Ok constraint_)
+            | Some existingConstraint ->
+                let unifiedResult =
+                    unifyTwoTypeContentsResults ctx existingConstraint (Ok constraint_)
+
+                value.Value <- Some unifiedResult
+
+
+
+
+
+
+
+
+
+
+    //and private unifyTwoTypeContentsResultsOpts
+    //    (typeOpt1 : Result<PolyTypeContents, UnificationError> option)
+    //    (typeOpt2 : Result<PolyTypeContents, UnificationError> option)
+    //    : {| unified : Result<PolyType, UnificationError> option
+    //         constrained : UnificationVarsMap |}
+    //    =
+    //    match typeOpt1, typeOpt2 with
+    //    | Some type1, Some type2 ->
+    //        let result = unifyTwoTypeContentsResults type1 type2
+
+    //        {| unified = Some result.unified
+    //           constrained = result.constrained |}
+
+    //    | Some type_, None
+    //    | None, Some type_ ->
+    //        {| unified = Some (Result.map Types.makeEmptyPolyType type_)
+    //           constrained = Map.empty |}
+
+    //    | None, None ->
+    //        {| unified = None
+    //           constrained = Map.empty |}
 
 
     and private unifyTwoTypeContentsResultsOpts
+        (ctx : NewUnificationVarsMap)
         (typeOpt1 : Result<PolyTypeContents, UnificationError> option)
         (typeOpt2 : Result<PolyTypeContents, UnificationError> option)
-        : {| unified : Result<PolyType, UnificationError> option
-             constrained : UnificationVarsMap |}
+        : Result<PolyTypeContents, UnificationError> option
+
         =
         match typeOpt1, typeOpt2 with
-        | Some type1, Some type2 ->
-            let result = unifyTwoTypeContentsResults type1 type2
-
-            {| unified = Some result.unified
-               constrained = result.constrained |}
+        | Some type1, Some type2 -> unifyTwoTypeContentsResults ctx type1 type2 |> Some
 
         | Some type_, None
-        | None, Some type_ ->
-            {| unified = Some (Result.map Types.makeEmptyPolyType type_)
-               constrained = Map.empty |}
+        | None, Some type_ -> Some type_
 
-        | None, None ->
-            {| unified = None
-               constrained = Map.empty |}
+        | None, None -> None
 
 
-    and private unifyTwoTypeContentsOpts
-        (typeOpt1 : PolyTypeContents option)
-        (typeOpt2 : PolyTypeContents option)
-        : {| unified : Result<PolyType, UnificationError> option
-             constrained : UnificationVarsMap |}
-        =
-        match typeOpt1, typeOpt2 with
-        | Some type1, Some type2 ->
-            let result = unifyTwoTypeContents type1 type2
-
-            {| unified = Some result.unified
-               constrained = result.constrained |}
-
-        | None, None ->
-            {| unified = None
-               constrained = Map.empty |}
-
-        | Some type_, None
-        | None, Some type_ ->
-            {| unified = Some (Ok (Types.makeEmptyPolyType type_))
-               constrained = Map.empty |}
-
-
-
-    and private unifyManyTypeContents (types : PolyTypeContents nel) : TypeUnificationResult =
-        let (NEL (first, rest)) = types
-
-        let combinedType, combinedUnificationMap =
-            rest
-            |> List.fold
-                (fun (combinedType, combinedUniMap) polyTypeContents ->
-                    let result =
-                        unifyTwoTypeResults combinedType (Ok (Types.makeEmptyPolyType polyTypeContents))
-
-                    let combineResult = combineTwoUnificationVarMaps combinedUniMap result.constrained
-
-                    result.unified, combineResult)
-                (Ok (Types.makeEmptyPolyType first), Map.empty)
-
-        { unified = combinedType
-          constrained = combinedUnificationMap }
-
-
-
-    and private unifyManyTypes (types : PolyType nel) : TypeUnificationResult =
-        let (NEL (first, rest)) = types
-
-        let combinedType, combinedUnificationMap =
-            rest
-            |> List.fold
-                (fun (combinedType, combinedUniMap) polyType ->
-                    let result = unifyTwoTypeResults combinedType (Ok polyType)
-
-                    let combineResult = combineTwoUnificationVarMaps combinedUniMap result.constrained
-
-                    result.unified, combineResult)
-                (Ok first, Map.empty)
-
-        { unified = combinedType
-          constrained = combinedUnificationMap }
 
 
 
