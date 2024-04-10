@@ -38,7 +38,7 @@ let testTypeInference () =
               [ AST.str "hello", Types.strType; AST.int 42, Types.intType ]
           <| fun (expr, type_) ->
               let result = TypeInference.inferTypeFromExpr Ctx.empty expr
-              let expectedType = result.self |> Result.map _.typeExpr
+              let expectedType = result |> Result.map _.typeExpr
 
               Expect.equal expectedType (Ok type_) (sprintf "Expected %A but got %A" type_ expectedType)
 
@@ -46,8 +46,7 @@ let testTypeInference () =
               "Infer the type of more complex expressions with substitutions"
               [ AST.apply (AST.lambda "bla" (AST.int 43)) (AST.str "bloo"), makePolyType Types.intType ]
           <| fun (expr, type_) ->
-              let result = TypeInference.inferTypeFromExpr Ctx.empty expr
-              let expectedType = result.self
+              let expectedType = TypeInference.inferTypeFromExpr Ctx.empty expr
 
               Expect.equal expectedType (Ok type_) (sprintf "Expected %A but got %A" type_ expectedType)
 
@@ -69,14 +68,14 @@ let testTypeInference () =
               let tuple2 =
                   Types.tupleTypeOf (makePolyType Types.intType) (makePolyTypeWith [ typeVar2 ] (TypeVariable typeVar2))
 
-              let result = TypeInference.unifyTwoTypes tuple1 tuple2
+              let unified = TypeInference.unifyTwoTypes tuple1 tuple2
 
               let expected =
                   Types.tupleTypeOf (makePolyType Types.intType) (makePolyType Types.strType)
                   |> Ok
 
               Expect.equal
-                  result.unified
+                  unified
                   expected
                   "Two tuple types with concrete types in one slot and type vars in the other unify into a tuple with both slots concretised"
           }
@@ -155,7 +154,7 @@ let testTypeInference () =
                 Types.tupleTypeOf (makePolyType Types.intType) (makePolyType Types.strType) ]
           <| fun (msg, expr, expectedType) ->
               let result = TypeInference.inferTypeFromExpr Ctx.empty expr
-              Expect.equal result.self (Ok expectedType) msg
+              Expect.equal result (Ok expectedType) msg
 
 
           test "Test let polymorphism with types that still have some polymorphic slots open" {
@@ -219,7 +218,7 @@ let testTypeInference () =
                           typedNamesMap = namesMap }
                       expr
 
-              Expect.equal result.self (Ok expected) "Expected a tuple of List String and List Int"
+              Expect.equal result (Ok expected) "Expected a tuple of List String and List Int"
           }
           test "Test recursive definition" {
               (*
@@ -287,7 +286,7 @@ let testTypeInference () =
                       factorial
 
               Expect.equal
-                  result.self
+                  result
                   (Ok <| Types.makeEmptyPolyType Types.intType)
                   "Factorial expression should have type Int"
           }
@@ -365,7 +364,7 @@ let testTypeInference () =
                       factorial
 
               Expect.equal
-                  result.self
+                  result
                   (Ok <| Types.makeEmptyPolyType Types.boolType)
                   "Mutually recursive functions should have type Bool"
           }
@@ -381,11 +380,11 @@ let testTypeInference () =
               let appliedToTupleType =
                   TypeInference.inferTypeFromExpr
                       { Ctx.empty with
-                          typedNamesMap = Map.singleton (LocalLower (LowerIdent "identity")) identityFuncType.self }
+                          typedNamesMap = Map.singleton (LocalLower (LowerIdent "identity")) identityFuncType }
                       appliedToTuple
 
               Expect.equal
-                  appliedToTupleType.self
+                  appliedToTupleType
                   (Types.tupleTypeOf (makePolyType Types.intType) (makePolyType Types.strType)
                    |> Ok)
                   "Expected a tuple type"
@@ -447,7 +446,7 @@ let testTypeInference () =
                           typedNamesMap = namesMap }
                       expr
 
-              Expect.isError result.self "Skolems can't be polymorphic"
+              Expect.isError result "Skolems can't be polymorphic"
           }
           test "Prevent skolem from escaping" {
               (*
@@ -489,11 +488,11 @@ let testTypeInference () =
               let result = TypeInference.inferTypeFromExpr Ctx.empty expr
 
               Expect.equal
-                  result.self
+                  result
                   (Ok (Types.tupleTypeOf (mono Types.intType) (mono Types.strType)))
                   "Expected (Int, String)"
 
-              Expect.equal result.constrained Map.empty "Expected no constraints propagated up out of scope"
+          //Expect.equal result.constrained Map.empty "Expected no constraints propagated up out of scope"
           }
 
           test "More specific type signature is allowed" {
@@ -518,9 +517,9 @@ let testTypeInference () =
               let result = TypeInference.inferTypeFromExpr Ctx.empty expr
 
 
-              Expect.equal result.constrained Map.empty "Expected no constraints propagated up out of scope"
+              //Expect.equal result.constrained Map.empty "Expected no constraints propagated up out of scope"
 
-              match result.self with
+              match result with
               | Ok t -> Tests.printfn $"Success {t}"
               | Error e -> Tests.failtest $"Expected {string typeAnnotation} but got {e}"
           } ]
