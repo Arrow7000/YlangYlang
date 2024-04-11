@@ -10,6 +10,34 @@ module Q = QualifiedSyntaxTree
 
 
 
+
+
+type UnificationVarId =
+    | UnificationVarId of System.Guid
+
+    override this.ToString () =
+        let (UnificationVarId id) = this
+        "?" + String.trim 8 (string id)
+
+
+
+/// This is what a skolem looks like outside the place that it is defined, i.e. the `a` and `b` in `forall a b. {{type expression using a and b}}`
+type TypeVariableId =
+    | TypeVariableId of System.Guid
+
+    override this.ToString () =
+        let (TypeVariableId id) = this
+        String.trim 8 (string id)
+
+
+
+
+
+
+
+
+
+
 type DestructuredPattern =
     /// Destructured records need to have one destructured member
     | DestructuredRecord of RecordFieldName nel
@@ -74,12 +102,338 @@ type BuiltInPrimitiveTypes =
     | String
     | Char
     | Bool
+    | Unit
+
+    override this.ToString () =
+        match this with
+        | Float -> "Float"
+        | Int -> "Int"
+        | String -> "String"
+        | Char -> "Char"
+        | Bool -> "Bool"
+        | Unit -> "()"
+
+/// @TODO need to include record types also
+and ContainerType =
+    | Tuple of PolyTypeContents tom
+    | List of PolyTypeContents
+    | Arrow of fromType : PolyTypeContents * toType : PolyTypeContents
+    | CustomType of typeName : UpperNameValue * typeParams : PolyTypeContents list
+
+    override this.ToString () =
+        match this with
+        | Tuple ptcs ->
+            let commafied = ptcs |> TOM.map string |> String.join ", "
+
+            "(" + commafied + ")"
+        | List ptc -> "List " + string ptc
+        | Arrow (fromType, toType) -> string fromType + " -> " + string toType
+
+        | CustomType (typeName, typeParams) ->
+            upperNameValToStr typeName
+            + " "
+            + (List.map string typeParams |> String.join " ")
+
+
+
+and ConcreteType =
+    | BuiltInPrims of BuiltInPrimitiveTypes
+    | Containers of ContainerType
+
+    override this.ToString () =
+        match this with
+        | BuiltInPrims prim -> string prim
+        | Containers cont -> string cont
+
+
+
+and PolyTypeContents =
+    /// Referencing a unification variable.
+    | UnificationVar of UnificationVariable
+    /// Referencing a *type variable* (not a unification variable!)
+    | TypeVariable of TypeVariableId
+    /// This is only available during a type `check` call – may be unified with itself or a uniVar but nothing else!
+    | Skolem of name : LowerIdent
+    /// A simple unparametric type like `Int` or `String`, or a parametric type like `List a`, `Maybe a`, `Result e a`
+    | ConcreteType of ConcreteType
+
+    override this.ToString () =
+        match this with
+        | UnificationVar uniVar -> string uniVar
+        | TypeVariable typeVar -> string typeVar
+        | Skolem name -> string name
+        | ConcreteType concType -> string concType
+
+
+
+
+and UniVarContent =
+    { id : UnificationVarId
+      constrained : PolyTypeContents option }
+
+
+and UnificationVariable =
+    { content : UniVarContent ref }
+
+    static member getId (uniVar : UnificationVariable) = uniVar.content.Value.id
+    static member makeNew (uniVarId : UnificationVarId) = { content = ref { id = uniVarId; constrained = None } }
+
+    override this.ToString () =
+        let id = UnificationVariable.getId this
+
+        match this.content.Value.constrained with
+        | Some constrained -> $"({string id} : {string constrained})"
+        | None -> string id
+
+
+
+
+
+
+
+
+
+
+
+
+type UnificationError =
+    | UnificationClash of ConcreteType * ConcreteType
+    | UndefinedName of LowerNameValue
+    | UndefinedTypeCtor of UpperNameValue
+    /// Skolems only unify with themselves, so different skolems can't be unified with each other
+    | TriedToUnifyDifferentSkolems of skolem1 : LowerIdent * skolem2 : LowerIdent
+    /// Skolems only unify with themselves, not with anything else
+    | NarrowedSkolem of skolemName : LowerIdent * narrowedWith : PolyTypeContents
+    | InfinitelyRecursiveType of unified : UnificationVariable * with_ : PolyTypeContents
+
+    override this.ToString () =
+        match this with
+        | UnificationClash (conc1, conc2) -> "Unification clash: `" + string conc1 + "` and `" + string conc2 + "`"
+        | UndefinedName name -> "Undefined name: " + string name
+        | UndefinedTypeCtor name -> "Undefined type constructor: " + string name
+        | TriedToUnifyDifferentSkolems (skolem1, skolem2) ->
+            "Tried to unify different skolems: " + string skolem1 + " and " + string skolem2
+        | NarrowedSkolem (skolemName, narrowedWith) ->
+            "Narrowed skolem: " + string skolemName + " with " + string narrowedWith
+        | InfinitelyRecursiveType (uniVar, ptc) ->
+            "Infinitely recursive type, tried to unify unification variable "
+            + string uniVar
+            + " with type "
+            + string ptc
+
+
+    static member makeClash conc1 conc2 =
+        // // Uncomment when debugging unexpected type errors
+        //failwith ("Unification clash: `" + string conc1 + "` and `" + string conc2 + "`")
+
+        UnificationClash (conc1, conc2)
+
+
+
+
+
+
+/// Alias for PolyTypeContents
+type PTC = PolyTypeContents
+
+
+
+
+type PolyType =
+    { forall : TypeVariableId list
+      typeExpr : PolyTypeContents }
+
+    override this.ToString () =
+        let bodyStr = string this.typeExpr
+
+        match this.forall with
+        | [] -> bodyStr
+        | _ :: _ -> "forall " + String.concat " " (List.map string this.forall) + ". " + bodyStr
+
+
+
+
+
+
+
+/// E.g. `Bool`, `Maybe Int`, `Result Error a`, etc. In other words, a type expression as it exists in a type annotation. Not resolved to anything as of yet.
+type TypeExpr =
+    /// This references a type expression in a type declaration, e.g.TypeExpr (Just a)` in `Maybe a = Just a | Nothing`
+    | TypeExpr of label : UpperNameValue * params_ : TypeExpr list
+    /// This references a type param in the type declaration, e.g. the `a` in the `Just a` in the `Maybe a = Just a | Nothing`
+    | Skolem of name : LowerIdent
+
+
+
+/// The context where we put the names with their type checked types
+type TypedNamesMap = Map<LowerNameValue, Result<PolyType, UnificationError>>
+
+/// This maps from constructor names to the parameters that the variant needs to the signature of the constructor; e.g. `String -> Int -> Maybe (String, Int)`.
+/// But it could also be e.g. `None`, which would have as its value the single type expression `Maybe a`
+///
+///The list represents the parameters for this particular constructor
+type CtorNamesMap = Map<UpperNameValue, TypeExpr nel>
+
+
+
+type NewUnificationVarsMap = Map<UnificationVarId, Result<PolyTypeContents, UnificationError> option ref>
+
+
+
+
+type Ctx =
+    { ctorNamesMap : CtorNamesMap
+      skolemsInScope : LowerIdent set
+      typedNamesMap : TypedNamesMap }
+
+    static member empty : Ctx =
+        { ctorNamesMap = Map.empty
+          skolemsInScope = Set.empty
+          typedNamesMap = Map.empty }
+
+
+
+
+/// A local context, we return these from functions that type check let bindings and top level declarations
+type TypedLocalNamesMap = Map<LowerIdent, Result<PolyType, UnificationError>>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 
 /// Represents a correct type without clashes
-and DefinitiveType =
+type DefinitiveType =
     | DtUnitType
     | DtPrimitiveType of BuiltInPrimitiveTypes
     | DtTuple of TypeConstraints tom
@@ -342,93 +696,93 @@ and MentionableType =
 
 
 
-/// Basically the same as a T.DefinitiveType but with guids referencing other types in the Acc instead of their own TypeConstraints
-type RefDefType =
-    | RefDtUnitType
-    | RefDtPrimType of BuiltInPrimitiveTypes
-    | RefDtList of AccumulatorTypeId
-    | RefDtTuple of AccumulatorTypeId tom
-    | RefDtRecordWith of referencedFields : Map<RecordFieldName, AccumulatorTypeId>
-    | RefDtRecordExact of Map<RecordFieldName, AccumulatorTypeId>
-    //| RefDtNewType of typeName : UpperNameValue * typeParams : AccumulatorTypeId list
+///// Basically the same as a T.DefinitiveType but with guids referencing other types in the Acc instead of their own TypeConstraints
+//type RefDefType =
+//    | RefDtUnitType
+//    | RefDtPrimType of BuiltInPrimitiveTypes
+//    | RefDtList of AccumulatorTypeId
+//    | RefDtTuple of AccumulatorTypeId tom
+//    | RefDtRecordWith of referencedFields : Map<RecordFieldName, AccumulatorTypeId>
+//    | RefDtRecordExact of Map<RecordFieldName, AccumulatorTypeId>
+//    //| RefDtNewType of typeName : UpperNameValue * typeParams : AccumulatorTypeId list
 
-    /// Represents a specific instance of a union type, with a mapping from the type's type parameters to specific type constraints.
-    /// These type constraints can start out as completely blank and unconstrained, but can be filled in over time as we learn of more constraints and definitive shapes they must have.
-    /// This way the original type remains the same, unbesmirched, and its specific instantiations that come under restrictions.
-    ///
-    /// @TODO: maybe don't store the whole thing  but only a reference to it with a mapping of type params set
-    | RefDtNewType of type_ : UnionType * typeParamsToSpecifics : Map<TypeConstraintId, AccumulatorTypeId>
-    | RefDtArrow of fromType : AccumulatorTypeId * toType : AccumulatorTypeId
-
-
-    override this.ToString () =
-        match this with
-        | RefDtUnitType -> "()"
-        | RefDtPrimType prim ->
-            match prim with
-            | Float -> "Float"
-            | Int -> "Int"
-            | String -> "String"
-            | Char -> "Char"
-            | Bool -> "Bool"
-        | RefDtTuple tcs ->
-            let commafied = tcs |> TOM.map string |> String.join ", "
-
-            "(" + commafied + ")"
-
-        | RefDtList tc -> "List " + string tc
-        | RefDtRecordWith fields ->
-            // @TODO: should add something in here for the thing that's being expanded
-            let commafiedFields =
-                fields
-                |> Map.toList
-                |> List.map (fun (key, value) -> recFieldToStr key + " : " + string value)
-                |> String.join ", "
-
-            "{ " + commafiedFields + " }"
-
-        | RefDtRecordExact fields ->
-            let commafiedFields =
-                fields
-                |> Map.toList
-                |> List.map (fun (key, value) -> recFieldToStr key + " : " + string value)
-                |> String.join ", "
-
-            "{ " + commafiedFields + " }"
-
-        | RefDtNewType (unionType, specifiedTypeParams) ->
-            let (UnionType (typeName, allowedTypeParams, _)) = unionType
-
-            let typeParams =
-                allowedTypeParams
-                |> List.map (fun typeParam -> Map.tryFind typeParam specifiedTypeParams)
-
-            upperNameValToStr typeName
-            + " "
-            + (typeParams
-               |> List.map (function
-                   | None -> "_"
-                   | Some typeId -> string typeId)
-               |> String.join " ")
-
-        | RefDtArrow (fromType, toType) -> string fromType + " -> " + string toType
+//    /// Represents a specific instance of a union type, with a mapping from the type's type parameters to specific type constraints.
+//    /// These type constraints can start out as completely blank and unconstrained, but can be filled in over time as we learn of more constraints and definitive shapes they must have.
+//    /// This way the original type remains the same, unbesmirched, and its specific instantiations that come under restrictions.
+//    ///
+//    /// @TODO: maybe don't store the whole thing  but only a reference to it with a mapping of type params set
+//    | RefDtNewType of type_ : UnionType * typeParamsToSpecifics : Map<TypeConstraintId, AccumulatorTypeId>
+//    | RefDtArrow of fromType : AccumulatorTypeId * toType : AccumulatorTypeId
 
 
-type AccTypeError =
-    | DefTypeClash of RefDefType * RefDefType
-    | UnresolvedCtorError of ctorName : UpperNameValue
-    | UnresolvedTypeName of typeName : UpperNameValue
-    /// When a pattern match destructuring doesn't have the correct number of params. The in tells us if there are not enough (in which case it'll be negative) or too many (will be positive)
-    | WrongPatternParamLength of int
-    | DoesntMatchExpectedTypeShape of requiredShape : MentionableType * RefDefType
+//    override this.ToString () =
+//        match this with
+//        | RefDtUnitType -> "()"
+//        | RefDtPrimType prim ->
+//            match prim with
+//            | Float -> "Float"
+//            | Int -> "Int"
+//            | String -> "String"
+//            | Char -> "Char"
+//            | Bool -> "Bool"
+//        | RefDtTuple tcs ->
+//            let commafied = tcs |> TOM.map string |> String.join ", "
+
+//            "(" + commafied + ")"
+
+//        | RefDtList tc -> "List " + string tc
+//        | RefDtRecordWith fields ->
+//            // @TODO: should add something in here for the thing that's being expanded
+//            let commafiedFields =
+//                fields
+//                |> Map.toList
+//                |> List.map (fun (key, value) -> recFieldToStr key + " : " + string value)
+//                |> String.join ", "
+
+//            "{ " + commafiedFields + " }"
+
+//        | RefDtRecordExact fields ->
+//            let commafiedFields =
+//                fields
+//                |> Map.toList
+//                |> List.map (fun (key, value) -> recFieldToStr key + " : " + string value)
+//                |> String.join ", "
+
+//            "{ " + commafiedFields + " }"
+
+//        | RefDtNewType (unionType, specifiedTypeParams) ->
+//            let (UnionType (typeName, allowedTypeParams, _)) = unionType
+
+//            let typeParams =
+//                allowedTypeParams
+//                |> List.map (fun typeParam -> Map.tryFind typeParam specifiedTypeParams)
+
+//            upperNameValToStr typeName
+//            + " "
+//            + (typeParams
+//               |> List.map (function
+//                   | None -> "_"
+//                   | Some typeId -> string typeId)
+//               |> String.join " ")
+
+//        | RefDtArrow (fromType, toType) -> string fromType + " -> " + string toType
 
 
+//type AccTypeError =
+//    | DefTypeClash of RefDefType * RefDefType
+//    | UnresolvedCtorError of ctorName : UpperNameValue
+//    | UnresolvedTypeName of typeName : UpperNameValue
+//    /// When a pattern match destructuring doesn't have the correct number of params. The in tells us if there are not enough (in which case it'll be negative) or too many (will be positive)
+//    | WrongPatternParamLength of int
+//    | DoesntMatchExpectedTypeShape of requiredShape : MentionableType * RefDefType
 
 
 
 
-/// @TODO: this should really also contain the other `ConstrainType`s, in case some of them also get evaluated to incompatible definitive types
-type TypeJudgment = Result<TypeConstraints, AccTypeError>
+
+
+///// @TODO: this should really also contain the other `ConstrainType`s, in case some of them also get evaluated to incompatible definitive types
+//type TypeJudgment = Result<TypeConstraints, AccTypeError>
 
 
 
@@ -566,265 +920,265 @@ But maybe... we leave that for now, and for now we behave as if every type can h
 
 
 
-/// Name of a referenced value
-type RefValueName = | RefValueName of LowerNameValue
+///// Name of a referenced value
+//type RefValueName = | RefValueName of LowerNameValue
 
-/// Allows for directly referencing values in a Ctx
-type TypeRefId = | TypeRefId of System.Guid
-///
-type UnificationVar = | UnificationVar of System.Guid
-type TypeVar = | TypeVar of System.Guid
-//type Skolem = | Skolem of System.Guid
-
-
+///// Allows for directly referencing values in a Ctx
+//type TypeRefId = | TypeRefId of System.Guid
+/////
+//type UnificationVar = | UnificationVar of System.Guid
+//type TypeVar = | TypeVar of System.Guid
+////type Skolem = | Skolem of System.Guid
 
 
 
-type ConcreteType =
-    | ConcUnitType
-    | ConcPrimType of BuiltInPrimitiveTypes
-    | ConcTuple of TypeForInference tom
-    | ConcList of TypeForInference
-    /// I think we need to pass in a type param to the extended record, so that not including one is a type error
-    | ConcRecordWith of referencedFields : Map<RecordFieldName, TypeForInference>
-    | ConcRecordExact of Map<RecordFieldName, TypeForInference>
-    /// This guy will only be able to be assigned at the root of a file once we have the types on hand to resolve them and assign.
-    /// We initialise this by just making all the type params TypeVars (unification vars)
-    | ConcNewType of typeName : UpperNameValue * typeParams : TypeForInference list
-
-    | ConcArrow of fromType : TypeForInference * toType : TypeForInference
 
 
-and TypeForInference =
-    | Concrete of ConcreteType
-    ///// Same as whatever this name is (although not _exactly_ the same, because the named value could have a type scheme, so the type scheme will then adapt to whatever the context is
-    | Named of RefValueName
+//type ConcreteType =
+//    | ConcUnitType
+//    | ConcPrimType of BuiltInPrimitiveTypes
+//    | ConcTuple of TypeForInference tom
+//    | ConcList of TypeForInference
+//    /// I think we need to pass in a type param to the extended record, so that not including one is a type error
+//    | ConcRecordWith of referencedFields : Map<RecordFieldName, TypeForInference>
+//    | ConcRecordExact of Map<RecordFieldName, TypeForInference>
+//    /// This guy will only be able to be assigned at the root of a file once we have the types on hand to resolve them and assign.
+//    /// We initialise this by just making all the type params TypeVars (unification vars)
+//    | ConcNewType of typeName : UpperNameValue * typeParams : TypeForInference list
 
-    /// This is basically the `a` in a `forall a. a -> a`. So it needs to be substituted with something else at each instantiation, so that when that thing gets replaced it doesn't replace every instance of the type, but only that specific fresh instance of it.
-    | UnificationVar of UnificationVar
-
-    /// This is that fresh instantiation of a unification variable, so that if one of these gets replaced with a concrete type, _all_ of the same ID instances get replaced with the same type
-    | TypeVarId of TypeVar
+//    | ConcArrow of fromType : TypeForInference * toType : TypeForInference
 
 
-//and WithUnresolveds =
-//    /// I think we just throw an error if we try to unify anything with an unresolved name inside of it
+//and TypeForInference =
+//    | Concrete of ConcreteType
+//    ///// Same as whatever this name is (although not _exactly_ the same, because the named value could have a type scheme, so the type scheme will then adapt to whatever the context is
 //    | Named of RefValueName
-//    | UnresolvedTree of TypeForInference
+
+//    /// This is basically the `a` in a `forall a. a -> a`. So it needs to be substituted with something else at each instantiation, so that when that thing gets replaced it doesn't replace every instance of the type, but only that specific fresh instance of it.
+//    | UnificationVar of UnificationVar
+
+//    /// This is that fresh instantiation of a unification variable, so that if one of these gets replaced with a concrete type, _all_ of the same ID instances get replaced with the same type
+//    | TypeVarId of TypeVar
 
 
-type TypeErr = | TypeClash of ConcreteType * ConcreteType
+////and WithUnresolveds =
+////    /// I think we just throw an error if we try to unify anything with an unresolved name inside of it
+////    | Named of RefValueName
+////    | UnresolvedTree of TypeForInference
 
 
-type TypeInferenceResult = Result<TypeForInference, TypeErr>
+//type TypeErr = | TypeClash of ConcreteType * ConcreteType
 
 
-type NameOrReference =
-    | Name of RefValueName
-    | Reference of TypeRefId
-
-type TypeContext = Map<NameOrReference, TypeInferenceResult nel>
+//type TypeInferenceResult = Result<TypeForInference, TypeErr>
 
 
+//type NameOrReference =
+//    | Name of RefValueName
+//    | Reference of TypeRefId
 
-
-
-
-
-
-
-
-/// Commonly used type throughout Accumulator stuff
-type RefDefResOpt = Result<RefDefType, AccTypeError> option
-
-/// FYI this on its own isn't enough to implement type schemes, we also need to distinguish between "these two things are mamish the same and ergo need to be fully unified" and "this thing should constrain this other thing but not the other way around"
-type RefConstraintEntry =
-    /// For concrete types or types constrained by other values
-    | Constrained of RefDefResOpt * RefConstr set
-    /// For types unconstrained by values and not adhering to a concrete shape.
-    ///
-    /// I think we store one of these for every generic that does not have any inherent type constraint on itself. We instantiate one of these for any non-inherently-constrained type or type param, like e.g. the `a` in `None : Maybe a`. Then, depending on the expression it is used in, we either do need to mamish unify the two expressions, or we just impose the constraint from one thing to the other. But either way a generic should never be removed from the Accumulator I don't think, because the `a` in `Maybe.None : Maybe a` is a long lived generic, and it never narrows to anything else, no matter how `None` is used.
-    ///
-    /// It's only for example if we add it into a `[ Just 123, None ]` that the `Maybe a`ness imposes a narrowing on what _uses_ it, so that it can't be used in a `[ 123, None ]` for example, because you can't unify a `Maybe a` with a naked `Int`.
-    ///
-    /// So we still need to do unification, but we're not unifying the constituent elements, only the type of the compound thing gets narrowed to the unification of `None : Maybe a` and `Just 123 : Maybe Int`. But the constraint only propagates one way, from the thing to the larger context that uses the structure, the structure itself doesn't (can't) impose a constraint onto the thing it uses. *Unless*! – and this is an important caveat – when the thing it's used in does have type *requirements*; e.g. we're doing `f a`; that does require `f` to be a `a -> b`, i.e. a concrete function. We can't know anything about the input and output types, and shouldn't make assumptions on what it takes and returns based on what we feed it, because it could be that we just happen to feed it a string but that `f` could equally well accept an `Int`, just because we passed it one thing doesn't mean that's the only thing it accepts.
-    ///
-    /// What other examples of such requirements are there? Well, e.g. things being pattern matched on and things used as conditionals in if expressions. And of course when passed as parameters to functions that do have strict requirements on the type they accept, whether implicitly through destructurings or through type annotations (not implemented yet)
-    | Generic of TypeConstraintId
-
-
-/// Attempt at making accumulator working by using two internal maps, one where every single def type gets a guid assigned to it, and every ref constraint gets placed in a set with its others, which points to a guid, which in turn may have a def type assigned to it.
-type Accumulator =
-    {
-        refConstraintsMap : Map<AccumulatorTypeId, RefConstraintEntry>
-
-        /// This stores old ID references so that we don't ever run the risk of an ID ever getting out of date or replaced. This way a reference ID, once made, is reliable.
-        redirectMap : Map<AccumulatorTypeId, AccumulatorTypeId>
-    }
-
-    static member empty =
-        { refConstraintsMap = Map.empty
-          redirectMap = Map.empty }
-
-
-    /// If the input AccId is a redirect, gets the actual live AccId that it points to (even after multiple redirects). Useful for editing the data in the refConstraintsMap
-    static member getRealIdAndType
-        (accId : AccumulatorTypeId)
-        (acc : Accumulator)
-        : AccumulatorTypeId * RefConstraintEntry =
-        match Map.tryFind accId acc.refConstraintsMap with
-        | Some result -> accId, result
-        | None ->
-            match Map.tryFind accId acc.redirectMap with
-            | Some redirectId -> Accumulator.getRealIdAndType redirectId acc
-            | None ->
-                failwith $"It shouldn't be possible to not find an AccId in either the real or redirect maps: {accId}"
-
-    static member getTypeById (accId : AccumulatorTypeId) (acc : Accumulator) =
-        Accumulator.getRealIdAndType accId acc |> snd
-
-    static member getRealId (accId : AccumulatorTypeId) (acc : Accumulator) =
-        Accumulator.getRealIdAndType accId acc |> fst
-
-
-    /// Use with caution! This literally just replaces entries and sticks the replaced keys in the redirect map. It does *not* unify the new entry with the rest of the reference constraints map!
-    static member replaceEntries
-        (accIdsToReplace : AccumulatorTypeId seq)
-        (newAccId : AccumulatorTypeId)
-        (refDefResOpt : Result<RefDefType, AccTypeError> option)
-        (refConstrs : RefConstr set)
-        (acc : Accumulator)
-        =
-        { refConstraintsMap =
-            Map.removeKeys accIdsToReplace acc.refConstraintsMap
-            |> Map.add newAccId (Constrained (refDefResOpt, refConstrs))
-
-          redirectMap =
-            acc.redirectMap
-            |> Map.addBulk (accIdsToReplace |> Seq.map (fun accId -> accId, newAccId)) }
+//type TypeContext = Map<NameOrReference, TypeInferenceResult nel>
 
 
 
 
 
-    ///// Warning! It is on the caller to ensure that the refConstrs being added here don't have any overlap with any entries already present in the map, and to unify the entries accordingly if they do.
-    ///// This will replace the entry at the _real_ AccId, so the caller doesn't have to worry about fetching the real AccId first. This function also returns the real AccId for good measure.
-    //static member replaceEntry
-    //    (accId : AccumulatorTypeId)
-    //    (replacer : AccumulatorTypeId
-    //                    -> Result<RefDefType, AccTypeError> option
-    //                    -> RefConstr set
-    //                    -> Result<RefDefType, AccTypeError> option * RefConstr set)
-    //    (acc : Accumulator)
-    //    : AccumulatorTypeId * Accumulator =
-    //    let realAccId, (Constrained (refDefResOpt, refConstrs)) =
-    //        Accumulator.getRealIdAndType accId acc
-
-    //    let replaced = replacer realAccId refDefResOpt refConstrs
-
-    //    realAccId,
-    //    { acc with
-    //        refConstraintsMap =
-    //            acc.refConstraintsMap
-    //            |> Map.add realAccId replaced }
 
 
 
 
-    //static member replaceRefConstrs
-    //    (accId : AccumulatorTypeId)
-    //    (newRefConstrs : RefConstr set)
-    //    (acc : Accumulator)
-    //    : AccumulatorTypeId * Accumulator =
-    //    let realAccId, entry = Accumulator.getRealIdAndType accId acc
 
-    //    let replaced =
-    //        match entry with
-    //        | Constrained (refDefResOpt, _) -> refDefResOpt, newRefConstrs
-    //        | Generic -> None, newRefConstrs
+///// Commonly used type throughout Accumulator stuff
+//type RefDefResOpt = Result<RefDefType, AccTypeError> option
 
-    //    realAccId,
-    //    { acc with
-    //        refConstraintsMap =
-    //            acc.refConstraintsMap
-    //            |> Map.add realAccId (Constrained replaced) }
-
-
-    static member replaceEntryWithRefDefAndConstrs
-        (accId : AccumulatorTypeId)
-        (replacer : RefConstraintEntry -> RefDefResOpt * RefConstr set)
-        (acc : Accumulator)
-        : AccumulatorTypeId * Accumulator =
-        let realAccId, entry = Accumulator.getRealIdAndType accId acc
-
-        let replaced = replacer entry
-
-        realAccId,
-        { acc with
-            refConstraintsMap = acc.refConstraintsMap |> Map.add realAccId (Constrained replaced) }
+///// FYI this on its own isn't enough to implement type schemes, we also need to distinguish between "these two things are mamish the same and ergo need to be fully unified" and "this thing should constrain this other thing but not the other way around"
+//type RefConstraintEntry =
+//    /// For concrete types or types constrained by other values
+//    | Constrained of RefDefResOpt * RefConstr set
+//    /// For types unconstrained by values and not adhering to a concrete shape.
+//    ///
+//    /// I think we store one of these for every generic that does not have any inherent type constraint on itself. We instantiate one of these for any non-inherently-constrained type or type param, like e.g. the `a` in `None : Maybe a`. Then, depending on the expression it is used in, we either do need to mamish unify the two expressions, or we just impose the constraint from one thing to the other. But either way a generic should never be removed from the Accumulator I don't think, because the `a` in `Maybe.None : Maybe a` is a long lived generic, and it never narrows to anything else, no matter how `None` is used.
+//    ///
+//    /// It's only for example if we add it into a `[ Just 123, None ]` that the `Maybe a`ness imposes a narrowing on what _uses_ it, so that it can't be used in a `[ 123, None ]` for example, because you can't unify a `Maybe a` with a naked `Int`.
+//    ///
+//    /// So we still need to do unification, but we're not unifying the constituent elements, only the type of the compound thing gets narrowed to the unification of `None : Maybe a` and `Just 123 : Maybe Int`. But the constraint only propagates one way, from the thing to the larger context that uses the structure, the structure itself doesn't (can't) impose a constraint onto the thing it uses. *Unless*! – and this is an important caveat – when the thing it's used in does have type *requirements*; e.g. we're doing `f a`; that does require `f` to be a `a -> b`, i.e. a concrete function. We can't know anything about the input and output types, and shouldn't make assumptions on what it takes and returns based on what we feed it, because it could be that we just happen to feed it a string but that `f` could equally well accept an `Int`, just because we passed it one thing doesn't mean that's the only thing it accepts.
+//    ///
+//    /// What other examples of such requirements are there? Well, e.g. things being pattern matched on and things used as conditionals in if expressions. And of course when passed as parameters to functions that do have strict requirements on the type they accept, whether implicitly through destructurings or through type annotations (not implemented yet)
+//    | Generic of TypeConstraintId
 
 
+///// Attempt at making accumulator working by using two internal maps, one where every single def type gets a guid assigned to it, and every ref constraint gets placed in a set with its others, which points to a guid, which in turn may have a def type assigned to it.
+//type Accumulator =
+//    {
+//        refConstraintsMap : Map<AccumulatorTypeId, RefConstraintEntry>
 
-    /// Replace the entry without needing to look at its contents
-    ///
-    /// Warning! It is on the caller to ensure that the refConstrs being added here don't have any overlap with any entries already present in the map, and to unify the entries accordingly if they do.
-    /// This will replace the entry at the _real_ AccId, so the caller doesn't have to worry about fetching the real AccId first
-    static member simpleReplaceEntry
-        (accId : AccumulatorTypeId)
-        (refDefResOpt : Result<RefDefType, AccTypeError> option)
-        (refConstrs : RefConstr set)
-        (acc : Accumulator)
-        : Accumulator =
-        Accumulator.replaceEntryWithRefDefAndConstrs accId (fun _ -> refDefResOpt, refConstrs) acc
-        |> snd
+//        /// This stores old ID references so that we don't ever run the risk of an ID ever getting out of date or replaced. This way a reference ID, once made, is reliable.
+//        redirectMap : Map<AccumulatorTypeId, AccumulatorTypeId>
+//    }
 
-
-    static member simpleReplaceRefDefEntry
-        (accId : AccumulatorTypeId)
-        (refDefResOpt : Result<RefDefType, AccTypeError> option)
-        (acc : Accumulator)
-        : Accumulator =
-        Accumulator.replaceEntryWithRefDefAndConstrs
-            accId
-            (function
-            | Generic _ -> refDefResOpt, Set.empty
-            | Constrained (_, refConstrs) -> refDefResOpt, refConstrs)
-            acc
-        |> snd
+//    static member empty =
+//        { refConstraintsMap = Map.empty
+//          redirectMap = Map.empty }
 
 
-    /// This can always be added without any further unifications needed 🥳 so it can be a very simple function.
-    /// Of course note that any AccIds referenced in the RefDef being added have to already exist in the Acc.
-    /// It's on the caller to ensure that we are not overwriting an existing entry in the Acc!
-    static member addRefDefResOptUnderKey
-        (key : AccumulatorTypeId)
-        (refDefResOpt : Result<RefDefType, AccTypeError> option)
-        (acc : Accumulator)
-        : Accumulator =
-        { acc with
-            refConstraintsMap = acc.refConstraintsMap |> Map.add key (Constrained (refDefResOpt, Set.empty)) }
+//    /// If the input AccId is a redirect, gets the actual live AccId that it points to (even after multiple redirects). Useful for editing the data in the refConstraintsMap
+//    static member getRealIdAndType
+//        (accId : AccumulatorTypeId)
+//        (acc : Accumulator)
+//        : AccumulatorTypeId * RefConstraintEntry =
+//        match Map.tryFind accId acc.refConstraintsMap with
+//        | Some result -> accId, result
+//        | None ->
+//            match Map.tryFind accId acc.redirectMap with
+//            | Some redirectId -> Accumulator.getRealIdAndType redirectId acc
+//            | None ->
+//                failwith $"It shouldn't be possible to not find an AccId in either the real or redirect maps: {accId}"
 
-    /// This can always be added without any further unifications needed 🥳 so it can be a very simple function.
-    /// Of course note that any AccIds referenced in the RefDef being added have to already exist in the Acc
-    static member addRefDefResOpt
-        (refDefResOpt : Result<RefDefType, AccTypeError> option)
-        (acc : Accumulator)
-        : AccumulatorTypeId * Accumulator =
-        let newKey = System.Guid.NewGuid () |> AccumulatorTypeId
+//    static member getTypeById (accId : AccumulatorTypeId) (acc : Accumulator) =
+//        Accumulator.getRealIdAndType accId acc |> snd
 
-        newKey, Accumulator.addRefDefResOptUnderKey newKey refDefResOpt acc
+//    static member getRealId (accId : AccumulatorTypeId) (acc : Accumulator) =
+//        Accumulator.getRealIdAndType accId acc |> fst
 
 
-    static member addGenericUnderKey key acc =
-        let newGeneric = makeTypeConstrId ()
+//    /// Use with caution! This literally just replaces entries and sticks the replaced keys in the redirect map. It does *not* unify the new entry with the rest of the reference constraints map!
+//    static member replaceEntries
+//        (accIdsToReplace : AccumulatorTypeId seq)
+//        (newAccId : AccumulatorTypeId)
+//        (refDefResOpt : Result<RefDefType, AccTypeError> option)
+//        (refConstrs : RefConstr set)
+//        (acc : Accumulator)
+//        =
+//        { refConstraintsMap =
+//            Map.removeKeys accIdsToReplace acc.refConstraintsMap
+//            |> Map.add newAccId (Constrained (refDefResOpt, refConstrs))
 
-        { acc with
-            refConstraintsMap = acc.refConstraintsMap |> Map.add key (Generic newGeneric) }
+//          redirectMap =
+//            acc.redirectMap
+//            |> Map.addBulk (accIdsToReplace |> Seq.map (fun accId -> accId, newAccId)) }
 
 
-    static member addGeneric acc =
-        let newKey = System.Guid.NewGuid () |> AccumulatorTypeId
-        Accumulator.addGenericUnderKey newKey acc
+
+
+
+//    ///// Warning! It is on the caller to ensure that the refConstrs being added here don't have any overlap with any entries already present in the map, and to unify the entries accordingly if they do.
+//    ///// This will replace the entry at the _real_ AccId, so the caller doesn't have to worry about fetching the real AccId first. This function also returns the real AccId for good measure.
+//    //static member replaceEntry
+//    //    (accId : AccumulatorTypeId)
+//    //    (replacer : AccumulatorTypeId
+//    //                    -> Result<RefDefType, AccTypeError> option
+//    //                    -> RefConstr set
+//    //                    -> Result<RefDefType, AccTypeError> option * RefConstr set)
+//    //    (acc : Accumulator)
+//    //    : AccumulatorTypeId * Accumulator =
+//    //    let realAccId, (Constrained (refDefResOpt, refConstrs)) =
+//    //        Accumulator.getRealIdAndType accId acc
+
+//    //    let replaced = replacer realAccId refDefResOpt refConstrs
+
+//    //    realAccId,
+//    //    { acc with
+//    //        refConstraintsMap =
+//    //            acc.refConstraintsMap
+//    //            |> Map.add realAccId replaced }
+
+
+
+
+//    //static member replaceRefConstrs
+//    //    (accId : AccumulatorTypeId)
+//    //    (newRefConstrs : RefConstr set)
+//    //    (acc : Accumulator)
+//    //    : AccumulatorTypeId * Accumulator =
+//    //    let realAccId, entry = Accumulator.getRealIdAndType accId acc
+
+//    //    let replaced =
+//    //        match entry with
+//    //        | Constrained (refDefResOpt, _) -> refDefResOpt, newRefConstrs
+//    //        | Generic -> None, newRefConstrs
+
+//    //    realAccId,
+//    //    { acc with
+//    //        refConstraintsMap =
+//    //            acc.refConstraintsMap
+//    //            |> Map.add realAccId (Constrained replaced) }
+
+
+//    static member replaceEntryWithRefDefAndConstrs
+//        (accId : AccumulatorTypeId)
+//        (replacer : RefConstraintEntry -> RefDefResOpt * RefConstr set)
+//        (acc : Accumulator)
+//        : AccumulatorTypeId * Accumulator =
+//        let realAccId, entry = Accumulator.getRealIdAndType accId acc
+
+//        let replaced = replacer entry
+
+//        realAccId,
+//        { acc with
+//            refConstraintsMap = acc.refConstraintsMap |> Map.add realAccId (Constrained replaced) }
+
+
+
+//    /// Replace the entry without needing to look at its contents
+//    ///
+//    /// Warning! It is on the caller to ensure that the refConstrs being added here don't have any overlap with any entries already present in the map, and to unify the entries accordingly if they do.
+//    /// This will replace the entry at the _real_ AccId, so the caller doesn't have to worry about fetching the real AccId first
+//    static member simpleReplaceEntry
+//        (accId : AccumulatorTypeId)
+//        (refDefResOpt : Result<RefDefType, AccTypeError> option)
+//        (refConstrs : RefConstr set)
+//        (acc : Accumulator)
+//        : Accumulator =
+//        Accumulator.replaceEntryWithRefDefAndConstrs accId (fun _ -> refDefResOpt, refConstrs) acc
+//        |> snd
+
+
+//    static member simpleReplaceRefDefEntry
+//        (accId : AccumulatorTypeId)
+//        (refDefResOpt : Result<RefDefType, AccTypeError> option)
+//        (acc : Accumulator)
+//        : Accumulator =
+//        Accumulator.replaceEntryWithRefDefAndConstrs
+//            accId
+//            (function
+//            | Generic _ -> refDefResOpt, Set.empty
+//            | Constrained (_, refConstrs) -> refDefResOpt, refConstrs)
+//            acc
+//        |> snd
+
+
+//    /// This can always be added without any further unifications needed 🥳 so it can be a very simple function.
+//    /// Of course note that any AccIds referenced in the RefDef being added have to already exist in the Acc.
+//    /// It's on the caller to ensure that we are not overwriting an existing entry in the Acc!
+//    static member addRefDefResOptUnderKey
+//        (key : AccumulatorTypeId)
+//        (refDefResOpt : Result<RefDefType, AccTypeError> option)
+//        (acc : Accumulator)
+//        : Accumulator =
+//        { acc with
+//            refConstraintsMap = acc.refConstraintsMap |> Map.add key (Constrained (refDefResOpt, Set.empty)) }
+
+//    /// This can always be added without any further unifications needed 🥳 so it can be a very simple function.
+//    /// Of course note that any AccIds referenced in the RefDef being added have to already exist in the Acc
+//    static member addRefDefResOpt
+//        (refDefResOpt : Result<RefDefType, AccTypeError> option)
+//        (acc : Accumulator)
+//        : AccumulatorTypeId * Accumulator =
+//        let newKey = System.Guid.NewGuid () |> AccumulatorTypeId
+
+//        newKey, Accumulator.addRefDefResOptUnderKey newKey refDefResOpt acc
+
+
+//    static member addGenericUnderKey key acc =
+//        let newGeneric = makeTypeConstrId ()
+
+//        { acc with
+//            refConstraintsMap = acc.refConstraintsMap |> Map.add key (Generic newGeneric) }
+
+
+//    static member addGeneric acc =
+//        let newKey = System.Guid.NewGuid () |> AccumulatorTypeId
+//        Accumulator.addGenericUnderKey newKey acc
 
 
 
