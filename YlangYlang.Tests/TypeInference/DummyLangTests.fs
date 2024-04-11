@@ -11,7 +11,6 @@ module AST = DummyLang.AbstractSyntaxTree
 open QualifiedSyntaxTree.Names
 open FsToolkit.ErrorHandling
 
-module Sacuv = DummyLang.SelfAndConstrainedUnificationVars
 
 
 let private makePolyType typeContents =

@@ -12,12 +12,19 @@ open System.Diagnostics
 /// So that we don't have to reproduce the contextStack implementation details before we actuals with expecteds
 //let private stripContexts (ctx : ParseContext<'token, 'ctx, 'err>) = { ctx with contextStack = List.empty }
 let private stripContexts result =
-    { result with parsingContext = { result.parsingContext with contextStack = List.empty } }
+    { result with
+        parsingContext =
+            { result.parsingContext with
+                contextStack = List.empty } }
 
 let private makeSuccess tokensParsed v =
     blankParseCtx
     |> makeParseResultWithCtx (ParsingSuccess v)
-    |> fun result -> { result with parsingContext = { result.parsingContext with prevTokens = tokensParsed } }
+    |> fun result ->
+        { result with
+            parsingContext =
+                { result.parsingContext with
+                    prevTokens = tokensParsed } }
 
 
 
@@ -27,7 +34,7 @@ let stripTokens (cstNode : CstNode<'a>) = { cstNode with source = List.empty }
 
 
 
-let rec stripTokensFromExpr (expr : Expression<'a, 'b>) =
+let rec stripTokensFromExpr (expr : Expression) =
     let mapAndStrip f = mapNode f >> stripTokens
     let mapAndStripExpr = mapAndStrip stripTokensFromExpr >> stripTokens
 
@@ -39,12 +46,8 @@ let rec stripTokensFromExpr (expr : Expression<'a, 'b>) =
         | DestructuredPattern des ->
             (match des with
              | DestructuredRecord fields -> NEL.map stripTokens fields |> DestructuredRecord
-             | DestructuredTuple fields ->
-                 TOM.map (mapAndStrip stripAssignmentPattern) fields
-                 |> DestructuredTuple
-             | DestructuredCons fields ->
-                 TOM.map (mapAndStrip stripAssignmentPattern) fields
-                 |> DestructuredCons
+             | DestructuredTuple fields -> TOM.map (mapAndStrip stripAssignmentPattern) fields |> DestructuredTuple
+             | DestructuredCons fields -> TOM.map (mapAndStrip stripAssignmentPattern) fields |> DestructuredCons
              | DestructuredTypeVariant (ctor, params_) ->
                  DestructuredTypeVariant (stripTokens ctor, List.map (mapAndStrip stripAssignmentPattern) params_))
             |> DestructuredPattern
@@ -60,9 +63,7 @@ let rec stripTokensFromExpr (expr : Expression<'a, 'b>) =
                   (match comp with
                    | List l -> List.map mapAndStripExpr l |> List
                    | Tuple l -> TOM.map mapAndStripExpr l |> Tuple
-                   | Record l ->
-                       List.map (Tuple.mapBoth stripTokens mapAndStripExpr) l
-                       |> Record
+                   | Record l -> List.map (Tuple.mapBoth stripTokens mapAndStripExpr) l |> Record
                    | RecordExtension (e, l) ->
                        RecordExtension (stripTokens e, NEL.map (Tuple.mapBoth stripTokens mapAndStripExpr) l))
                   |> Compound
@@ -99,11 +100,7 @@ let rec stripTokensFromExpr (expr : Expression<'a, 'b>) =
     | CompoundExpression comp ->
         (match comp with
          | Operator (left, opSeq) ->
-             Operator (
-                 mapAndStripExpr left,
-                 opSeq
-                 |> NEL.map (fun (op, exp) -> stripTokens op, mapAndStripExpr exp)
-             )
+             Operator (mapAndStripExpr left, opSeq |> NEL.map (fun (op, exp) -> stripTokens op, mapAndStripExpr exp))
          | FunctionApplication (funcExpr, params_) ->
              FunctionApplication (mapAndStripExpr funcExpr, NEL.map mapAndStripExpr params_)
          | DotAccess (exp, dotSeq) -> DotAccess (mapAndStripExpr exp, stripTokens dotSeq))
@@ -118,22 +115,14 @@ let rec stripTokensFromExpr (expr : Expression<'a, 'b>) =
 
 
 let private makeNumberExpression =
-    NumberPrimitive
-    >> Primitive
-    >> ExplicitValue
-    >> SingleValueExpression
+    NumberPrimitive >> Primitive >> ExplicitValue >> SingleValueExpression
 
 
 [<Tests>]
 let testSimpleExpression =
     (fun _ ->
         tokeniseString "-4.6"
-        |> Result.map (
-            run (
-                parseDelimExpressions
-                |> Parser.map stripTokensFromExpr
-            )
-        )
+        |> Result.map (run (parseDelimExpressions |> Parser.map stripTokensFromExpr))
         |> flip Expect.wantOk "Should succeed"
         |> fun res ->
             Expect.equal
@@ -152,19 +141,13 @@ let testOperatorExpression =
         tokens
         |> fun res ->
             Expect.wantOk res "Should succeed"
-            |> split (
-                run (
-                    parseCompoundExpressions
-                    |> Parser.map stripTokensFromExpr
-                )
-            )
+            |> split (run (parseCompoundExpressions |> Parser.map stripTokensFromExpr))
             |> fun (tokens', res') ->
                 Expect.equal
                     (stripContexts res')
                     (CompoundExpression (
                         Operator (
-                            makeNumberExpression (FloatLiteral -4.6)
-                            |> makeBlankCstNode,
+                            makeNumberExpression (FloatLiteral -4.6) |> makeBlankCstNode,
                             NEL.make (
                                 makeBlankCstNode (BuiltInOp AppendOp),
                                 makeBlankCstNode (
@@ -218,12 +201,7 @@ let testCompoundExpression =
         tokens
         |> fun res ->
             Expect.wantOk res "Should succeed"
-            |> split (
-                run (
-                    parseCompoundExpressions
-                    |> Parser.map stripTokensFromExpr
-                )
-            )
+            |> split (run (parseCompoundExpressions |> Parser.map stripTokensFromExpr))
             |> fun (tokens', res') ->
 
                 Expect.equal
@@ -251,12 +229,7 @@ let testParensExpressionWithMultiOperators =
         tokens
         |> fun res ->
             Expect.wantOk res "Should succeed"
-            |> split (
-                run (
-                    parseCompoundExpressions
-                    |> Parser.map stripTokensFromExpr
-                )
-            )
+            |> split (run (parseCompoundExpressions |> Parser.map stripTokensFromExpr))
             |> fun (tokens', res') ->
 
                 Expect.equal
