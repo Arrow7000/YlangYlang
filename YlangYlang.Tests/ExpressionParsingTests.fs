@@ -54,57 +54,42 @@ let rec stripTokensFromExpr (expr : Expression) =
         | Aliased (p, alias) -> Aliased (mapAndStrip stripAssignmentPattern p, stripTokens alias)
 
     match expr with
-    | SingleValueExpression single ->
-        (match single with
-         | ExplicitValue expl ->
-             (match expl with
-              | Primitive prim -> Primitive prim
-              | Compound comp ->
-                  (match comp with
-                   | List l -> List.map mapAndStripExpr l |> List
-                   | Tuple l -> TOM.map mapAndStripExpr l |> Tuple
-                   | Record l -> List.map (Tuple.mapBoth stripTokens mapAndStripExpr) l |> Record
-                   | RecordExtension (e, l) ->
-                       RecordExtension (stripTokens e, NEL.map (Tuple.mapBoth stripTokens mapAndStripExpr) l))
-                  |> Compound
-              | Function f ->
-                  Function
-                      { params_ = NEL.map stripTokens f.params_
-                        body = mapAndStripExpr f.body }
-              | DotGetter field -> DotGetter field)
-             |> ExplicitValue
-         | UpperIdentifier i -> UpperIdentifier i
-         | LowerIdentifier i -> LowerIdentifier i
-         | LetExpression (b, inExpr) ->
-             let bindings =
-                 b
-                 |> NEL.map (
-                     mapAndStrip (fun binding ->
-                         { bindPattern = mapAndStrip stripAssignmentPattern binding.bindPattern
-                           value = mapAndStripExpr binding.value })
-                 )
+    | Primitive prim -> Primitive prim
+    | List l -> List.map mapAndStripExpr l |> List
+    | Tuple l -> TOM.map mapAndStripExpr l |> Tuple
+    | Record l -> List.map (Tuple.mapBoth stripTokens mapAndStripExpr) l |> Record
+    | RecordExtension (e, l) -> RecordExtension (stripTokens e, NEL.map (Tuple.mapBoth stripTokens mapAndStripExpr) l)
 
-             LetExpression (bindings, mapAndStripExpr inExpr)
-         | ControlFlowExpression ctl ->
-             (match ctl with
-              | IfExpression (cond, ifTrue, ifFalse) ->
-                  IfExpression (mapAndStripExpr cond, mapAndStripExpr ifTrue, mapAndStripExpr ifFalse)
-              | CaseMatch (matchExpr, branches) ->
-                  CaseMatch (
-                      mapAndStripExpr matchExpr,
-                      branches
-                      |> NEL.map (fun (ptrn, expr_) -> mapAndStrip stripAssignmentPattern ptrn, mapAndStripExpr expr_)
-                  ))
-             |> ControlFlowExpression)
-        |> SingleValueExpression
-    | CompoundExpression comp ->
-        (match comp with
-         | Operator (left, opSeq) ->
-             Operator (mapAndStripExpr left, opSeq |> NEL.map (fun (op, exp) -> stripTokens op, mapAndStripExpr exp))
-         | FunctionApplication (funcExpr, params_) ->
-             FunctionApplication (mapAndStripExpr funcExpr, NEL.map mapAndStripExpr params_)
-         | DotAccess (exp, dotSeq) -> DotAccess (mapAndStripExpr exp, stripTokens dotSeq))
-        |> CompoundExpression
+    | Function f ->
+        Function
+            { params_ = NEL.map stripTokens f.params_
+              body = mapAndStripExpr f.body }
+    | DotGetter field -> DotGetter field
+    | UpperIdentifier i -> UpperIdentifier i
+    | LowerIdentifier i -> LowerIdentifier i
+    | LetExpression (b, inExpr) ->
+        let bindings =
+            b
+            |> NEL.map (
+                mapAndStrip (fun binding ->
+                    { bindPattern = mapAndStrip stripAssignmentPattern binding.bindPattern
+                      value = mapAndStripExpr binding.value })
+            )
+
+        LetExpression (bindings, mapAndStripExpr inExpr)
+    | IfExpression (cond, ifTrue, ifFalse) ->
+        IfExpression (mapAndStripExpr cond, mapAndStripExpr ifTrue, mapAndStripExpr ifFalse)
+    | CaseMatch (matchExpr, branches) ->
+        CaseMatch (
+            mapAndStripExpr matchExpr,
+            branches
+            |> NEL.map (fun (ptrn, expr_) -> mapAndStrip stripAssignmentPattern ptrn, mapAndStripExpr expr_)
+        )
+    | Operator (left, opSeq) ->
+        Operator (mapAndStripExpr left, opSeq |> NEL.map (fun (op, exp) -> stripTokens op, mapAndStripExpr exp))
+    | FunctionApplication (funcExpr, params_) ->
+        FunctionApplication (mapAndStripExpr funcExpr, NEL.map mapAndStripExpr params_)
+    | DotAccess (exp, dotSeq) -> DotAccess (mapAndStripExpr exp, stripTokens dotSeq)
     | ParensedExpression exp -> stripTokensFromExpr exp |> ParensedExpression
 
 
@@ -113,9 +98,6 @@ let rec stripTokensFromExpr (expr : Expression) =
 
 
 
-
-let private makeNumberExpression =
-    NumberPrimitive >> Primitive >> ExplicitValue >> SingleValueExpression
 
 
 [<Tests>]
@@ -127,7 +109,7 @@ let testSimpleExpression =
         |> fun res ->
             Expect.equal
                 res.parseResult
-                (ParsingSuccess (makeNumberExpression (FloatLiteral -4.6)))
+                (ParsingSuccess (Primitive (FloatLiteral -4.6)))
                 "Parse single value expression")
     |> testCase "Parse single value expression"
 
@@ -145,15 +127,11 @@ let testOperatorExpression =
             |> fun (tokens', res') ->
                 Expect.equal
                     (stripContexts res')
-                    (CompoundExpression (
-                        Operator (
-                            makeNumberExpression (FloatLiteral -4.6) |> makeBlankCstNode,
-                            NEL.make (
-                                makeBlankCstNode (BuiltInOp AppendOp),
-                                makeBlankCstNode (
-                                    SingleValueExpression (ExplicitValue (Primitive (StringPrimitive "test")))
-                                )
-                            )
+                    (Operator (
+                        Primitive (FloatLiteral -4.6) |> makeBlankCstNode,
+                        NEL.make (
+                            makeBlankCstNode (BuiltInOp AppendOp),
+                            makeBlankCstNode ((Primitive (StringPrimitive "test")))
                         )
                      )
                      |> makeSuccess tokens')
@@ -173,7 +151,7 @@ let testParensExpressionWithSimpleExpressions =
             |> fun (tokens', res') ->
                 Expect.equal
                     res'.parseResult
-                    (ParsingSuccess (ParensedExpression (makeNumberExpression (IntLiteral 34))))
+                    (ParsingSuccess (ParensedExpression (Primitive (IntLiteral 34))))
                     "Parse parenthesised simple expression")
     |> testCase "Parse parenthesised simple expression"
 
@@ -189,7 +167,7 @@ let testNestedParensExpressionWithSimpleExpression =
             |> fun res ->
                 Expect.equal
                     res.parseResult
-                    (ParsingSuccess (ParensedExpression (ParensedExpression (makeNumberExpression (IntLiteral 34)))))
+                    (ParsingSuccess (ParensedExpression (ParensedExpression (Primitive (IntLiteral 34)))))
                     "Parse nested parenthesised simple expression")
     |> testCase "Parse nested parenthesised simple expression"
 
@@ -207,13 +185,11 @@ let testCompoundExpression =
                 Expect.equal
                     (stripContexts res')
                     (ParensedExpression (
-                        CompoundExpression (
-                            Operator (
-                                makeBlankCstNode (makeNumberExpression (IntLiteral 34)),
-                                NEL.make (
-                                    makeBlankCstNode (BuiltInOp PlusOp),
-                                    makeBlankCstNode (makeNumberExpression (FloatLiteral -4.6))
-                                )
+                        Operator (
+                            makeBlankCstNode (Primitive (IntLiteral 34)),
+                            NEL.make (
+                                makeBlankCstNode (BuiltInOp PlusOp),
+                                makeBlankCstNode (Primitive (FloatLiteral -4.6))
                             )
                         )
                      )
@@ -235,20 +211,18 @@ let testParensExpressionWithMultiOperators =
                 Expect.equal
                     (stripContexts res')
                     (ParensedExpression (
-                        CompoundExpression (
-                            Operator (
-                                makeBlankCstNode (makeNumberExpression (IntLiteral 34)),
-                                NEL.make (
-                                    makeBlankCstNode (BuiltInOp PlusOp),
-                                    makeBlankCstNode (
-                                        CompoundExpression (
-                                            Operator (
-                                                makeBlankCstNode (makeNumberExpression (FloatLiteral -4.6)),
-                                                NEL.make (
-                                                    makeBlankCstNode (BuiltInOp DivOp),
-                                                    makeBlankCstNode (makeNumberExpression (IntLiteral 7))
-                                                )
-                                            )
+
+                        Operator (
+                            makeBlankCstNode (Primitive (IntLiteral 34)),
+                            NEL.make (
+                                makeBlankCstNode (BuiltInOp PlusOp),
+                                makeBlankCstNode (
+                                    Operator (
+                                        makeBlankCstNode (Primitive (FloatLiteral -4.6)),
+                                        NEL.make (
+                                            makeBlankCstNode (BuiltInOp DivOp),
+                                            makeBlankCstNode (Primitive (IntLiteral 7))
+
                                         )
                                     )
                                 )

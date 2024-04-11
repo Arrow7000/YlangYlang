@@ -131,41 +131,23 @@ type InfixOpBuiltIn =
 
 
 
-type NumberLiteralValue =
-    | FloatLiteral of float
-    | IntLiteral of int
-
 
 type PrimitiveLiteralValue =
-    | NumberPrimitive of NumberLiteralValue
+    | FloatLiteral of float
+    | IntLiteral of int
     | CharPrimitive of char
     | StringPrimitive of string
     | BoolPrimitive of bool
     | UnitPrimitive
 
 
-type CompoundValues =
-    | List of CstNode<Expression> list
-    | Tuple of CstNode<Expression> tom
-    | Record of (CstNode<Lexer.UnqualValueIdentifier> * CstNode<Expression>) list
-    | RecordExtension of
-        recordToExtend : CstNode<Lexer.UnqualValueIdentifier> *
-        additions : NEL<CstNode<Lexer.UnqualValueIdentifier> * CstNode<Expression>>
 
 
-and FunctionValue =
+type FunctionValue =
     { params_ : NEL<CstNode<AssignmentPattern>> // cos if it didn't have any then it would just be a regular value expression
       body : CstNode<Expression> }
 
 
-and ExplicitValue =
-    | Compound of CompoundValues
-    | Primitive of PrimitiveLiteralValue
-
-    // functions and other values might be unified by just giving all values a possibly-empty list of parameters
-    | Function of FunctionValue // for the parameters
-    /// A `.someField` expression which are first class getters for record fields. A `.someField` getter is a function that takes a record that has a `someField` field and returns the value at that field
-    | DotGetter of recordField : Lexer.UnqualValueIdentifier
 
 
 /// @TODO: need to account for let binding type annotations!
@@ -173,32 +155,42 @@ and LetBinding =
     { bindPattern : CstNode<AssignmentPattern>
       value : CstNode<Expression> }
 
-and ControlFlowExpression =
-    | IfExpression of condition : CstNode<Expression> * ifTrue : CstNode<Expression> * ifFalse : CstNode<Expression>
-    | CaseMatch of exprToMatch : CstNode<Expression> * branches : NEL<CstNode<AssignmentPattern> * CstNode<Expression>>
 
 
-
-and SingleValueExpression =
-    | ExplicitValue of ExplicitValue
-    | UpperIdentifier of Lexer.TypeOrModuleIdentifier
-    | LowerIdentifier of Lexer.ValueIdentifier
-    | LetExpression of bindings : NEL<CstNode<LetBinding>> * inExpr : CstNode<Expression> // can't have lets outside of an expression
-    | ControlFlowExpression of ControlFlowExpression
-
-
-
-and CompoundExpression =
-    | Operator of left : CstNode<Expression> * opSequence : NEL<CstNode<Lexer.Operator> * CstNode<Expression>>
-    | FunctionApplication of funcExpr : CstNode<Expression> * params' : NEL<CstNode<Expression>>
-    | DotAccess of expr : CstNode<Expression> * dotSequence : CstNode<NEL<Lexer.UnqualValueIdentifier>>
 
 
 
 and Expression =
-    | SingleValueExpression of SingleValueExpression
-    | CompoundExpression of CompoundExpression
+    | Primitive of PrimitiveLiteralValue
+    | Function of FunctionValue // for the parameters
+    /// A `.someField` expression which are first class getters for record fields. A `.someField` getter is a function that takes a record that has a `someField` field and returns the value at that field
+    | DotGetter of recordField : Lexer.UnqualValueIdentifier
+
+    | UpperIdentifier of Lexer.TypeOrModuleIdentifier
+    | LowerIdentifier of Lexer.ValueIdentifier
+
+
+    | List of CstNode<Expression> list
+    | Tuple of CstNode<Expression> tom
+    | Record of (CstNode<Lexer.UnqualValueIdentifier> * CstNode<Expression>) list
+    | RecordExtension of
+        recordToExtend : CstNode<Lexer.UnqualValueIdentifier> *
+        additions : NEL<CstNode<Lexer.UnqualValueIdentifier> * CstNode<Expression>>
+
+    | LetExpression of bindings : CstNode<LetBinding> nel * inExpr : CstNode<Expression> // can't have lets outside of an expression
+
+    (* Control flow expressions *)
+    | IfExpression of condition : CstNode<Expression> * ifTrue : CstNode<Expression> * ifFalse : CstNode<Expression>
+    | CaseMatch of exprToMatch : CstNode<Expression> * branches : NEL<CstNode<AssignmentPattern> * CstNode<Expression>>
+
+    (* Compound value expressions *)
+    | Operator of left : CstNode<Expression> * opSequence : NEL<CstNode<Lexer.Operator> * CstNode<Expression>>
+    | FunctionApplication of funcExpr : CstNode<Expression> * params' : NEL<CstNode<Expression>>
+    /// I.e. an `expr.field` expression
+    | DotAccess of expr : CstNode<Expression> * dotSequence : CstNode<NEL<Lexer.UnqualValueIdentifier>>
+
     | ParensedExpression of Expression // doesn't make much difference for the syntax tree, but useful for debugging
+
 
 
 type InfixOpDeclaration =

@@ -249,7 +249,7 @@ let parseUint =
         | UintLiteral n -> Some n
         | _ -> None)
 
-let parseInt : ExpressionParser<NumberLiteralValue> =
+let parseInt : ExpressionParser<PrimitiveLiteralValue> =
     fork parseUnaryNegationOpInt (succeed int) (fun op -> parseUint |> map (op >> IntLiteral))
     |> addCtxToStack PCtx.Int
 
@@ -288,8 +288,8 @@ let parseBool : ExpressionParser<PrimitiveLiteralValue> =
 
 let parsePrimitiveLiteral =
     oneOf
-        [ parseFloat |> map NumberPrimitive
-          parseInt |> map NumberPrimitive
+        [ parseFloat
+          parseInt
           parseBool
           parseChoosePrimitiveLiteral (function
               | StringLiteral str -> StringPrimitive str |> Some
@@ -319,7 +319,7 @@ let parseCustomOperator =
     |> addCtxToStack ParsingCtx.Operator
 
 
-let parseUpperIdentifier : ExpressionParser<CstNode<SingleValueExpression>> =
+let parseUpperIdentifier : ExpressionParser<CstNode<Expression>> =
     parseExpectedToken (ExpectedString "identifier") (function
         | Token.Identifier (ModuleSegmentsOrQualifiedTypeOrVariant ident) ->
             Some (UpperIdentifier (QualifiedType ident))
@@ -329,7 +329,7 @@ let parseUpperIdentifier : ExpressionParser<CstNode<SingleValueExpression>> =
     |> addCtxToStack PCtx.Identifier
 
 
-let parseLowerIdentifier : ExpressionParser<CstNode<SingleValueExpression>> =
+let parseLowerIdentifier : ExpressionParser<CstNode<Expression>> =
     parseExpectedToken (ExpectedString "identifier") (function
         | Token.Identifier (QualifiedPathValueIdentifier ident) -> Some (LowerIdentifier (QualifiedValue ident))
         | Token.Identifier (SingleValueIdentifier ident) -> Some (LowerIdentifier (UnqualValue ident))
@@ -569,15 +569,14 @@ let parseDotFieldPath : ExpressionParser<NEL<UnqualValueIdentifier>> =
 
 let rec private combineEndParser expr opAndFuncParam : Expression =
     match opAndFuncParam with
-    | Some (Operator opAndOperandNel) -> CompoundExpression.Operator (expr, opAndOperandNel) |> CompoundExpression
+    | Some (Operator opAndOperandNel) -> Expression.Operator (expr, opAndOperandNel)
     | Some (FunctionApplication (paramExprList, nestedEndExprOpt)) ->
         let combinedTokens =
             expr.source
             @ (NEL.fold (fun state item -> state @ item.source) List.empty paramExprList)
 
-        let firstExpr =
-            CompoundExpression.FunctionApplication (expr, paramExprList)
-            |> CompoundExpression
+        let firstExpr = Expression.FunctionApplication (expr, paramExprList)
+
 
         combineEndParser
             { node = firstExpr
@@ -648,8 +647,6 @@ and singleLetAssignment =
                         { params_ = NEL.new_ head tail
                           body = expr }
                         |> Function
-                        |> ExplicitValue
-                        |> SingleValueExpression
                       source = combinedTokens } })
         |= (parseTopLevelParam |> addCstNode)
         |. spaces
@@ -743,11 +740,7 @@ and parseTupleOrParensedExpr =
     succeed (fun first more ->
         match more with
         | [] -> ParensedExpression <| getNode first
-        | head :: rest ->
-            Tuple (TOM.new_ first head rest)
-            |> Compound
-            |> ExplicitValue
-            |> SingleValueExpression)
+        | head :: rest -> Tuple (TOM.new_ first head rest))
     |. symbol ParensOpen
     |. spaces
     |= parseTupleItem
@@ -768,24 +761,23 @@ and parseTupleOrParensedExpr =
 and parseDelimExpressions =
     succeed (fun expr dotFieldsOpt ->
         match dotFieldsOpt with
-        | Some dotFields -> DotAccess (expr, dotFields) |> CompoundExpression
+        | Some dotFields -> DotAccess (expr, dotFields)
 
         | None -> getNode expr)
     |= (either
-            (succeed SingleValueExpression
-             |= oneOf
-                 [ parseUpperIdentifier |> map getNode
-                   parseLowerIdentifier |> map getNode
+            (oneOf
+                [ parseUpperIdentifier |> map getNode
+                  parseLowerIdentifier |> map getNode
 
-                   parseRecord |> map (Record >> Compound >> ExplicitValue)
+                  parseRecord |> map Record
 
-                   parseExtendedRecord |> map (Compound >> ExplicitValue)
+                  parseExtendedRecord
 
-                   parseList |> map (List >> Compound >> ExplicitValue)
+                  parseList |> map List
 
-                   parsePrimitiveLiteral |> map (Primitive >> ExplicitValue)
+                  parsePrimitiveLiteral |> map Primitive
 
-                   parseDotGetter |> map (DotGetter >> ExplicitValue) ]
+                  parseDotGetter |> map DotGetter ]
              |> addCstNode)
             (parseTupleOrParensedExpr |> addCstNode))
     |= opt (parseDotFieldPath |> addCstNode)
@@ -861,8 +853,7 @@ and parseCaseMatch =
     )
 
 
-and parseControlFlowExpression =
-    either parseIfExpression parseCaseMatch |> map ControlFlowExpression
+and parseControlFlowExpression = either parseIfExpression parseCaseMatch
 
 and parseCompoundExpressions : ExpressionParser<Expression> =
     succeed combineEndParser
@@ -881,11 +872,11 @@ and parseExpression : ExpressionParser<Expression> =
     |= oneOf
         [ parseCompoundExpressions
 
-          parseControlFlowExpression |> map SingleValueExpression
+          parseControlFlowExpression
 
-          parseLetBindingsList |> map SingleValueExpression
+          parseLetBindingsList
 
-          parseLambda |> map (Function >> ExplicitValue >> SingleValueExpression) ]
+          parseLambda |> map Function ]
     |> addCtxToStack PCtx.WholeExpression
 
 
@@ -905,8 +896,6 @@ let parseValueDeclaration =
                         { params_ = NEL.new_ head tail
                           body = expr }
                         |> Function
-                        |> ExplicitValue
-                        |> SingleValueExpression
                       source = combinedTokens } })
         |= parseSingleValueIdentifier
         |. spaces
