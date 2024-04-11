@@ -1,5 +1,5 @@
 [*.{fs,fsx}]
-fsharp_keep_max_number_of_blank_lines=50
+fsharp_keep_max_number_of_blank_lines=150
 fsharp_space_before_uppercase_invocation=true
 fsharp_space_before_lowercase_invocation=true
 fsharp_space_before_class_constructor=true

@@ -233,179 +233,179 @@ type UnificationResult = Result<PolyTypeContents, UnificationError>
 
 
 
-/// A unification result or a redirect to another entry. Having multiple unification variables pointing to the same unification result lets us represent multiple unification variables that have been unified with each other. And having a set of type variables pointing to the same unification result lets us represent multiple type variables that have been unified with each other; and thereby also multiple unification variables that have been unified with multiple type variables.
-/// FYI having multiple unification variables unified with each other can take the form of multiple uniVars all redirecting to the same one, or multiple uniVars redirecting to each other in a chain, or a combination of both in a kind of tree structure where each entry points to its parent, and the root of the tree is the unification result.
-/// Instantiating a type variable with a fresh unification variable is done by following that unification variable's redirect chain until you get to the root entry, and then adding that type variable to the set of type variables in the root.
-type UnifResOrRedirect =
-    /// Unification result
-    | UnifResult of Result<PolyTypeContents, UnificationError> option
-    /// Redirect to another unification variable to represent that they are unified with each other
-    | UnifRedirect of UnificationVarId
+///// A unification result or a redirect to another entry. Having multiple unification variables pointing to the same unification result lets us represent multiple unification variables that have been unified with each other. And having a set of type variables pointing to the same unification result lets us represent multiple type variables that have been unified with each other; and thereby also multiple unification variables that have been unified with multiple type variables.
+///// FYI having multiple unification variables unified with each other can take the form of multiple uniVars all redirecting to the same one, or multiple uniVars redirecting to each other in a chain, or a combination of both in a kind of tree structure where each entry points to its parent, and the root of the tree is the unification result.
+///// Instantiating a type variable with a fresh unification variable is done by following that unification variable's redirect chain until you get to the root entry, and then adding that type variable to the set of type variables in the root.
+//type UnifResOrRedirect =
+//    /// Unification result
+//    | UnifResult of Result<PolyTypeContents, UnificationError> option
+//    /// Redirect to another unification variable to represent that they are unified with each other
+//    | UnifRedirect of UnificationVarId
 
 
 
-/// @TODO: for the real thing, this should include information about the location of the error, so that we can give a nice error message to the user, ideally with the exact code causing the error, with the relevant parts highlighted
-type InnerTypeError =
-    /// Although the binding has a type annotation, the value actually has a type error
-    | ErrorHiddenByAnnotation of unificationErr : UnificationError
+///// @TODO: for the real thing, this should include information about the location of the error, so that we can give a nice error message to the user, ideally with the exact code causing the error, with the relevant parts highlighted
+//type InnerTypeError =
+//    /// Although the binding has a type annotation, the value actually has a type error
+//    | ErrorHiddenByAnnotation of unificationErr : UnificationError
 
-    /// The binding doesn't have an internal type error, but the type doesn't match the declared annotation
-    | AnnotationVsInferenceClash of
-        typeVars : TypeVariableId list *
-        annotated : PolyTypeContents *
-        inferred : PolyTypeContents
-
-
-
-/// THIS is basically the new version of the Accumulator, because it gathers unification constraints on variables, and so every inferExpressionType function will return one of these and so they need to be combined to get the full constraints for each unification variable. Then, with all of the gathered constraints on each unification variable, we can assign that type to the name, and then use that inferred type as the type for that name, and then proceed to see if that inferred type is indeed compatible with all the other uses of that name.
-type UnificationVarsMap = Map<UnificationVarId, UnifResOrRedirect>
+//    /// The binding doesn't have an internal type error, but the type doesn't match the declared annotation
+//    | AnnotationVsInferenceClash of
+//        typeVars : TypeVariableId list *
+//        annotated : PolyTypeContents *
+//        inferred : PolyTypeContents
 
 
 
-
-
-module UnificationVarsMap =
-    let private findByUnificationVar (uniVar : UnificationVarId) (map : UnificationVarsMap) : UnifResOrRedirect =
-        match Map.tryFind uniVar map with
-        | Some v -> v
-        | None ->
-            // If a uniVar doesn't have any constraints yet it may not be in the uniVarsmap, so we just return as if it was in the map with no constraints
-            UnifResult None
-
-    let rec findUnificationVarResult
-        (uniVar : UnificationVarId)
-        (map : UnificationVarsMap)
-        : UnificationVarId * UnificationResult option =
-        match findByUnificationVar uniVar map with
-        | UnifRedirect redirectUniVar -> findUnificationVarResult redirectUniVar map
-        | UnifResult res ->
-            // Return the result as well as the final unification variable at that location
-            uniVar, res
-
-
-    type private UnificationVarResultWithSteps =
-        {
-            /// The (reversed) list of steps we took before we got to the final unification var
-            hops : UnificationVarId list
-            finalUnificationVar : UnificationVarId
-            result : UnificationResult option
-        }
-
-
-    /// This gets the unification result, but also includes all the unification variables we encountered during our redirect hops
-    let rec private findUnificationVarResultWithSteps uniVar map : UnificationVarResultWithSteps =
-        match findByUnificationVar uniVar map with
-        | UnifRedirect redirectUniVar ->
-            let result = findUnificationVarResultWithSteps redirectUniVar map
-
-            { result with
-                hops = redirectUniVar :: result.hops }
-
-        | UnifResult res ->
-            { hops = List.empty
-              finalUnificationVar = uniVar
-              result = res }
+///// THIS is basically the new version of the Accumulator, because it gathers unification constraints on variables, and so every inferExpressionType function will return one of these and so they need to be combined to get the full constraints for each unification variable. Then, with all of the gathered constraints on each unification variable, we can assign that type to the name, and then use that inferred type as the type for that name, and then proceed to see if that inferred type is indeed compatible with all the other uses of that name.
+//type UnificationVarsMap = Map<UnificationVarId, UnifResOrRedirect>
 
 
 
 
-    /// Represents a single entry in the unification vars map of all the things that are bound to the same constraints, along with the constraint itself
-    type CoupledConstraints =
-        { finalUniVar : UnificationVarId
-          otherUniVars : UnificationVarId set
-          result : UnificationResult option }
 
-        member this.allUniVars : UnificationVarId set =
-            Set.add this.finalUniVar this.otherUniVars
+//module UnificationVarsMap =
+//    let private findByUnificationVar (uniVar : UnificationVarId) (map : UnificationVarsMap) : UnifResOrRedirect =
+//        match Map.tryFind uniVar map with
+//        | Some v -> v
+//        | None ->
+//            // If a uniVar doesn't have any constraints yet it may not be in the uniVarsmap, so we just return as if it was in the map with no constraints
+//            UnifResult None
 
-
-
-    /// Gets all the unification variables that have been unified with the given unification variable, via traversing all the redirects
-    let getAllJoinedUnificationVars (uniVar : UnificationVarId) (map : UnificationVarsMap) : CoupledConstraints =
-        let finalUnivar, res = findUnificationVarResult uniVar map
-
-        let linkedUnificationVars : UnificationVarId set =
-            map
-            |> Map.choose (fun key _ ->
-                let result = findUnificationVarResultWithSteps key map
-
-                if result.finalUnificationVar = finalUnivar then
-                    Some result.hops
-
-                else
-                    None)
-            |> Map.values
-            |> Seq.concat
-            |> Set.ofSeq
+//    let rec findUnificationVarResult
+//        (uniVar : UnificationVarId)
+//        (map : UnificationVarsMap)
+//        : UnificationVarId * UnificationResult option =
+//        match findByUnificationVar uniVar map with
+//        | UnifRedirect redirectUniVar -> findUnificationVarResult redirectUniVar map
+//        | UnifResult res ->
+//            // Return the result as well as the final unification variable at that location
+//            uniVar, res
 
 
-        { finalUniVar = finalUnivar
-          otherUniVars = linkedUnificationVars
-          result = res }
+//    type private UnificationVarResultWithSteps =
+//        {
+//            /// The (reversed) list of steps we took before we got to the final unification var
+//            hops : UnificationVarId list
+//            finalUnificationVar : UnificationVarId
+//            result : UnificationResult option
+//        }
 
 
+//    /// This gets the unification result, but also includes all the unification variables we encountered during our redirect hops
+//    let rec private findUnificationVarResultWithSteps uniVar map : UnificationVarResultWithSteps =
+//        match findByUnificationVar uniVar map with
+//        | UnifRedirect redirectUniVar ->
+//            let result = findUnificationVarResultWithSteps redirectUniVar map
 
+//            { result with
+//                hops = redirectUniVar :: result.hops }
 
-/// The result of every type inference or unification: contains the inferred or unified type itself, plus the map of constrained unification variables as gleaned from the inference/unification
-type SelfAndConstrainedUnificationVars =
-    { self : Result<PolyType, UnificationError>
-      constrained : UnificationVarsMap }
-
-
-
-module SelfAndConstrainedUnificationVars =
-    /// Make without errors
-    let make result constrained : SelfAndConstrainedUnificationVars =
-        { self = result
-          constrained = constrained }
-
-
-    /// Make with only a self type, no constraineds
-    let makeEmpty result : SelfAndConstrainedUnificationVars = make result Map.empty
-
-    let map f sacuv =
-        { self = f sacuv.self
-          constrained = sacuv.constrained }
+//        | UnifResult res ->
+//            { hops = List.empty
+//              finalUnificationVar = uniVar
+//              result = res }
 
 
 
-///// Bubble up the result-ness of the .self field onto the record as a whole
-//let sequenceResult sacuv =
-//    sacuv.self
-//    |> Result.map (fun self ->
-//        {| constrained = sacuv.constrained
-//           self = self |})
 
+//    /// Represents a single entry in the unification vars map of all the things that are bound to the same constraints, along with the constraint itself
+//    type CoupledConstraints =
+//        { finalUniVar : UnificationVarId
+//          otherUniVars : UnificationVarId set
+//          result : UnificationResult option }
 
-/// @TODO: is there a specific reason this couldn't just be a `SelfAndConstrainedUnificationVars`?
-type TypeUnificationResult =
-    { unified : Result<PolyType, UnificationError>
-      constrained : UnificationVarsMap }
+//        member this.allUniVars : UnificationVarId set =
+//            Set.add this.finalUniVar this.otherUniVars
 
 
 
-/// The result of a check call, which is only done if we have an expected type we are checking the expression against
-type TypeCheckResult =
-    { result : Result<unit, UnificationError>
-      constrained : UnificationVarsMap }
+//    /// Gets all the unification variables that have been unified with the given unification variable, via traversing all the redirects
+//    let getAllJoinedUnificationVars (uniVar : UnificationVarId) (map : UnificationVarsMap) : CoupledConstraints =
+//        let finalUnivar, res = findUnificationVarResult uniVar map
+
+//        let linkedUnificationVars : UnificationVarId set =
+//            map
+//            |> Map.choose (fun key _ ->
+//                let result = findUnificationVarResultWithSteps key map
+
+//                if result.finalUnificationVar = finalUnivar then
+//                    Some result.hops
+
+//                else
+//                    None)
+//            |> Map.values
+//            |> Seq.concat
+//            |> Set.ofSeq
+
+
+//        { finalUniVar = finalUnivar
+//          otherUniVars = linkedUnificationVars
+//          result = res }
 
 
 
-module TypeCheckResult =
 
-    let singleton result : TypeCheckResult =
-        { result = result
-          constrained = Map.empty }
+///// The result of every type inference or unification: contains the inferred or unified type itself, plus the map of constrained unification variables as gleaned from the inference/unification
+//type SelfAndConstrainedUnificationVars =
+//    { self : Result<PolyType, UnificationError>
+//      constrained : UnificationVarsMap }
 
-    let make result constrained : TypeCheckResult =
-        { result = result
-          constrained = constrained }
 
-    let makeOk = make (Ok ())
-    let makeErr err = make (Error err)
 
-    let emptyOk : TypeCheckResult = singleton (Ok ())
-    let emptyErr e : TypeCheckResult = singleton (Error e)
+//module SelfAndConstrainedUnificationVars =
+//    /// Make without errors
+//    let make result constrained : SelfAndConstrainedUnificationVars =
+//        { self = result
+//          constrained = constrained }
+
+
+//    /// Make with only a self type, no constraineds
+//    let makeEmpty result : SelfAndConstrainedUnificationVars = make result Map.empty
+
+//    let map f sacuv =
+//        { self = f sacuv.self
+//          constrained = sacuv.constrained }
+
+
+
+/////// Bubble up the result-ness of the .self field onto the record as a whole
+////let sequenceResult sacuv =
+////    sacuv.self
+////    |> Result.map (fun self ->
+////        {| constrained = sacuv.constrained
+////           self = self |})
+
+
+///// @TODO: is there a specific reason this couldn't just be a `SelfAndConstrainedUnificationVars`?
+//type TypeUnificationResult =
+//    { unified : Result<PolyType, UnificationError>
+//      constrained : UnificationVarsMap }
+
+
+
+///// The result of a check call, which is only done if we have an expected type we are checking the expression against
+//type TypeCheckResult =
+//    { result : Result<unit, UnificationError>
+//      constrained : UnificationVarsMap }
+
+
+
+//module TypeCheckResult =
+
+//    let singleton result : TypeCheckResult =
+//        { result = result
+//          constrained = Map.empty }
+
+//    let make result constrained : TypeCheckResult =
+//        { result = result
+//          constrained = constrained }
+
+//    let makeOk = make (Ok ())
+//    let makeErr err = make (Error err)
+
+//    let emptyOk : TypeCheckResult = singleton (Ok ())
+//    let emptyErr e : TypeCheckResult = singleton (Error e)
 
 
 
@@ -562,7 +562,6 @@ module AbstractSyntaxTree =
 
 module Ast = AbstractSyntaxTree
 
-module Sacuv = SelfAndConstrainedUnificationVars
 
 
 
