@@ -4,7 +4,6 @@
 open System.Numerics
 open Lexer
 open SyntaxTree
-open ConcreteSyntaxTree
 open Parser
 
 
@@ -166,8 +165,10 @@ let getBlock (inclusion : BlockInclusion) (tokens : TokenWithSource list) : Toke
                         | OnlyIncludeIndenteds -> (<)
 
 
-                    if head.startLine = blockHead.startLine
-                       || comparisonOp blockHead.startCol head.startCol then
+                    if
+                        head.startLine = blockHead.startLine
+                        || comparisonOp blockHead.startCol head.startCol
+                    then
                         traverser (tokensGathered @ [ head ]) rest
 
                     else
@@ -286,16 +287,17 @@ let parseBool : ExpressionParser<PrimitiveLiteralValue> =
 
 
 let parsePrimitiveLiteral =
-    oneOf [ parseFloat |> map NumberPrimitive
-            parseInt |> map NumberPrimitive
-            parseBool
-            parseChoosePrimitiveLiteral (function
-                | StringLiteral str -> StringPrimitive str |> Some
-                | CharLiteral c -> CharPrimitive c |> Some
-                | _ -> None)
-            |> addCtxToStack PCtx.StringOrCharLiteral
+    oneOf
+        [ parseFloat |> map NumberPrimitive
+          parseInt |> map NumberPrimitive
+          parseBool
+          parseChoosePrimitiveLiteral (function
+              | StringLiteral str -> StringPrimitive str |> Some
+              | CharLiteral c -> CharPrimitive c |> Some
+              | _ -> None)
+          |> addCtxToStack PCtx.StringOrCharLiteral
 
-            parseUnit ]
+          parseUnit ]
     |> addCtxToStack PCtx.PrimitiveLiteral
 
 
@@ -409,9 +411,7 @@ let parseSimpleParam =
         // This just parses a single type variant without any data, because the latter would require being delimited, and is therefore parsed elsewhere
         (typeNameParser
          |> addCstNode
-         |> map (fun typeName ->
-             DestructuredTypeVariant (typeName, List.empty)
-             |> DestructuredPattern))
+         |> map (fun typeName -> DestructuredTypeVariant (typeName, List.empty) |> DestructuredPattern))
 
     |> addCstNode
     |> addCtxToStack (PCtx.SingleParam SimpleParam)
@@ -445,16 +445,12 @@ let parseRecordDestructuringParam =
     |> addCtxToStack (PCtx.SingleParam RecordParam)
 
 let rec parseTupleDestructuredParam : ExpressionParser<AssignmentPattern> =
-    let parseTupleItem =
-        lazyParser (fun _ -> parseDelimitedParam)
-        |> addCstNode
+    let parseTupleItem = lazyParser (fun _ -> parseDelimitedParam) |> addCstNode
 
     succeed (fun first rest ->
         match rest with
         | [] -> first.node
-        | neck :: tail ->
-            DestructuredTuple (TOM.new_ first neck tail)
-            |> DestructuredPattern)
+        | neck :: tail -> DestructuredTuple (TOM.new_ first neck tail) |> DestructuredPattern)
     |. symbol ParensOpen
     |. spaces
     |= parseTupleItem
@@ -489,10 +485,7 @@ and parseConsDestructuredParam =
     |= oneOrMore (
         succeed id
         |. spaces
-        |. symbol (
-            Lexer.BuiltInOp Lexer.BuiltInOperator.ConsOp
-            |> Lexer.Operator
-        )
+        |. symbol (Lexer.BuiltInOp Lexer.BuiltInOperator.ConsOp |> Lexer.Operator)
         |. spaces
         |= parseItem
     )
@@ -503,17 +496,11 @@ and parseTypeVariantDestructuredParam =
     succeed (fun typeName params' -> DestructuredTypeVariant (typeName, params'))
     |= (typeNameParser |> addCstNode)
     |. spaces
-    |= repeat (
-        lazyParser (fun _ -> parseTopLevelParam |> addCstNode)
-        |. spaces
-    )
+    |= repeat (lazyParser (fun _ -> parseTopLevelParam |> addCstNode) |. spaces)
     |> addCtxToStack (PCtx.SingleParam TypeParam)
 
 and parseInherentlyDelimitedParam =
-    either
-        (parseRecordDestructuringParam
-         |> map DestructuredPattern)
-        parseTupleDestructuredParam
+    either (parseRecordDestructuringParam |> map DestructuredPattern) parseTupleDestructuredParam
     |> addCtxToStack (PCtx.SingleParam InherentlyDelimitedParam)
 
 and parseNotInherentlyDelimitedParam =
@@ -527,15 +514,15 @@ and parseDelimitedParam : ExpressionParser<AssignmentPattern> =
         match aliasOpt with
         | Some alias -> Aliased (pattern, alias)
         | None -> getNode pattern)
-    |= (oneOf [ parseNotInherentlyDelimitedParam
-                |> map DestructuredPattern
+    |= (oneOf
+            [ parseNotInherentlyDelimitedParam |> map DestructuredPattern
 
-                parseInherentlyDelimitedParam
+              parseInherentlyDelimitedParam
 
-                (parseSimpleParam |> map getNode)
+              (parseSimpleParam |> map getNode)
 
-                parensedParser (lazyParser (fun _ -> parseDelimitedParam))
-                |> addCtxToStack (PCtx.SingleParam ParensedParam) ]
+              parensedParser (lazyParser (fun _ -> parseDelimitedParam))
+              |> addCtxToStack (PCtx.SingleParam ParensedParam) ]
         |> addCstNode)
     |. spaces
     |= opt parseAlias
@@ -543,11 +530,12 @@ and parseDelimitedParam : ExpressionParser<AssignmentPattern> =
 
 
 and parseTopLevelParam : ExpressionParser<AssignmentPattern> =
-    oneOf [ parseSimpleParam |> map getNode
+    oneOf
+        [ parseSimpleParam |> map getNode
 
-            parensedParser parseDelimitedParam
+          parensedParser parseDelimitedParam
 
-            parseInherentlyDelimitedParam ]
+          parseInherentlyDelimitedParam ]
     |> addCtxToStack (PCtx.SingleParam TopLevelParam)
 
 
@@ -581,9 +569,7 @@ let parseDotFieldPath : ExpressionParser<NEL<UnqualValueIdentifier>> =
 
 let rec private combineEndParser expr opAndFuncParam : Expression =
     match opAndFuncParam with
-    | Some (Operator opAndOperandNel) ->
-        CompoundExpression.Operator (expr, opAndOperandNel)
-        |> CompoundExpression
+    | Some (Operator opAndOperandNel) -> CompoundExpression.Operator (expr, opAndOperandNel) |> CompoundExpression
     | Some (FunctionApplication (paramExprList, nestedEndExprOpt)) ->
         let combinedTokens =
             expr.source
@@ -695,8 +681,7 @@ and parseLetBindingsList =
 
 
 and parseRecordKeyValue =
-    succeed (fun key expression -> (key, expression))
-    |= parseSingleValueIdentifier
+    succeed (fun key expression -> (key, expression)) |= parseSingleValueIdentifier
     |. spaces
     |. symbol AssignmentEquals
     |. spaces
@@ -788,22 +773,19 @@ and parseDelimExpressions =
         | None -> getNode expr)
     |= (either
             (succeed SingleValueExpression
-             |= oneOf [ parseUpperIdentifier |> map getNode
-                        parseLowerIdentifier |> map getNode
+             |= oneOf
+                 [ parseUpperIdentifier |> map getNode
+                   parseLowerIdentifier |> map getNode
 
-                        parseRecord
-                        |> map (Record >> Compound >> ExplicitValue)
+                   parseRecord |> map (Record >> Compound >> ExplicitValue)
 
-                        parseExtendedRecord
-                        |> map (Compound >> ExplicitValue)
+                   parseExtendedRecord |> map (Compound >> ExplicitValue)
 
-                        parseList
-                        |> map (List >> Compound >> ExplicitValue)
+                   parseList |> map (List >> Compound >> ExplicitValue)
 
-                        parsePrimitiveLiteral
-                        |> map (Primitive >> ExplicitValue)
+                   parsePrimitiveLiteral |> map (Primitive >> ExplicitValue)
 
-                        parseDotGetter |> map (DotGetter >> ExplicitValue) ]
+                   parseDotGetter |> map (DotGetter >> ExplicitValue) ]
              |> addCstNode)
             (parseTupleOrParensedExpr |> addCstNode))
     |= opt (parseDotFieldPath |> addCstNode)
@@ -880,8 +862,7 @@ and parseCaseMatch =
 
 
 and parseControlFlowExpression =
-    either parseIfExpression parseCaseMatch
-    |> map ControlFlowExpression
+    either parseIfExpression parseCaseMatch |> map ControlFlowExpression
 
 and parseCompoundExpressions : ExpressionParser<Expression> =
     succeed combineEndParser
@@ -897,15 +878,14 @@ and parseExpression : ExpressionParser<Expression> =
     succeed id
 
     |. spaces
-    |= oneOf [ parseCompoundExpressions
+    |= oneOf
+        [ parseCompoundExpressions
 
-               parseControlFlowExpression
-               |> map SingleValueExpression
+          parseControlFlowExpression |> map SingleValueExpression
 
-               parseLetBindingsList |> map SingleValueExpression
+          parseLetBindingsList |> map SingleValueExpression
 
-               parseLambda
-               |> map (Function >> ExplicitValue >> SingleValueExpression) ]
+          parseLambda |> map (Function >> ExplicitValue >> SingleValueExpression) ]
     |> addCtxToStack PCtx.WholeExpression
 
 
@@ -947,8 +927,7 @@ let parseValueDeclaration =
 (* Parse type expressions *)
 
 let rec parseKeyAndValueType =
-    succeed (fun key value -> key, value)
-    |= parseSingleValueIdentifier
+    succeed (fun key value -> key, value) |= parseSingleValueIdentifier
     |. spaces
     |. symbol Colon
     |. spaces
@@ -1018,22 +997,21 @@ and parseTupleTypeOrParensed =
 
 
 and parseInherentlyDelimType =
-    oneOf [ parseRecordType |> map MentionableType.Record
+    oneOf
+        [ parseRecordType |> map MentionableType.Record
 
-            parseExtendedRecordType
-            |> map MentionableType.ExtendedRecord
+          parseExtendedRecordType |> map MentionableType.ExtendedRecord
 
-            parseTupleTypeOrParensed
+          parseTupleTypeOrParensed
 
-            parseSingleValueIdentifier
-            |> map (getNode >> MentionableType.GenericTypeVar)
+          parseSingleValueIdentifier |> map (getNode >> MentionableType.GenericTypeVar)
 
-            parseUnit |> map (always UnitType)
+          parseUnit |> map (always UnitType)
 
-            // parses a single type name without any type params
-            typeNameParser
-            |> addCstNode
-            |> map (fun typeName -> ReferencedType (typeName, List.empty)) ]
+          // parses a single type name without any type params
+          typeNameParser
+          |> addCstNode
+          |> map (fun typeName -> ReferencedType (typeName, List.empty)) ]
 
 and parseTypeReference =
     succeed (fun typeName typeParams -> ReferencedType (typeName, typeParams))
@@ -1054,10 +1032,7 @@ and parseTypeExpression : ExpressionParser<MentionableType> =
         | head :: rest -> Arrow (prim, NEL.new_ head rest))
     |= addCstNode parseTypePrimitive
     |= repeat (
-        succeed id
-        |. spaces
-        |. symbol Lexer.Arrow
-        |. spaces
+        succeed id |. spaces |. symbol Lexer.Arrow |. spaces
         |= addCstNode parseTypePrimitive
     )
 
@@ -1160,11 +1135,7 @@ let parseModuleName : ExpressionParser<QualifiedModuleOrTypeIdentifier> =
         | _ -> None)
 
 let exposingAllParser =
-    symbol ParensOpen
-    |. spaces
-    |. symbol DoubleDot
-    |. spaces
-    |. symbol ParensClose
+    symbol ParensOpen |. spaces |. symbol DoubleDot |. spaces |. symbol ParensClose
     |> addCstNode
 
 let parseModuleDeclaration : ExpressionParser<ModuleDeclaration> =
@@ -1178,9 +1149,7 @@ let parseModuleDeclaration : ExpressionParser<ModuleDeclaration> =
         |> addCstNode
 
     let explicitExports =
-        succeed (fun first rest -> NEL.new_ first rest)
-        |. symbol ParensOpen
-        |. spaces
+        succeed (fun first rest -> NEL.new_ first rest) |. symbol ParensOpen |. spaces
         |= explicitExportItem
         |= repeat (
             succeed id
@@ -1264,10 +1233,11 @@ let parseImport =
 
 /// @TODO: parse infix operator declarations also!
 let parseDeclarations =
-    oneOf [ parseImport |> map ImportDeclaration
-            parseValueDeclaration |> map ValueDeclaration
-            parseTypeDeclaration |> map TypeDeclaration
-            parseValueAnnotation |> map ValueTypeAnnotation ]
+    oneOf
+        [ parseImport |> map ImportDeclaration
+          parseValueDeclaration |> map ValueDeclaration
+          parseTypeDeclaration |> map TypeDeclaration
+          parseValueAnnotation |> map ValueTypeAnnotation ]
 
 
 let parseEntireModule =

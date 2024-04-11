@@ -3,7 +3,7 @@
 open Lexer
 
 module S = SyntaxTree
-module Cst = ConcreteSyntaxTree
+//module Cst = ConcreteSyntaxTree
 module Q = QualifiedSyntaxTree
 
 open QualifiedSyntaxTree.Names
@@ -38,8 +38,7 @@ let addNewReference (declaredIdent : 'name) (value : 'v) (map : Map<'name, Singl
         | None -> Some (sod.Single value))
 
 
-let addNewRefWithTokens (ident : S.CstNode<'name>) (value : 'v) =
-    addNewReference ident (ident.source, value)
+let addNewRefWithTokens (ident : S.CstNode<'name>) (value : 'v) = addNewReference ident (ident.source, value)
 
 
 
@@ -107,8 +106,8 @@ let reifyLower
 
 
 type VariantConstructor =
-    { typeDeclaration : Cst.NewTypeDeclaration
-      variantCase : Cst.VariantCase
+    { typeDeclaration : S.NewTypeDeclaration
+      variantCase : S.VariantCase
       fullName : FullyQualifiedUpperIdent }
 
 
@@ -116,11 +115,11 @@ type VariantConstructor =
 type LocalName =
     { tokens : TokenWithSource list
       destructurePath : PathToDestructuredName
-      assignedExpression : Cst.Expression }
+      assignedExpression : S.Expression }
 
 type LowerCaseTopLevel =
     { tokens : TokenWithSource list
-      assignedExpression : Cst.Expression
+      assignedExpression : S.Expression
       fullName : FullyQualifiedTopLevelLowerIdent }
 
 type LowerCaseName =
@@ -268,16 +267,8 @@ let addNewParamReference
 
             match oldValueOpt with
             | None -> Some (sod.Single newValueAndPath)
-            | Some (Single oldRef) ->
-                oldRef
-                |> TOM.make newValueAndPath
-                |> Duplicate
-                |> Some
-            | Some (Duplicate refList) ->
-                refList
-                |> TOM.cons newValueAndPath
-                |> Duplicate
-                |> Some)
+            | Some (Single oldRef) -> oldRef |> TOM.make newValueAndPath |> Duplicate |> Some
+            | Some (Duplicate refList) -> refList |> TOM.cons newValueAndPath |> Duplicate |> Some)
         resolvedParams
 
 
@@ -310,8 +301,7 @@ let unqualTypeToUpperIdent (UnqualTypeOrModuleIdentifier label) = UpperIdent lab
 //S.mapNode (getLabel >> UpperIdent) label
 
 
-let convertRecordMapFields map =
-    Map.mapKeyVal (fun key v -> S.mapNode unqualValToRecField key, v) map
+let convertRecordMapFields map = Map.mapKeyVal (fun key v -> S.mapNode unqualValToRecField key, v) map
 
 
 
@@ -408,7 +398,7 @@ let private moduleNameToModulePath (QualifiedModuleOrTypeIdentifier moduleIdent)
     |> ModulePath
 
 
-let private getModulePath (moduleCtx : C.YlModule) : ModulePath =
+let private getModulePath (moduleCtx : S.YlModule) : ModulePath =
     moduleNameToModulePath moduleCtx.moduleDecl.moduleName.node
 
 let convertTypeOrModuleIdentifierToFullyQualified
@@ -434,8 +424,7 @@ let qualifyCstNodeAndLiftResult
     (qualifier : 'a -> Result<'b, Identifier list>)
     (cstNode : S.CstNode<'a>)
     : Result<S.CstNode<'b>, Identifier list> =
-    S.mapNode qualifier cstNode
-    |> liftResultFromCstNode
+    S.mapNode qualifier cstNode |> liftResultFromCstNode
 
 
 let combineUnresolvedIdents (result : Result<'a, Identifier list nel>) =
