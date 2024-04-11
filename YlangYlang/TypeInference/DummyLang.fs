@@ -1161,7 +1161,8 @@ module TypeInference =
 
 
 
-    /// This will replace the univars with their constraints and it will generalise unconstrained univars to type variables
+    /// This will replace the univars with their constraints and it will generalise unconstrained univars to type variables.
+    /// It also returns all type variables from the PTC, whether new from the zonking or already present. This means this polytype can just cleanly replace any polytype that this PTC came from.
     let private zonkPolyTypeContents (uniVars : UnificationVarId set) (ptc : PolyTypeContents) : PolyType =
         let uniVarsToTypeVarsMap : Map<UnificationVarId, TypeVariableId> =
             uniVars |> Set.map (fun uniVarId -> uniVarId, makeNewTypeVar ()) |> Map.ofSeq
@@ -1182,13 +1183,15 @@ module TypeInference =
 
                 | None ->
                     match uniVar.content.Value.constrained with
-                    | None -> PTC.UnificationVar uniVar, Set.empty
+                    | None ->
+                        // I.e. this is not one of the univars we need to zonk, and there are no constraints to recursively zonk on, so we just return the empty univar as is
+                        PTC.UnificationVar uniVar, Set.empty
+
                     | Some constrained ->
                         // If constrained, replace with the constrained concrete type
                         replaceAndGetTypeVars constrained
 
-
-            | TypeVariable tv -> PTC.TypeVariable tv, Set.empty
+            | TypeVariable tv -> PTC.TypeVariable tv, Set.singleton tv
             | Skolem name -> PTC.Skolem name, Set.empty
             | ConcreteType (ConcType (name, params_)) ->
                 let replacedParams, typeVars = List.map replaceAndGetTypeVars params_ |> List.unzip
@@ -1205,34 +1208,16 @@ module TypeInference =
         (uniVars : UnificationVarId set)
         (ptcResult : Result<PolyTypeContents, UnificationError>)
         : Result<PolyType, UnificationError> =
+        // @TODO we should probably zonk the UnificationError contents also!
         Result.map (zonkPolyTypeContents uniVars) ptcResult
 
 
-
-    //let private zonkConcreteType
-    //    (unificationVarsWeCanEliminate : UnificationVarId set)
-    //    (concreteType : ConcreteType)
-    //    : ConcreteType =
-    //    let (ConcType (name, params_)) = concreteType
-    //    ConcType (name, List.map (zonkPolyTypeContents unificationVarsWeCanEliminate) params_)
+    let private zonkPolyType (unificationVarsWeCanEliminate : UnificationVarId set) (type_ : PolyType) : PolyType =
+        // This is fine to replace the whole original polytype because the zonking will include all typevars present in the PTC anyway, so no need to keep hold of the original `forall`s.
+        zonkPolyTypeContents unificationVarsWeCanEliminate type_.typeExpr
 
 
-    /// @TODO implement.
-    ///
-    /// Although we may not actually need this in the end after all actually. Idk, still very much a WIP.
-    let private instantiateTypeVarsInPolyTypeNew
-        (unificationVarsWeCanEliminate : UnificationVarId set)
-        (type_ : PolyType)
-        : PolyType =
-        let polyTypeResult =
-            zonkPolyTypeContents unificationVarsWeCanEliminate type_.typeExpr
-
-        { forall = type_.forall @ polyTypeResult.forall |> List.distinct
-          typeExpr = polyTypeResult.typeExpr }
-
-
-
-
+    // // @TODO the problem with this was that zonking always returns a PolyType, but the various error variants expect more specific things. Maybe that's fine though? Maybe we don't need to zonk this after all, because with the new mutable approach univars contain all their constraint information anyway?
     //let private zonkUnificationErr
     //    (unificationVarsWeCanEliminate : UnificationVarId set)
     //    (err : UnificationError)
@@ -1244,31 +1229,11 @@ module TypeInference =
     //    | UnificationClash (a, b) -> zonkConcreteType
 
     /// @TODO we should probably apply this to the error branch as well
-    let private instantiateTypeVarsInPolyTypeResultNew
+    let private zonkPolyTypeResult
         (unificationVarsWeCanEliminate : UnificationVarId set)
         (type_ : Result<PolyType, UnificationError>)
         : Result<PolyType, UnificationError> =
-        Result.map (instantiateTypeVarsInPolyTypeNew unificationVarsWeCanEliminate) type_
-
-    /// @TODO can delete this in favour of a simple zonkPolyTypeContents
-    let private concretiseAndGeneraliseTypeUnificationResultNew
-        (unificationVarsWeCanEliminate : UnificationVarId set)
-        (type_ : PolyTypeContents)
-        : PolyType =
-        zonkPolyTypeContents unificationVarsWeCanEliminate type_
-
-
-
-    ///// @TODO implement
-    /////
-    ///// I don't think we ever need this because I think both places it's used we can just zonk the value _before_ sticking it into a namesmap, so I don't think we'll ever have any need for this
-    //let private instantiateTypeVarsInUniVarsMapAndLocalNamesMapNew
-    //    (unificationVarsWeCanEliminate : UnificationVarId set)
-    //    (localNamesMap : TypedLocalNamesMap)
-    //    //(unificationVarsMap : NewUnificationVarsMap)
-    //    //: TypedLocalNamesMap * NewUnificationVarsMap =
-    //    : TypedLocalNamesMap =
-    //    failwith "@TODO implement"
+        Result.map (zonkPolyType unificationVarsWeCanEliminate) type_
 
 
 
@@ -1313,7 +1278,7 @@ module TypeInference =
             |> Map.ofSeq
 
 
-        let rec replaceInPtc (ptc_ : PTC) =
+        let rec replaceSkolemsInPtc (ptc_ : PTC) =
             match ptc_ with
             | PTC.Skolem name ->
                 match Map.tryFind name skolemToTypeVarsMap with
@@ -1323,10 +1288,11 @@ module TypeInference =
             | PTC.TypeVariable tv -> PTC.TypeVariable tv
             | PTC.UnificationVar uv -> PTC.UnificationVar uv
             | PTC.ConcreteType (ConcType (name, params_)) ->
-                PTC.ConcreteType (ConcType (name, List.map replaceInPtc params_))
+                PTC.ConcreteType (ConcType (name, List.map replaceSkolemsInPtc params_))
 
+        // @TODO we should probably be a bit cleverer about this and only return typevars that are actually present in the PTC, so we don't needlessly include typevars that don't make an actual appearance in the PTC
         { forall = Map.values skolemToTypeVarsMap |> Seq.toList
-          typeExpr = replaceInPtc ptc }
+          typeExpr = replaceSkolemsInPtc ptc }
 
 
 
@@ -1340,8 +1306,6 @@ module TypeInference =
 
 
 
-    //let primitiveTypeExpr label = TypeExpr (label, List.empty)
-    //let parametricTypeExpr label typeParams = TypeExpr (label, typeParams)
     let private arrowTypeExpr from to_ = TypeExpr (Types.arrowTypeName, [ from; to_ ])
 
     let rec private makeArrowTypeFromNel nel =
@@ -1432,7 +1396,7 @@ module TypeInference =
 
 
 
-    /// @TODO implement
+
     let rec private check (ctx : Ctx) (typeAnnotation : TypeExpr) (expr : Ast.Expr) : Result<unit, UnificationError> =
 
         let rec innerCheck
@@ -1935,7 +1899,7 @@ module TypeInference =
 
                         let inferredType =
                             inferTypeFromExpr withThisNameUniVarAdded expr
-                            |> instantiateTypeVarsInPolyTypeResultNew (Set.singleton newUniVar)
+                            |> zonkPolyTypeResult (Set.singleton newUniVar)
 
                         let withThisBindingAdded : TypedLocalNamesMap =
                             addToLocalNamesMap name inferredType localNamesMap
@@ -1975,7 +1939,7 @@ module TypeInference =
                                 (fun localNamesMap (name, expr, uniVar) ->
                                     let inferredType =
                                         inferTypeFromExpr withNewUniVarsAdded expr
-                                        |> instantiateTypeVarsInPolyTypeResultNew (Set.singleton uniVar)
+                                        |> zonkPolyTypeResult (Set.singleton uniVar)
 
                                     let withThisBindingAdded : TypedLocalNamesMap =
                                         addToLocalNamesMap name inferredType localNamesMap
@@ -2360,7 +2324,7 @@ module TypeInference =
                 |> Result.map (Types.funcTypeOf paramPolyType)
 
             let instantiatedType =
-                instantiateTypeVarsInPolyTypeResultNew (Set.singleton newUniVar) bodyInferenceResult
+                zonkPolyTypeResult (Set.singleton newUniVar) bodyInferenceResult
 
             instantiatedType
 
@@ -2393,8 +2357,7 @@ module TypeInference =
                 /// So I think this is fine to just discard because we only need to unify this to set the uniVars, not because we need this required func itself
                 let funcRequiredResult = unifyTwoTypes funcRequiredType funcExprType_
 
-                let zonked =
-                    instantiateTypeVarsInPolyTypeNew (Set.singleton returnTypeUniVarId) returnType
+                let zonked = zonkPolyType (Set.singleton returnTypeUniVarId) returnType
 
                 Ok zonked
 

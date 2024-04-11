@@ -523,3 +523,10 @@ let testTypeInference () =
               | Ok t -> Tests.printfn $"Success {t}"
               | Error e -> Tests.failtest $"Expected {string typeAnnotation} but got {e}"
           } ]
+
+
+(*
+@TODO: need to add tests for:
+- error cases! we're only testing some happy paths here, we should be testing for error cases and that we've got the right error types and specific type clashes recorded accurately!
+- skolems, being narrowed, multiple skolems being unified with each other
+*)
