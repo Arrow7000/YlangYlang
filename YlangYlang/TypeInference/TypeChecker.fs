@@ -4,18 +4,302 @@
 
 //open Lexer
 
+module L = Lexer
+module Cst = ConcreteSyntaxTree
+module S = SyntaxTree
+module Q = QualifiedSyntaxTree
+module T = TypedSyntaxTree
 
-//module Cst = ConcreteSyntaxTree
-//module S = SyntaxTree
-//module Q = QualifiedSyntaxTree
-//module T = TypedSyntaxTree
+open Q.Names
+open TypedSyntaxTree
 
-//open Q.Names
-//open TypedSyntaxTree
+module NameRes = TypedNameResolution
 
-//module NameRes = TypedNameResolution
-
+module DG = DependencyGraphs
 //open NameResolution
+
+
+
+
+/// Alias for unqualified value identifier
+type ValIdent = Lexer.UnqualValueIdentifier
+
+
+
+
+
+
+/// Make a new unification variable
+let private makeNewUniVar () = System.Guid.NewGuid () |> T.UnificationVarId
+
+/// Make a new type variable
+let private makeNewTypeVar () = System.Guid.NewGuid () |> T.TypeVariableId
+
+
+
+
+
+
+
+
+/// Gets all the value names referenced in an expression, for the purpose of creating a name dependency graph.
+/// Note! need to specify that we're only interested in names defined at this scope and higher – internally defined let bindings or parameters should not be bubbled up because as far as the higher scopes are concerned those names do not exist.
+let rec private getNamesUsedInExpr (namesToLookOutFor : ValIdent set) (expr : S.Expression) : ValIdent set =
+    match expr with
+    | S.LowerIdentifier ident ->
+        match ident with
+        | Lexer.QualifiedValue _ -> Set.empty
+        | Lexer.UnqualValue unqual ->
+            // The heart of this function
+            if Set.contains unqual namesToLookOutFor then
+                Set.singleton unqual
+            else
+                Set.empty
+
+    | S.UpperIdentifier _ -> Set.empty
+    | S.Primitive _ -> Set.empty
+    | S.Function func ->
+        let shadowedNames : ValIdent set =
+            func.params_
+            |> NEL.map S.getNode
+            |> Seq.collect getNamesInAssignmentPattern
+            |> Set.ofSeq
+
+        getNamesUsedInExpr (Set.difference namesToLookOutFor shadowedNames) func.body.node
+
+    | S.DotGetter _ -> Set.empty
+    | S.List exprs -> Set.collect (S.getNode >> getNamesUsedInExpr namesToLookOutFor) exprs
+    | S.Expression.Tuple exprs -> Set.collect (S.getNode >> getNamesUsedInExpr namesToLookOutFor) exprs
+    | S.Expression.Record fields -> Set.collect (snd >> S.getNode >> getNamesUsedInExpr namesToLookOutFor) fields
+    | S.RecordExtension (recordToExtend, additions) ->
+        additions
+        |> Seq.collect (fun (_, value) -> getNamesUsedInExpr namesToLookOutFor value.node)
+        |> Set.ofSeq
+        |> Set.add recordToExtend.node
+
+
+    | S.LetExpression (bindings, inExpr) ->
+        let shadowedNames =
+            bindings
+            |> NEL.map S.getNode
+            |> Seq.collect (fun binding -> getNamesInAssignmentPattern binding.bindPattern.node)
+            |> Set.ofSeq
+
+        let innerNamesToLookFor = Set.difference namesToLookOutFor shadowedNames
+
+        bindings
+        |> NEL.map S.getNode
+        |> Seq.collect (fun binding -> getNamesUsedInExpr innerNamesToLookFor binding.value.node)
+        |> Set.ofSeq
+        |> Set.union (getNamesUsedInExpr innerNamesToLookFor inExpr.node)
+
+
+    | S.IfExpression (cond, ifTrue, ifFalse) ->
+        Set.unionMany
+            [ getNamesUsedInExpr namesToLookOutFor cond.node
+              getNamesUsedInExpr namesToLookOutFor ifTrue.node
+              getNamesUsedInExpr namesToLookOutFor ifFalse.node ]
+
+    | S.CaseMatch (exprToMatch, branches) ->
+        let exprNames = getNamesUsedInExpr namesToLookOutFor exprToMatch.node
+
+        let namesFromBranches =
+            branches
+            |> NEL.map (fun (pattern, branch) ->
+                let shadowedNames = getNamesInAssignmentPattern pattern.node
+                getNamesUsedInExpr (Set.difference namesToLookOutFor shadowedNames) branch.node)
+            |> Set.unionMany
+
+        Set.union exprNames namesFromBranches
+
+    | S.Operator (left, opSequence) ->
+        let leftNames = getNamesUsedInExpr namesToLookOutFor left.node
+
+        let rightNames =
+            opSequence
+            |> NEL.map (fun (op, right) ->
+                let opName =
+                    match op.node with
+                    | L.BuiltInOp _ -> Set.empty
+                    | L.OtherOp name -> Set.singleton name
+
+                getNamesUsedInExpr namesToLookOutFor right.node |> Set.union opName)
+            |> Seq.collect id
+            |> Set.ofSeq
+
+        Set.union leftNames rightNames
+
+    | S.FunctionApplication (funcExpr, params') ->
+        let funcNames = getNamesUsedInExpr namesToLookOutFor funcExpr.node
+
+        let paramNames =
+            params'
+            |> Seq.collect (S.getNode >> getNamesUsedInExpr namesToLookOutFor)
+            |> Set.ofSeq
+
+        Set.union funcNames paramNames
+
+    | S.DotAccess (expr, _) -> getNamesUsedInExpr namesToLookOutFor expr.node
+    | S.ParensedExpression expr -> getNamesUsedInExpr namesToLookOutFor expr
+
+
+
+
+
+and private getNamesInAssignmentPattern (assignmentPattern : S.AssignmentPattern) : ValIdent set =
+    match assignmentPattern with
+    | S.Named name -> Set.singleton name
+    | S.Ignored -> Set.empty
+    | S.Unit -> Set.empty
+    | S.DestructuredPattern destructured -> getNamesInDestructuredPattern destructured
+    | S.Aliased (pattern, alias) -> getNamesInAssignmentPattern pattern.node |> Set.add alias.node
+
+
+
+and private getNamesInDestructuredPattern (destructuredPattern : S.DestructuredPattern) : ValIdent set =
+    match destructuredPattern with
+    | S.DestructuredRecord fieldNames -> Seq.map S.getNode fieldNames |> Set.ofSeq
+    | S.DestructuredTuple patterns -> Seq.collect (S.getNode >> getNamesInAssignmentPattern) patterns |> Set.ofSeq
+    | S.DestructuredCons patterns -> Seq.collect (S.getNode >> getNamesInAssignmentPattern) patterns |> Set.ofSeq
+    | S.DestructuredTypeVariant (_, params') ->
+        Seq.collect (S.getNode >> getNamesInAssignmentPattern) params' |> Set.ofSeq
+
+
+
+
+
+
+
+
+
+
+let private sortBindingsTopologically
+    (namesAndExprs : (ValIdent * S.Expression) seq)
+    : DG.StronglyConnectedGraph<S.Expression, ValIdent> list =
+    let bindingNames = namesAndExprs |> Seq.map fst |> Set.ofSeq
+    let getDependencies = snd >> getNamesUsedInExpr bindingNames >> Set.toSeq
+
+    DG.getStronglyConnectedComponents<ValIdent * S.Expression, ValIdent> fst getDependencies namesAndExprs
+    |> DG.sortOneOrMoreTopologically fst getDependencies
+    |> List.map (DG.SCC.map snd)
+
+
+
+
+
+
+/// Add a local names map to a global one
+let private addLocalNamesMap (localNamesMap : T.TypedLocalNamesMap) (namesMap : T.TypedNamesMap) : T.TypedNamesMap =
+    localNamesMap
+    |> Map.mapKeyVal (fun key v -> LocalLower key, v)
+    // @TODO: this should really throw an error if there are any name clashes so we don't get silently overwritten names
+    |> Map.merge namesMap
+
+
+
+
+
+
+
+
+
+
+
+
+
+(* Zonking *)
+
+
+
+
+
+
+
+/// This will replace the univars with their constraints and it will generalise unconstrained univars to type variables.
+/// It also returns all type variables from the PTC, whether new from the zonking or already present. This means this polytype can just cleanly replace any polytype that this PTC came from.
+let private zonkPolyTypeContents (uniVars : UnificationVarId set) (ptc : PolyTypeContents) : PolyType =
+    let uniVarsToTypeVarsMap : Map<UnificationVarId, TypeVariableId> =
+        uniVars |> Set.map (fun uniVarId -> uniVarId, makeNewTypeVar ()) |> Map.ofSeq
+
+    let rec replaceAndGetTypeVars (ptc : PolyTypeContents) : PolyTypeContents * TypeVariableId set =
+        match ptc with
+        | UnificationVar uniVar ->
+            match Map.tryFind uniVar.content.Value.id uniVarsToTypeVarsMap with
+            | Some typeVarToReplace ->
+                match uniVar.content.Value.constrained with
+                | None ->
+                    // If unconstrained, this will be a free type variable
+                    TypeVariable typeVarToReplace, Set.singleton typeVarToReplace
+
+                | Some constrained ->
+                    // If constrained, replace with the constrained concrete type
+                    replaceAndGetTypeVars constrained
+
+            | None ->
+                match uniVar.content.Value.constrained with
+                | None ->
+                    // I.e. this is not one of the univars we need to zonk, and there are no constraints to recursively zonk on, so we just return the empty univar as is
+                    PTC.UnificationVar uniVar, Set.empty
+
+                | Some constrained ->
+                    // If constrained, replace with the constrained concrete type
+                    replaceAndGetTypeVars constrained
+
+        | TypeVariable tv -> PTC.TypeVariable tv, Set.singleton tv
+        | PTC.Skolem name -> PTC.Skolem name, Set.empty
+        | ConcreteType concrete ->
+            match concrete with
+            | BuiltInPrims builtInPrims -> BuiltInPrims builtInPrims |> ConcreteType, Set.empty
+            | Containers container ->
+                match container with
+                | ContainerType.Tuple params_ ->
+                    let replacedParams, typeVars = TOM.map replaceAndGetTypeVars params_ |> TOM.unzip
+                    ContainerType.Tuple replacedParams |> Containers |> PTC.ConcreteType, Set.unionMany typeVars
+
+                | ContainerType.List param ->
+                    let replaced, newTypeVars = replaceAndGetTypeVars param
+                    ContainerType.List replaced |> Containers |> ConcreteType, newTypeVars
+
+                | ContainerType.Arrow (fromType, toType) ->
+                    let replacedFrom, newTypeVarsFrom = replaceAndGetTypeVars fromType
+                    let replacedTo, newTypeVarsTo = replaceAndGetTypeVars toType
+
+                    ContainerType.Arrow (replacedFrom, replacedTo) |> Containers |> ConcreteType,
+                    Set.union newTypeVarsFrom newTypeVarsTo
+
+            | CustomType (name, typeParams) ->
+                let replacedParams, typeVars =
+                    List.map replaceAndGetTypeVars typeParams |> List.unzip
+
+                CustomType (name, replacedParams) |> PTC.ConcreteType, Set.unionMany typeVars
+
+
+    let replacedPtc, newTypeVars = replaceAndGetTypeVars ptc
+
+    { forall = Set.toList newTypeVars
+      typeExpr = replacedPtc }
+
+
+
+let private zonkPolyTypeContentsResult
+    (uniVars : UnificationVarId set)
+    (ptcResult : Result<PolyTypeContents, UnificationError>)
+    : Result<PolyType, UnificationError> =
+    // @TODO we should probably zonk the UnificationError contents also!
+    Result.map (zonkPolyTypeContents uniVars) ptcResult
+
+
+let private zonkPolyType (unificationVarsWeCanEliminate : UnificationVarId set) (type_ : PolyType) : PolyType =
+    // This is fine to replace the whole original polytype because the zonking will include all typevars present in the PTC anyway, so no need to keep hold of the original `forall`s.
+    zonkPolyTypeContents unificationVarsWeCanEliminate type_.typeExpr
+
+
+
+
+
+
+
+
 
 
 //(*
@@ -42,6 +326,13 @@
 //- [ ] support a parallel, field-name-and-value-based, type inference system to support typed records as extensible, partially typed things, instead of the all or nothing type system of generics vs explicit types specified above
 
 //*)
+
+
+
+
+
+
+
 
 
 

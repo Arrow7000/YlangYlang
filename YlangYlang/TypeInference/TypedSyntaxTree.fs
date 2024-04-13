@@ -118,33 +118,34 @@ and ContainerType =
     | Tuple of PolyTypeContents tom
     | List of PolyTypeContents
     | Arrow of fromType : PolyTypeContents * toType : PolyTypeContents
-    | CustomType of typeName : UpperNameValue * typeParams : PolyTypeContents list
 
     override this.ToString () =
         match this with
         | Tuple ptcs ->
             let commafied = ptcs |> TOM.map string |> String.join ", "
-
             "(" + commafied + ")"
+
         | List ptc -> "List " + string ptc
         | Arrow (fromType, toType) -> string fromType + " -> " + string toType
 
-        | CustomType (typeName, typeParams) ->
-            upperNameValToStr typeName
-            + " "
-            + (List.map string typeParams |> String.join " ")
+
 
 
 
 and ConcreteType =
     | BuiltInPrims of BuiltInPrimitiveTypes
     | Containers of ContainerType
+    | CustomType of typeName : UpperNameValue * typeParams : PolyTypeContents list
+
 
     override this.ToString () =
         match this with
         | BuiltInPrims prim -> string prim
         | Containers cont -> string cont
-
+        | CustomType (typeName, typeParams) ->
+            upperNameValToStr typeName
+            + " "
+            + (List.map string typeParams |> String.join " ")
 
 
 and PolyTypeContents =

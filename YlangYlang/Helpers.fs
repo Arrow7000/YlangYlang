@@ -350,6 +350,10 @@ type TwoOrMore<'a> =
         | _ -> failwith "A TwoOrMore needs to have at least two members"
 
 
+    static member unzip (TOM (head, neck, tail) : ('a * 'b) tom) : 'a tom * 'b tom =
+        TOM.new_ (fst head) (fst neck) (List.map fst tail), TOM.new_ (snd head) (snd neck) (List.map snd tail)
+
+
 and TOM<'a> = TwoOrMore<'a>
 
 /// List of two or more
