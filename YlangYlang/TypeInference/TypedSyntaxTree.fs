@@ -113,35 +113,28 @@ type BuiltInPrimitiveTypes =
         | Bool -> "Bool"
         | Unit -> "()"
 
-/// @TODO need to include record types also
-and ContainerType =
+
+
+
+
+/// @TODO need to include record types also, both closed or open
+and ConcreteType =
+    | BuiltInPrims of BuiltInPrimitiveTypes
     | Tuple of PolyTypeContents tom
     | List of PolyTypeContents
     | Arrow of fromType : PolyTypeContents * toType : PolyTypeContents
-
-    override this.ToString () =
-        match this with
-        | Tuple ptcs ->
-            let commafied = ptcs |> TOM.map string |> String.join ", "
-            "(" + commafied + ")"
-
-        | List ptc -> "List " + string ptc
-        | Arrow (fromType, toType) -> string fromType + " -> " + string toType
-
-
-
-
-
-and ConcreteType =
-    | BuiltInPrims of BuiltInPrimitiveTypes
-    | Containers of ContainerType
     | CustomType of typeName : UpperNameValue * typeParams : PolyTypeContents list
 
 
     override this.ToString () =
         match this with
         | BuiltInPrims prim -> string prim
-        | Containers cont -> string cont
+        | Tuple ptcs ->
+            let commafied = ptcs |> TOM.map string |> String.join ", "
+            "(" + commafied + ")"
+
+        | List ptc -> "List " + string ptc
+        | Arrow (fromType, toType) -> string fromType + " -> " + string toType
         | CustomType (typeName, typeParams) ->
             upperNameValToStr typeName
             + " "
@@ -165,6 +158,8 @@ and PolyTypeContents =
         | Skolem name -> string name
         | ConcreteType concType -> string concType
 
+and PTC = PolyTypeContents
+
 
 
 
@@ -179,7 +174,14 @@ and UnificationVariable =
     static member getId (uniVar : UnificationVariable) = uniVar.content.Value.id
 
     /// Make a new unconstrained unification variable
-    static member makeNew (uniVarId : UnificationVarId) = { content = ref { id = uniVarId; constrained = None } }
+    static member makeNewBlank (uniVarId : UnificationVarId) = { content = ref { id = uniVarId; constrained = None } }
+
+    /// Make a new constrained unification variable
+    static member makeNewConstr (uniVarId : UnificationVarId) (constr : PolyTypeContents) =
+        { content =
+            ref
+                { id = uniVarId
+                  constrained = Some constr } }
 
     override this.ToString () =
         let id = UnificationVariable.getId this
@@ -190,8 +192,8 @@ and UnificationVariable =
 
 
 
-
-
+/// Alias for ConcreteType
+type Conc = ConcreteType
 
 
 
@@ -208,6 +210,7 @@ type UnificationError =
     /// Skolems only unify with themselves, not with anything else
     | NarrowedSkolem of skolemName : LowerIdent * narrowedWith : PolyTypeContents
     | InfinitelyRecursiveType of unified : UnificationVariable * with_ : PolyTypeContents
+    | WrongNumberOfTypeParams of typeName : UpperNameValue * expected : uint * actual : uint
 
     override this.ToString () =
         match this with
@@ -223,6 +226,13 @@ type UnificationError =
             + string uniVar
             + " with type "
             + string ptc
+        | WrongNumberOfTypeParams (typeName, expected, actual) ->
+            "Wrong number of type params for type "
+            + string typeName
+            + ", expected "
+            + string expected
+            + " but got "
+            + string actual
 
 
     static member makeClash conc1 conc2 =
@@ -237,7 +247,7 @@ type UnificationError =
 
 
 /// Alias for PolyTypeContents
-type PTC = PolyTypeContents
+//type PTC = PolyTypeContents
 
 
 
@@ -271,34 +281,49 @@ type TypeExpr =
 /// The context where we put the names with their type checked types
 type TypedNamesMap = Map<LowerNameValue, Result<PolyType, UnificationError>>
 
+
+/// The map of type names to the polytypes that they represent; e.g. `Maybe` -> `forall a. Maybe a`
+type TypeNamesMap = Map<UpperNameValue, PolyType>
+
 /// This maps from constructor names to the parameters that the variant needs to the signature of the constructor; e.g. `String -> Int -> Maybe (String, Int)`.
-/// But it could also be e.g. `None`, which would have as its value the single type expression `Maybe a`
+/// But it could also be e.g. `None`, which would have as its value the single type expression `Maybe a`.
+/// So after instantiating the type, we'll need to zonk it so we can generalise the unconstrained params.
 ///
 ///The list represents the parameters for this particular constructor
-type CtorNamesMap = Map<UpperNameValue, TypeExpr nel>
+
+type Ctor =
+    { forall : TypeVariableId list
+      params_ : PolyTypeContents list
+      result : PolyTypeContents }
+
+type CtorNamesMap = Map<Lexer.TypeOrModuleIdentifier, Ctor>
 
 
-
-type NewUnificationVarsMap = Map<UnificationVarId, Result<PolyTypeContents, UnificationError> option ref>
 
 
 
 
 type Ctx =
-    { ctorNamesMap : CtorNamesMap
+    { typedNamesMap : TypedNamesMap
       skolemsInScope : LowerIdent set
-      typedNamesMap : TypedNamesMap }
+      typeNamesMap : TypeNamesMap
+      ctorNamesMap : CtorNamesMap }
 
     static member empty : Ctx =
-        { ctorNamesMap = Map.empty
+        { typeNamesMap = Map.empty
           skolemsInScope = Set.empty
-          typedNamesMap = Map.empty }
+          typedNamesMap = Map.empty
+          ctorNamesMap = Map.empty }
 
 
 
 
 /// A local context, we return these from functions that type check let bindings and top level declarations
 type TypedLocalNamesMap = Map<LowerIdent, Result<PolyType, UnificationError>>
+
+
+/// A names map that we infer from an assignment expression. Because assignment expressions do not stand alone but they are referenced in an expression body, they can never be PolyTypes, only PolyTypeContents with uniVars.
+type AssignmentNamesMap = Map<LowerIdent, Result<PolyTypeContents, UnificationError>>
 
 
 
@@ -437,7 +462,6 @@ type TypedLocalNamesMap = Map<LowerIdent, Result<PolyType, UnificationError>>
 
 /// Represents a correct type without clashes
 type DefinitiveType =
-    | DtUnitType
     | DtPrimitiveType of BuiltInPrimitiveTypes
     | DtTuple of TypeConstraints tom
     | DtList of TypeConstraints
@@ -451,9 +475,9 @@ type DefinitiveType =
 
     override this.ToString () =
         match this with
-        | DtUnitType -> "()"
         | DtPrimitiveType prim ->
             match prim with
+            | Unit -> "()"
             | Float -> "Float"
             | Int -> "Int"
             | String -> "String"

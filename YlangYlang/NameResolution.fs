@@ -297,6 +297,7 @@ let lowerIdentToUnqualVal (LowerIdent str) = UnqualValueIdentifier str
 
 //let unqualTypeToUpperIdent (label : S.CstNode<UnqualTypeOrModuleIdentifier>) : S.CstNode<UpperIdent> =
 let unqualTypeToUpperIdent (UnqualTypeOrModuleIdentifier label) = UpperIdent label
+let unqualTypeToUpperNameVal (UnqualTypeOrModuleIdentifier label) = LocalUpper (UpperIdent label)
 //let getLabel (UnqualTypeOrModuleIdentifier str) = str
 //S.mapNode (getLabel >> UpperIdent) label
 
@@ -389,7 +390,7 @@ let private convertValueIdentifierToIdentifier : ValueIdentifier -> Identifier =
     | QualifiedValue ident -> QualifiedPathValueIdentifier ident
     | UnqualValue ident -> SingleValueIdentifier ident
 
-let private convertValueIdentifierToLowerIdent (UnqualValueIdentifier ident) : LowerIdent = LowerIdent ident
+let unqualValIdentToLowerIdent (UnqualValueIdentifier ident) : LowerIdent = LowerIdent ident
 
 
 let private moduleNameToModulePath (QualifiedModuleOrTypeIdentifier moduleIdent) : ModulePath =

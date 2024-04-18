@@ -144,7 +144,7 @@ type PrimitiveLiteralValue =
 
 
 type FunctionValue =
-    { params_ : NEL<CstNode<AssignmentPattern>> // cos if it didn't have any then it would just be a regular value expression
+    { params_ : CstNode<AssignmentPattern> nel // cos if it didn't have any then it would just be a regular value expression
       body : CstNode<Expression> }
 
 

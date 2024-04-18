@@ -26,16 +26,11 @@ let main argv =
     Lexer.tokeniseString fileText
     |> Result.mapError LexingError
     |> Result.bind (
-        ExpressionParsing.run ExpressionParsing.parseEntireModule
+        ExpressionParsing.run ExpressionParsing.parseExpression
         >> Parser.toResult
         >> Result.mapError ParsingError
     )
-    //|> tee (printfn "%A")
-    //|> Result.map (
-    //    TypeChecker.typeCheckModule
-    ////NameResolution.qualifyModule
-    ////>> Result.mapError CanonicalisationError
-    //)
+    |> Result.map (TypeChecker.inferTypeFromExpr TypedSyntaxTree.Ctx.empty)
     |> printfn "%A"
 
     0

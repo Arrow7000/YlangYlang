@@ -29,6 +29,97 @@ type OneOrTree<'a> =
     | Multiple of OneOrTree<'a> list
 
 
+
+
+
+
+
+module List =
+    let takeWhilePartition predicate list =
+
+        let firstPart = List.takeWhile predicate list
+        let lastPart = List.skipWhile predicate list
+
+        firstPart, lastPart
+
+
+    let (|Empty|Last|) list =
+        let rec getLast accumulated list =
+            match list with
+            | [] -> Empty
+            | last :: [] -> Last (List.rev accumulated, last)
+            | head :: rest -> getLast (head :: accumulated) rest
+
+        getLast List.empty list
+
+
+    let typedPartition f list =
+        List.foldBack
+            (fun item (lefts, rights) ->
+                match f item with
+                | Choice1Of2 a -> a :: lefts, rights
+                | Choice2Of2 b -> lefts, b :: rights)
+            list
+            (List.empty, List.empty)
+
+
+    let typedPartition3 f list =
+        List.foldBack
+            (fun item (lefts, middles, rights) ->
+                match f item with
+                | Choice1Of3 a -> a :: lefts, middles, rights
+                | Choice2Of3 b -> lefts, b :: middles, rights
+                | Choice3Of3 c -> lefts, middles, c :: rights)
+            list
+            (List.empty, List.empty, List.empty)
+
+    let typedPartition4 f list =
+        List.foldBack
+            (fun item (firsts, seconds, thirds, fourths) ->
+                match f item with
+                | Choice1Of4 a -> a :: firsts, seconds, thirds, fourths
+                | Choice2Of4 b -> firsts, b :: seconds, thirds, fourths
+                | Choice3Of4 c -> firsts, seconds, c :: thirds, fourths
+                | Choice4Of4 d -> firsts, seconds, thirds, d :: fourths)
+            list
+            (List.empty, List.empty, List.empty, List.empty)
+
+    let typedPartition5 f list =
+        List.foldBack
+            (fun item (firsts, seconds, thirds, fourths, fifths) ->
+                match f item with
+                | Choice1Of5 a -> a :: firsts, seconds, thirds, fourths, fifths
+                | Choice2Of5 b -> firsts, b :: seconds, thirds, fourths, fifths
+                | Choice3Of5 c -> firsts, seconds, c :: thirds, fourths, fifths
+                | Choice4Of5 d -> firsts, seconds, thirds, d :: fourths, fifths
+                | Choice5Of5 e -> firsts, seconds, thirds, fourths, e :: fifths)
+            list
+            (List.empty, List.empty, List.empty, List.empty, List.empty)
+
+
+    let minBySafe projection list =
+        match list with
+        | [] -> None
+        | _ :: _ -> List.minBy projection list |> Some
+
+    let minSafe list = minBySafe id list
+
+
+    /// Returns an Error result with the lists so far if lists don't have the same length; which will be a list of n pairs, where n is the length of the shorter of the two input lists.
+    /// If the lists are not the same length, the Error will contain the combined lists so far. This is useful so that we can do some type checking on those bits that do overlap.
+    let zipList listA listB : Result<('a * 'b) list, ('a * 'b) list> =
+        let rec zipList_ combinedSoFar a b =
+            match a, b with
+            | [], [] -> Ok (List.rev combinedSoFar)
+            | headA :: tailA, headB :: tailB -> zipList_ ((headA, headB) :: combinedSoFar) tailA tailB
+            | [], _ :: _
+            | _ :: _, [] -> Error (List.rev combinedSoFar)
+
+        zipList_ List.empty listA listB
+
+
+
+
 type NonEmptyList<'a> =
     | NEL of first : 'a * rest : 'a list
 
@@ -90,6 +181,12 @@ type NonEmptyList<'a> =
 
     static member fold (f : 'State -> 'a -> 'State) (state : 'State) (NEL (head, tail) : 'a nel) : 'State =
         tail |> List.fold f (f state head)
+
+    static member foldMap<'State, 'Result> (f : 'State -> 'a -> 'Result * 'State) state (NEL (head, tail) : 'a nel) =
+        let headResult, headState = f state head
+        let tailResults, finalState = List.mapFold f headState tail
+        NEL.new_ headResult tailResults, finalState
+
 
     static member reduce (f : 'T -> 'T -> 'T) (NEL (head, tail) : 'T nel) : 'T = List.fold f head tail
 
@@ -354,6 +451,23 @@ type TwoOrMore<'a> =
         TOM.new_ (fst head) (fst neck) (List.map fst tail), TOM.new_ (snd head) (snd neck) (List.map snd tail)
 
 
+
+    static member zip (TOM (head1, neck1, tail1) : 'a tom) (TOM (head2, neck2, tail2)) =
+        match List.zipList tail1 tail2 with
+        | Ok zipped -> TOM.new_ (head1, head2) (neck1, neck2) zipped |> Ok
+        | Error err -> TOM.new_ (head1, head2) (neck1, neck2) err |> Error
+
+
+
+    static member reverse ((TOM (head, neck, tail)) : TOM<'a>) =
+        match List.rev tail with
+        | [] -> TOM (neck, head, [])
+        | last :: [] -> TOM (last, neck, [ head ])
+        | last :: penultimate :: rest -> TOM (last, penultimate, rest @ [ neck; head ])
+
+
+
+
 and TOM<'a> = TwoOrMore<'a>
 
 /// List of two or more
@@ -483,89 +597,6 @@ module String =
 
     let trim len (str : string) = str.Substring (0, len)
 
-
-module List =
-    let takeWhilePartition predicate list =
-
-        let firstPart = List.takeWhile predicate list
-        let lastPart = List.skipWhile predicate list
-
-        firstPart, lastPart
-
-
-    let (|Empty|Last|) list =
-        let rec getLast accumulated list =
-            match list with
-            | [] -> Empty
-            | last :: [] -> Last (List.rev accumulated, last)
-            | head :: rest -> getLast (head :: accumulated) rest
-
-        getLast List.empty list
-
-
-    let typedPartition f list =
-        List.foldBack
-            (fun item (lefts, rights) ->
-                match f item with
-                | Choice1Of2 a -> a :: lefts, rights
-                | Choice2Of2 b -> lefts, b :: rights)
-            list
-            (List.empty, List.empty)
-
-
-    let typedPartition3 f list =
-        List.foldBack
-            (fun item (lefts, middles, rights) ->
-                match f item with
-                | Choice1Of3 a -> a :: lefts, middles, rights
-                | Choice2Of3 b -> lefts, b :: middles, rights
-                | Choice3Of3 c -> lefts, middles, c :: rights)
-            list
-            (List.empty, List.empty, List.empty)
-
-    let typedPartition4 f list =
-        List.foldBack
-            (fun item (firsts, seconds, thirds, fourths) ->
-                match f item with
-                | Choice1Of4 a -> a :: firsts, seconds, thirds, fourths
-                | Choice2Of4 b -> firsts, b :: seconds, thirds, fourths
-                | Choice3Of4 c -> firsts, seconds, c :: thirds, fourths
-                | Choice4Of4 d -> firsts, seconds, thirds, d :: fourths)
-            list
-            (List.empty, List.empty, List.empty, List.empty)
-
-    let typedPartition5 f list =
-        List.foldBack
-            (fun item (firsts, seconds, thirds, fourths, fifths) ->
-                match f item with
-                | Choice1Of5 a -> a :: firsts, seconds, thirds, fourths, fifths
-                | Choice2Of5 b -> firsts, b :: seconds, thirds, fourths, fifths
-                | Choice3Of5 c -> firsts, seconds, c :: thirds, fourths, fifths
-                | Choice4Of5 d -> firsts, seconds, thirds, d :: fourths, fifths
-                | Choice5Of5 e -> firsts, seconds, thirds, fourths, e :: fifths)
-            list
-            (List.empty, List.empty, List.empty, List.empty, List.empty)
-
-
-    let minBySafe projection list =
-        match list with
-        | [] -> None
-        | _ :: _ -> List.minBy projection list |> Some
-
-    let minSafe list = minBySafe id list
-
-
-    /// Returns an Error result with the lists so far if lists don't have the same length; which will be a list of n pairs, where n is the length of the shorter of the two input lists.
-    /// If the lists are not the same length, the Error will contain the combined lists so far. This is useful so that we can do some type checking on those bits that do overlap.
-    let zipList listA listB : Result<('a * 'b) list, ('a * 'b) list> =
-        let rec zipList_ combinedSoFar a b =
-            match a, b with
-            | [], [] -> Ok (List.rev combinedSoFar)
-            | headA :: tailA, headB :: tailB -> zipList_ ((headA, headB) :: combinedSoFar) tailA tailB
-            | [], _ :: _
-            | _ :: _, [] -> Error (List.rev combinedSoFar)
-
-        zipList_ List.empty listA listB
 
 
 
