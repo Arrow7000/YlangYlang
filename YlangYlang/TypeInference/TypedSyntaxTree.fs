@@ -177,6 +177,8 @@ and UnificationVariable =
     { content : UniVarContent ref }
 
     static member getId (uniVar : UnificationVariable) = uniVar.content.Value.id
+
+    /// Make a new unconstrained unification variable
     static member makeNew (uniVarId : UnificationVarId) = { content = ref { id = uniVarId; constrained = None } }
 
     override this.ToString () =
