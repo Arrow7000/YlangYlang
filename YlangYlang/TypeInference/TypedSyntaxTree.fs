@@ -164,8 +164,12 @@ and PTC = PolyTypeContents
 
 
 and UniVarContent =
-    { id : UnificationVarId
-      constrained : PolyTypeContents option }
+    {
+        id : UnificationVarId
+        /// What level this univar was declared on. This way we know that it is safe to be zonked out of existence on lower levels than its `levelDeclared` property. (Deeper nesting = higher level)
+        levelDeclared : uint
+        constrained : PolyTypeContents option
+    }
 
 
 and UnificationVariable =
@@ -174,13 +178,19 @@ and UnificationVariable =
     static member getId (uniVar : UnificationVariable) = uniVar.content.Value.id
 
     /// Make a new unconstrained unification variable
-    static member makeNewBlank (uniVarId : UnificationVarId) = { content = ref { id = uniVarId; constrained = None } }
-
-    /// Make a new constrained unification variable
-    static member makeNewConstr (uniVarId : UnificationVarId) (constr : PolyTypeContents) =
+    static member makeNewBlank (levelDeclared : uint) (uniVarId : UnificationVarId) =
         { content =
             ref
                 { id = uniVarId
+                  levelDeclared = levelDeclared
+                  constrained = None } }
+
+    /// Make a new constrained unification variable
+    static member makeNewConstr (levelDeclared : uint) (uniVarId : UnificationVarId) (constr : PolyTypeContents) =
+        { content =
+            ref
+                { id = uniVarId
+                  levelDeclared = levelDeclared
                   constrained = Some constr } }
 
     override this.ToString () =
@@ -301,13 +311,16 @@ type Ctx =
     { typedNamesMap : TypedNamesMap
       skolemsInScope : LowerIdent set
       typeNamesMap : TypeNamesMap
-      ctorNamesMap : CtorNamesMap }
+      ctorNamesMap : CtorNamesMap
+      currentLevel : uint }
 
     static member empty : Ctx =
         { typeNamesMap = Map.empty
           skolemsInScope = Set.empty
           typedNamesMap = Map.empty
-          ctorNamesMap = Map.empty }
+          ctorNamesMap = Map.empty
+          /// The level, used for zonking unification vars and skolems
+          currentLevel = 0u }
 
 
 
