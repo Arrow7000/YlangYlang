@@ -47,6 +47,8 @@ module Types =
     /// Make a polytypecontents into a polytype with no type vars
     let makePoly ptc = { forall = List.empty; typeExpr = ptc }
 
+    let makePolyWith (typeVars : TypeVariableId list) (ptc : PolyTypeContents) : PolyType =
+        { forall = typeVars; typeExpr = ptc }
 
     let makeArrowType (from : PolyType) (to_ : PolyType) =
         { forall = from.forall @ to_.forall
@@ -67,11 +69,17 @@ module Types =
 
 
 
+
 /// Converts a type expression to a PolyType
-let rec private convertTypeExprToPolyTypeResult (ctx : Ctx) (typeExpr : TypeExpr) : Result<PolyType, UnificationError> =
+let rec private convertTypeExprToPolyTypeResult
+    (ctx : Ctx)
+    (typeExpr : S.TypeExpr)
+    : Result<PolyType, UnificationError> =
     match typeExpr with
-    | TypeExpr (label, typeParams) ->
-        match Map.tryFind label ctx.typeNamesMap with
+    | S.TypeExpr (label, typeParams) ->
+        let upperNameVal = NR.typeOrModuleIdentToUpperNameVal label
+
+        match Map.tryFind upperNameVal ctx.typeNamesMap with
         | Some polyType ->
             match polyType.forall, typeParams with
             | [], [] -> Ok polyType
@@ -103,14 +111,20 @@ let rec private convertTypeExprToPolyTypeResult (ctx : Ctx) (typeExpr : TypeExpr
                     | Error e -> Error (NEL.head e)
 
                 | Error e ->
-                    WrongNumberOfTypeParams (label, List.length polyType.forall |> uint, List.length typeParams |> uint)
+                    WrongNumberOfTypeParams (
+                        upperNameVal,
+                        List.length polyType.forall |> uint,
+                        List.length typeParams |> uint
+                    )
                     |> Error
 
-        | None -> UndefinedTypeCtor label |> Error
+        | None -> UndefinedTypeCtor upperNameVal |> Error
 
-    | TypeExpr.Skolem name ->
-        if Set.contains name ctx.skolemsInScope then
-            PTC.Skolem name |> Types.makePoly |> Ok
+    | S.Skolem name ->
+        let lowerNameVal = NR.unqualValToLowerIdent name
+
+        if Set.contains lowerNameVal ctx.skolemsInScope then
+            PTC.Skolem lowerNameVal |> Types.makePoly |> Ok
 
         else
             // Generalise this skolem to a type variable if it's not already bound
@@ -272,17 +286,38 @@ and private getNamesInDestructuredPattern (destructuredPattern : S.DestructuredP
 
 
 
-let private sortBindingsTopologically
-    (namesAndExprs : (ValIdent * S.Expression) seq)
-    : DG.StronglyConnectedGraph<S.Expression, ValIdent> list =
-    let bindingNames = namesAndExprs |> Seq.map fst |> Set.ofSeq
-    let getDependencies = snd >> getNamesUsedInExpr bindingNames >> Set.toSeq
 
-    DG.getStronglyConnectedComponents<ValIdent * S.Expression, ValIdent> fst getDependencies namesAndExprs
+
+
+let private sortBindingsTopologically
+    (namesAndExprs : (S.AssignmentPattern * S.Expression) seq)
+    : DG.StronglyConnectedGraph<S.Expression, S.AssignmentPattern> list =
+
+    let nameToBindingPatternMap : Map<ValIdent, S.AssignmentPattern> =
+        namesAndExprs
+        |> Seq.collect (fun (pattern, _) -> getNamesInAssignmentPattern pattern |> Seq.map (fun name -> name, pattern))
+        |> Map.ofSeq
+
+    let allNames = Map.keys nameToBindingPatternMap |> Set.ofSeq
+
+    let getWhichPatternANameIsIn (name : ValIdent) : S.AssignmentPattern =
+        match Map.tryFind name nameToBindingPatternMap with
+        | Some pattern -> pattern
+        | None -> failwith "It shouldn't be possible for us to look for a name that isn't in any assignment pattern"
+
+
+    let getDependencies : (_ * S.Expression) -> S.AssignmentPattern seq =
+        snd
+        >> getNamesUsedInExpr allNames
+        >> Set.toSeq
+        >> Seq.map getWhichPatternANameIsIn
+
+    DG.getStronglyConnectedComponents<S.AssignmentPattern * S.Expression, S.AssignmentPattern>
+        fst
+        getDependencies
+        namesAndExprs
     |> DG.sortOneOrMoreTopologically fst getDependencies
     |> List.map (DG.SCC.map snd)
-
-
 
 
 
@@ -400,6 +435,16 @@ let private zonkPolyTypeResult
 
 
 
+
+
+
+
+
+
+(* Type inference *)
+
+
+
 let rec inferTypeFromExpr (ctx : Ctx) (expr : S.Expression) : Result<PolyType, UnificationError> =
     match expr with
     | S.Primitive prim ->
@@ -435,7 +480,7 @@ let rec inferTypeFromExpr (ctx : Ctx) (expr : S.Expression) : Result<PolyType, U
                 { ctx with
                     typedNamesMap =
                         addLocalNamesMap
-                            (paramPatternNamesMap |> Map.map (fun _ -> Result.map Types.makePoly))
+                            (convertAssignmentNamesMapToTypedLocalNamesMap paramPatternNamesMap)
                             ctx.typedNamesMap }
 
             let bodyTypeResult = inferTypeFromExpr ctxForBody func.body.node
@@ -447,13 +492,147 @@ let rec inferTypeFromExpr (ctx : Ctx) (expr : S.Expression) : Result<PolyType, U
                 let arrowType =
                     Types.makeArrowTypeFromParamsAndResult (NEL.toList allParamTypes) instantiatedBodyPtc
 
-                zonkPolyTypeContents (Set.union bodyUniVars uniVars) arrowType |> Ok
+                let zonkedArrowType = zonkPolyTypeContents (Set.union bodyUniVars uniVars) arrowType
+                Ok zonkedArrowType
 
             | Error e -> Error e
 
         | Error e -> Error (NEL.head e)
 
+    | S.DotGetter _ -> failwith "@TODO need to implement when we have record types implemented"
 
+    | S.UpperIdentifier ident ->
+        match Map.tryFind ident ctx.ctorNamesMap with
+        | Some value ->
+            let instantiated = instantiateCtor value
+
+            Types.makeArrowTypeFromParamsAndResult instantiated.params_ instantiated.result
+            |> zonkPolyTypeContents instantiated.uniVars
+            |> Ok
+
+        | None ->
+            NR.typeOrModuleIdentToUpperNameVal ident
+            |> UnificationError.UndefinedTypeCtor
+            |> Error
+
+    | S.LowerIdentifier ident ->
+        let lowerName = NR.convertValueIdentifierToLowerName ident
+
+        match Map.tryFind lowerName ctx.typedNamesMap with
+        | Some polyType -> polyType
+        | None -> UnificationError.UndefinedName lowerName |> Error
+
+    | S.List items ->
+        match items with
+        | [] ->
+            let typeVar = makeNewTypeVar ()
+
+            Ok
+                { forall = [ typeVar ]
+                  typeExpr = Conc.List (TypeVariable typeVar) |> ConcreteType }
+
+        | head :: rest ->
+            let nel = NEL.new_ head rest
+            NEL.map (S.getNode >> inferTypeFromExpr ctx) nel |> unifyMultipleTypeResults
+
+    | S.Expression.Tuple items ->
+        TOM.map (S.getNode >> inferTypeFromExpr ctx) items
+        |> TOM.sequenceResult
+        |> Result.map (fun types ->
+            let instantiatedTypes, uniVars = instantiatePolyTypeTom types
+
+            Conc.Tuple instantiatedTypes |> ConcreteType |> zonkPolyTypeContents uniVars)
+        |> Result.mapError NEL.head
+
+    | S.Expression.Record _ -> failwith "Records aren't supported yet"
+    | S.Expression.RecordExtension _ -> failwith "Records aren't supported yet"
+
+    | S.LetExpression (bindings, inExpr) -> resolveAllLetBindingsAndBody ctx bindings inExpr
+
+
+
+    | S.IfExpression (cond, ifTrue, ifFalse) ->
+        /// Not used, but constraint has to be applied
+        let condTypeResult =
+            inferTypeFromExpr ctx cond.node
+            |> unifyTwoTypeResults (BuiltInPrims Bool |> ConcreteType |> Types.makePoly |> Ok)
+
+        let ifTrueTypeResult = inferTypeFromExpr ctx ifTrue.node
+        let ifFalseTypeResult = inferTypeFromExpr ctx ifFalse.node
+
+        let returnType = unifyTwoTypeResults ifTrueTypeResult ifFalseTypeResult
+
+        returnType
+
+
+    | S.CaseMatch (exprToMatch, branches) ->
+        let exprToMatchTypeResult = inferTypeFromExpr ctx exprToMatch.node
+
+        let branchInformation =
+            branches
+            |> NEL.map (fun (pattern, branchExpr) ->
+                let patternTypeResult, paramPatternNamesMap, uniVars =
+                    inferTypeFromAssignmentPattern ctx pattern.node
+
+                let ctxWithNames =
+                    { ctx with
+                        typedNamesMap =
+                            addLocalNamesMap
+                                (convertAssignmentNamesMapToTypedLocalNamesMap paramPatternNamesMap)
+                                ctx.typedNamesMap }
+
+                {| patternType = patternTypeResult
+                   exprType = inferTypeFromExpr ctxWithNames branchExpr.node
+                   uniVars = uniVars |})
+
+
+        let patternTypes = branchInformation |> NEL.map _.patternType
+
+        let typeOfMatchedExpr =
+            patternTypes
+            |> NEL.map (Result.map Types.makePoly)
+            |> NEL.cons exprToMatchTypeResult
+            |> unifyMultipleTypeResults
+
+        let returnType = branchInformation |> NEL.map _.exprType |> unifyMultipleTypeResults
+        let allUniVars = branchInformation |> NEL.map _.uniVars |> Set.unionMany
+
+        zonkPolyTypeResult allUniVars returnType
+
+
+
+    | S.Operator (left, opSeq) -> failwith "@TODO need to implement this with proper operator binary tree construction"
+
+
+    | S.FunctionApplication (funcExpr, params') ->
+        let funcTypeResult = inferTypeFromExpr ctx funcExpr.node
+
+        let paramTypesResult =
+            params' |> NEL.map (S.getNode >> inferTypeFromExpr ctx) |> NEL.sequenceResult
+
+
+        match funcTypeResult, paramTypesResult with
+        | Ok funcType, Ok paramTypes ->
+            let instantiatedParams, paramsUniVars = instantiatePolyTypeNel paramTypes
+
+            let returnTypeUniVarId = makeNewUniVar ()
+
+            let returnTypeUniVar =
+                UnificationVariable.makeNewBlank returnTypeUniVarId |> UnificationVar
+
+            let arrowTypeConstraintPolyType =
+                Types.makeArrowTypeFromParamsAndResult (NEL.toList instantiatedParams) returnTypeUniVar
+                |> zonkPolyTypeContents (Set.add returnTypeUniVarId paramsUniVars)
+
+            unifyTwoTypes arrowTypeConstraintPolyType funcType
+
+        | Error e, _ -> Error e
+        | _, Error e -> Error (NEL.head e)
+
+
+    | S.DotAccess _ -> failwith "@TODO need to implement this with proper record field access"
+
+    | S.ParensedExpression innerExpr -> inferTypeFromExpr ctx innerExpr
 
 
 
@@ -467,23 +646,23 @@ and private inferTypeFromAssignmentPattern
     (pattern : S.AssignmentPattern)
     : Result<PolyTypeContents, UnificationError> * AssignmentNamesMap * UnificationVarId set =
     // @TODO hm I think we may need to return this univar alongside the other gleanings, so that we know when these univars should be zonked. Otherwise we never zonk these univars. And they should be zonked when they're no longer in scope.
-    let newUniVar = makeNewUniVar ()
-    let uniVarSet = Set.singleton newUniVar
+    let newUniVarId = makeNewUniVar ()
+    let uniVarSet = Set.singleton newUniVarId
 
     match pattern with
     | S.Named name ->
-        let type_ = UnificationVariable.makeNewBlank newUniVar |> UnificationVar
+        let type_ = UnificationVariable.makeNewBlank newUniVarId |> UnificationVar
 
         Ok type_, Map.singleton (NR.unqualValToLowerIdent name) (Ok type_), uniVarSet
 
     | S.Ignored ->
-        let type_ = UnificationVariable.makeNewBlank newUniVar |> UnificationVar
+        let type_ = UnificationVariable.makeNewBlank newUniVarId |> UnificationVar
 
         Ok type_, Map.empty, uniVarSet
 
     | S.Unit ->
         let uniVar =
-            UnificationVariable.makeNewConstr newUniVar (BuiltInPrims Unit |> ConcreteType)
+            UnificationVariable.makeNewConstr newUniVarId (BuiltInPrims Unit |> ConcreteType)
             |> UnificationVar
 
         Ok uniVar, Map.empty, uniVarSet
@@ -495,7 +674,7 @@ and private inferTypeFromAssignmentPattern
         match inferredType with
         | Ok inferred ->
             let aliasType =
-                UnificationVariable.makeNewConstr newUniVar inferred |> UnificationVar
+                UnificationVariable.makeNewConstr newUniVarId inferred |> UnificationVar
 
             let aliasAddedToMap =
                 localNamesMap |> Map.add (NR.unqualValToLowerIdent alias.node) (Ok aliasType)
@@ -521,7 +700,7 @@ and private inferTypeFromAssignmentPattern
             | Ok contents ->
 
                 let tuple =
-                    UnificationVariable.makeNewConstr newUniVar (Conc.Tuple contents |> ConcreteType)
+                    UnificationVariable.makeNewConstr newUniVarId (Conc.Tuple contents |> ConcreteType)
                     |> UnificationVar
 
                 Ok tuple, assignmentNamesMap, combinedUniVars
@@ -531,7 +710,7 @@ and private inferTypeFromAssignmentPattern
 
         | S.DestructuredCons items ->
             // In a list of type `List a`, the last cons pattern has type `List a` and all preceding ones have type `a`
-            let (TOM (last, penultimate, rest)) = items
+            let (TOM (last, penultimate, rest)) = TOM.reverse items
 
             let itemTypes, (localNamesMap, itemsUniVars) =
                 NEL.new_ penultimate rest
@@ -546,14 +725,12 @@ and private inferTypeFromAssignmentPattern
             let lastType, lastLocalNamesMap, lastItemUniVars =
                 inferTypeFromAssignmentPattern ctx last.node
 
+            let lastWithListConstraint =
+                unifyTwoTypeContentsResults lastType (Result.map (Conc.List >> ConcreteType) typeOfListItem)
+
             let combinedNamesMap = combineAssignmentNamesMaps lastLocalNamesMap localNamesMap
 
-            typeOfListItem
-            |> Result.bind (fun ptc ->
-                let firstPolyType = Conc.List ptc |> ConcreteType
-                unifyTwoTypeContentsResults (Ok firstPolyType) lastType),
-            combinedNamesMap,
-            Set.union itemsUniVars lastItemUniVars
+            lastWithListConstraint, combinedNamesMap, Set.union itemsUniVars lastItemUniVars
 
 
 
@@ -602,11 +779,7 @@ and private inferTypeFromAssignmentPattern
                                 Result.traverse (fun (found, actual) -> unifyTwoTypeContents found actual) zipped
 
                             match unified with
-                            | Ok unifiedCtorParams ->
-                                //let ctorType : PolyTypeContents =
-                                //    Types.makeArrowTypeFromParamsAndResult unifiedCtorParams instantiatedCtor.result
-
-                                Ok instantiatedCtor.result, namesMap, uniVars
+                            | Ok unifiedCtorParams -> Ok instantiatedCtor.result, namesMap, uniVars
                             | Error e -> Error (NEL.head e), namesMap, uniVars
 
                         | Error _ ->
@@ -634,9 +807,217 @@ and private inferTypeFromAssignmentPattern
 
 
 
+
+
+
+and private resolveAllLetBindingsAndBody
+    (ctx : Ctx)
+    (letBindings : S.CstNode<S.LetBinding> nel)
+    (body : S.CstNode<S.Expression>)
+    : Result<PolyType, UnificationError> =
+    let bindingsResolutionResult =
+        letBindings |> NEL.map S.getNode |> (resolveNamesTopologically ctx)
+
+    let combinedNamesMap : Ctx =
+        { ctx with
+            typedNamesMap = addLocalNamesMap bindingsResolutionResult ctx.typedNamesMap }
+
+    let bodyResult = inferTypeFromExpr combinedNamesMap body.node
+    bodyResult
+
+
+
+and private resolveNamesTopologically (ctx : Ctx) (namesAndExprs : S.LetBinding nel) : TypedLocalNamesMap =
+
+    let annotatedNamesMap : TypedLocalNamesMap =
+        namesAndExprs
+        |> Seq.choose (fun binding ->
+            match binding.typeAnnotation with
+            | None -> None
+            | Some annotation ->
+                (*
+                    @TODO I think there's some superfluous stuff here, plus it's odd that both checkResult and unifiedAssignmentPatternTypeAndChecked are not used. Not sure if that's right, will need to check again that that logic is right
+                *)
+
+                /// The TypeExpr converted to a type
+                let typeExprResult = convertTypeExprToPolyTypeResult ctx annotation.node
+
+                let checkResult = check ctx annotation.node binding.value.node
+
+                /// @TODO: carry on here, combine these namesMaps into the main one, and ofc afterwards don't forget to zonk!
+                let assignmentPatternResult, namesMap, uniVars =
+                    inferTypeFromAssignmentPattern ctx binding.bindPattern.node
+
+
+                let unifiedAssignmentPatternTypeAndChecked =
+                    assignmentPatternResult
+                    |> Result.map Types.makePoly
+                    |> unifyTwoTypeResults typeExprResult
+
+                let zonkedNamesMap = zonkAssignmentNamesMap uniVars namesMap
+
+                Some zonkedNamesMap)
+        |> Seq.fold combineNamesMaps Map.empty
+
+
+    let unAnnotatedBindings : (S.AssignmentPattern * S.Expression) seq =
+        namesAndExprs
+        |> Seq.choose (fun binding ->
+            match binding.typeAnnotation with
+            | None -> Some (binding.bindPattern.node, binding.value.node)
+            | Some _ -> None)
+
+    let stronglyConnectedAndOrderedUnannotatedBindings
+        : DG.StronglyConnectedGraph<S.Expression, S.AssignmentPattern> list =
+        sortBindingsTopologically unAnnotatedBindings
+
+
+
+    let localNamesMap =
+        stronglyConnectedAndOrderedUnannotatedBindings
+        |> List.fold
+            (fun localNamesMap stronglyConnectedComponent ->
+
+                /// First we add all the names into the context that this value might reference
+                let combinedNamesMapCtx : Ctx =
+                    { ctx with
+                        typedNamesMap = addLocalNamesMap localNamesMap ctx.typedNamesMap }
+
+                match stronglyConnectedComponent with
+                | DG.SingleNonRec (assignmentPattern, expr) ->
+                    let inferredTypeFromAssignment, assignmentNamesMap, uniVars =
+                        inferTypeFromAssignmentPattern ctx assignmentPattern
+
+                    let zonkedAssignmentNamesMap = assignmentNamesMap |> zonkAssignmentNamesMap uniVars
+
+                    let inferredType = inferTypeFromExpr combinedNamesMapCtx expr
+
+                    /// Unified from the inferred type and the inferred shape from the assignment pattern
+                    let unified =
+                        zonkPolyTypeContentsResult uniVars inferredTypeFromAssignment
+                        |> unifyTwoTypeResults inferredType
+
+                    let withThisBindingAdded : TypedLocalNamesMap =
+                        zonkedAssignmentNamesMap |> combineNamesMaps localNamesMap
+
+                    withThisBindingAdded
+
+
+                | DG.SingleSelfRec (assignmentPattern, expr) ->
+                    let inferredTypeFromAssignment, assignmentNamesMap, uniVars =
+                        inferTypeFromAssignmentPattern ctx assignmentPattern
+
+                    let withOwnNamesAddedCtx : Ctx =
+                        { ctx with
+                            typedNamesMap =
+                                combinedNamesMapCtx.typedNamesMap
+                                |> addLocalNamesMap (convertAssignmentNamesMapToTypedLocalNamesMap assignmentNamesMap) }
+
+                    let inferredType = inferTypeFromExpr withOwnNamesAddedCtx expr
+
+                    /// Unified from the inferred type and the inferred shape from the assignment pattern
+                    let unified =
+                        Result.map Types.makePoly inferredTypeFromAssignment
+                        |> unifyTwoTypeResults inferredType
+
+                    let withThisBindingAdded : TypedLocalNamesMap =
+                        assignmentNamesMap
+                        |> zonkAssignmentNamesMap uniVars
+                        |> combineNamesMaps localNamesMap
+
+                    withThisBindingAdded
+
+
+                | DG.MutualRecursive namesAndBindings ->
+                    let namesAndBindingsAndUniVars
+                        : ((Result<PolyTypeContents, UnificationError> * AssignmentNamesMap * UnificationVarId set) *
+                          S.Expression) seq =
+                        namesAndBindings
+                        |> Seq.map (fun (assignmentPattern, expr) ->
+                            inferTypeFromAssignmentPattern ctx assignmentPattern, expr)
+
+                    let withNewUniVarsAdded : Ctx =
+                        { ctx with
+                            typedNamesMap =
+                                namesAndBindingsAndUniVars
+                                |> Seq.fold
+                                    (fun map ((_, assignmentNamesMap, _), _) ->
+                                        map
+                                        |> addLocalNamesMap (
+                                            convertAssignmentNamesMapToTypedLocalNamesMap assignmentNamesMap
+                                        ))
+                                    combinedNamesMapCtx.typedNamesMap }
+
+
+                    /// Get the assignment names map and univars from all the bindings and combine them
+                    let newLocalNamesMap : TypedLocalNamesMap =
+                        namesAndBindingsAndUniVars
+                        |> Seq.fold
+                            (fun namesMap ((inferredTypeFromAssignment, assignmentNamesMap, uniVars), expr) ->
+                                let inferredType = inferTypeFromExpr withNewUniVarsAdded expr
+
+
+                                /// Unified from the inferred type and the inferred shape from the assignment pattern
+                                let unified =
+                                    Result.map Types.makePoly inferredTypeFromAssignment
+                                    |> unifyTwoTypeResults inferredType
+
+                                let withThisBindingAdded : TypedLocalNamesMap =
+                                    assignmentNamesMap
+                                    |> zonkAssignmentNamesMap uniVars
+                                    |> combineNamesMaps namesMap
+
+                                withThisBindingAdded)
+                            Map.empty
+
+                    let withThisBindingAdded : TypedLocalNamesMap =
+                        combineNamesMaps newLocalNamesMap localNamesMap
+
+                    withThisBindingAdded)
+
+            annotatedNamesMap
+
+
+    localNamesMap
+
+
+
+
+
+and private check (ctx : Ctx) (typeExpr : S.TypeExpr) (expr : S.Expression) : Result<unit, UnificationError> =
+    failwith "@TODO not implemented checking yet"
+
+
+
+
+
+
+
+
+
+
+
+
+
 /// This converts a PolyType to a PolyTypeContents by swapping out all the type vars for uni vars, but it returns a list of the univars it assigned, so that those can be used to zonk the PolyTypeContents back into a PolyType later
 and private instantiatePolyType (polyType : PolyType) : PolyTypeContents * UnificationVarId set =
     instantiateTypeVarsInPtc polyType.forall polyType.typeExpr
+
+and private instantiatePolyTypeList (polyTypes : PolyType list) : PolyTypeContents list * UnificationVarId set =
+    let ptcs, uniVars = polyTypes |> List.map instantiatePolyType |> List.unzip
+
+    ptcs, Set.unionMany uniVars
+
+and private instantiatePolyTypeNel (polyTypes : PolyType nel) : PolyTypeContents nel * UnificationVarId set =
+    let ptcs, uniVars = polyTypes |> NEL.map instantiatePolyType |> NEL.unzip
+
+    ptcs, Set.unionMany uniVars
+
+and private instantiatePolyTypeTom (polyTypes : PolyType tom) : PolyTypeContents tom * UnificationVarId set =
+    let ptcs, uniVars = polyTypes |> TOM.map instantiatePolyType |> TOM.unzip
+
+    ptcs, Set.unionMany uniVars
+
 
 and private instantiateTypeVarsInPtc
     (typeVars : TypeVariableId list)
@@ -722,42 +1103,7 @@ and private getUniVarsFromReplacementMap
 
 
 
-///// This converts a PolyType to a PolyTypeContents by swapping out all the type vars for uni vars, but it returns a list of the univars it assigned, so that those can be used to zonk the PolyTypeContents back into a PolyType later
-//and private instantiatePolyType (polyType : PolyType) : PolyTypeContents * UnificationVarId set =
-//    let typeVarToUniVarIdsMap =
-//        polyType.forall |> List.map (fun tv -> tv, makeNewUniVar ()) |> Map.ofSeq
 
-//    let typeVarToUniVarMap =
-//        typeVarToUniVarIdsMap |> Map.map (fun _ -> UnificationVariable.makeNewBlank)
-
-//    let rec traverser (ptc : PolyTypeContents) =
-//        match ptc with
-//        | TypeVariable typeVar ->
-//            match Map.tryFind typeVar typeVarToUniVarMap with
-//            | Some uniVar -> UnificationVar uniVar
-//            | None -> failwith "There should not be any type vars that don't have a uniVar assigned to replace them"
-
-//        | PTC.Skolem name -> PTC.Skolem name
-//        | UnificationVar uniVar ->
-//            match uniVar.content.Value.constrained with
-//            | Some constrained ->
-//                uniVar.content.Value <-
-//                    { uniVar.content.Value with
-//                        constrained = Some (traverser constrained) }
-
-//                UnificationVar uniVar
-
-//            | None -> UnificationVar uniVar
-//        | ConcreteType concrete ->
-//            (match concrete with
-//             | BuiltInPrims _ -> concrete
-//             | Conc.Tuple tom -> TOM.map traverser tom |> Conc.Tuple
-//             | Conc.List item -> traverser item |> Conc.List
-//             | Conc.Arrow (fromType, toType) -> Conc.Arrow (traverser fromType, traverser toType)
-//             | CustomType (typeName, typeParams) -> CustomType (typeName, List.map traverser typeParams))
-//            |> ConcreteType
-
-//    traverser polyType.typeExpr, Map.values typeVarToUniVarIdsMap |> Set.ofSeq
 
 
 
@@ -1021,10 +1367,17 @@ and private combineAssignmentNamesMaps
 
     Map.mergeSafe merger namesMap1 namesMap2
 
+/// This one converts *without zonking*
+and private convertAssignmentNamesMapToTypedLocalNamesMap : AssignmentNamesMap -> TypedLocalNamesMap =
+    Map.map (fun _ -> Result.map Types.makePoly)
+
+
+and private zonkAssignmentNamesMap (uniVars : UnificationVarId set) : AssignmentNamesMap -> TypedLocalNamesMap =
+    Map.map (fun _ ptcResult -> zonkPolyTypeContentsResult uniVars ptcResult)
 
 
 
-/// @TODO implement
+
 and private unifyTwoTypes (type1 : PolyType) (type2 : PolyType) : Result<PolyType, UnificationError> =
     let ptc1, uniVars1 = instantiatePolyType type1
     let ptc2, uniVars2 = instantiatePolyType type2

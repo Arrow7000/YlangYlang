@@ -112,6 +112,18 @@ type TypeDeclaration =
 
 
 
+/// This is kinda the new version of a MentionableType. It's a type expression that hasn't been resolved to a type yet. It's a type expression as it exists in a type annotation.
+/// E.g. `Bool`, `Maybe Int`, `Result Error a`, etc. In other words, a type expression as it exists in a type annotation. Not resolved to anything as of yet.
+type TypeExpr =
+    /// This references a type expression in a type declaration, e.g.TypeExpr (Just a)` in `Maybe a = Just a | Nothing`
+    | TypeExpr of label : Lexer.TypeOrModuleIdentifier * params_ : TypeExpr list
+    /// This references a type param in the type declaration, e.g. the `a` in the `Just a` in the `Maybe a = Just a | Nothing`
+    | Skolem of name : Lexer.UnqualValueIdentifier
+
+
+
+
+
 
 (* Values *)
 
@@ -152,7 +164,8 @@ type FunctionValue =
 
 /// @TODO: need to account for let binding type annotations!
 and LetBinding =
-    { bindPattern : CstNode<AssignmentPattern>
+    { typeAnnotation : CstNode<TypeExpr> option
+      bindPattern : CstNode<AssignmentPattern>
       value : CstNode<Expression> }
 
 

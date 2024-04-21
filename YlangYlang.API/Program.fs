@@ -30,7 +30,15 @@ let main argv =
         >> Parser.toResult
         >> Result.mapError ParsingError
     )
-    |> Result.map (TypeChecker.inferTypeFromExpr TypedSyntaxTree.Ctx.empty)
-    |> printfn "%A"
+    |> Result.bind (
+        TypeChecker.inferTypeFromExpr TypedSyntaxTree.Ctx.empty
+        >> Result.mapError TypeError
+    )
+    |> function
+        | Ok inferred -> printfn $"{string inferred}"
+        | Error err ->
+            match err with
+            | TypeError err' -> printfn $"Type error: {string err'}"
+            | _ -> printfn $"{string err}"
 
     0

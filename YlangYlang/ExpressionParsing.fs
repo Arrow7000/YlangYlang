@@ -637,6 +637,9 @@ and singleLetAssignment =
     parseIndentedColBlock (
         succeed (fun name params' (expr : CstNode<Expression>) ->
             { bindPattern = name
+              typeAnnotation =
+                // @TOOD : implement parsing type annotations
+                None
               value =
                 match params' with
                 | [] -> expr

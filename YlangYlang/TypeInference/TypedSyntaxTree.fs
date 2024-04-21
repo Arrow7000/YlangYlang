@@ -269,12 +269,6 @@ type PolyType =
 
 
 
-/// E.g. `Bool`, `Maybe Int`, `Result Error a`, etc. In other words, a type expression as it exists in a type annotation. Not resolved to anything as of yet.
-type TypeExpr =
-    /// This references a type expression in a type declaration, e.g.TypeExpr (Just a)` in `Maybe a = Just a | Nothing`
-    | TypeExpr of label : UpperNameValue * params_ : TypeExpr list
-    /// This references a type param in the type declaration, e.g. the `a` in the `Just a` in the `Maybe a = Just a | Nothing`
-    | Skolem of name : LowerIdent
 
 
 

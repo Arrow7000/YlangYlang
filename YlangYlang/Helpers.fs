@@ -294,6 +294,10 @@ type NonEmptyList<'a> =
         item = head || List.contains item tail
 
 
+    static member unzip (NEL (head, tail) : ('a * 'b) nel) : 'a nel * 'b nel =
+        NEL.new_ (fst head) (List.map fst tail), NEL.new_ (snd head) (List.map snd tail)
+
+
 
 
 
