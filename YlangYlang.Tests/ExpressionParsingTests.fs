@@ -73,6 +73,7 @@ let rec stripTokensFromExpr (expr : Expression) =
             |> NEL.map (
                 mapAndStrip (fun binding ->
                     { bindPattern = mapAndStrip stripAssignmentPattern binding.bindPattern
+                      typeAnnotation = None
                       value = mapAndStripExpr binding.value })
             )
 

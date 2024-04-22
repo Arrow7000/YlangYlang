@@ -349,88 +349,178 @@ let private addLocalNamesMap (localNamesMap : T.TypedLocalNamesMap) (namesMap : 
 
 
 
-/// This will replace the univars with their constraints and it will generalise unconstrained univars to type variables.
-/// It also returns all type variables from the PTC, whether new from the zonking or already present. This means this polytype can just cleanly replace any polytype that this PTC came from.
-let private zonkPolyTypeContents (uniVars : UnificationVarId set) (ptc : PolyTypeContents) : PolyType =
-    let uniVarsToTypeVarsMap : Map<UnificationVarId, TypeVariableId> =
-        uniVars |> Set.map (fun uniVarId -> uniVarId, makeNewTypeVar ()) |> Map.ofSeq
+///// This will replace the univars with their constraints and it will generalise unconstrained univars to type variables.
+///// It also returns all type variables from the PTC, whether new from the zonking or already present. This means this polytype can just cleanly replace any polytype that this PTC came from.
+//let private zonkPolyTypeContents (uniVars : UnificationVarId set) (ptc : PolyTypeContents) : PolyType =
+//    let uniVarsToTypeVarsMap : Map<UnificationVarId, TypeVariableId> =
+//        uniVars |> Set.map (fun uniVarId -> uniVarId, makeNewTypeVar ()) |> Map.ofSeq
 
-    let rec replaceAndGetTypeVars (ptc : PolyTypeContents) : PolyTypeContents * TypeVariableId set =
+//    let rec replaceAndGetTypeVars (ptc : PolyTypeContents) : PolyTypeContents * TypeVariableId set =
+//        match ptc with
+//        | UnificationVar uniVar ->
+//            match Map.tryFind uniVar.content.Value.id uniVarsToTypeVarsMap with
+//            | Some typeVarToReplace ->
+//                match uniVar.content.Value.constrained with
+//                | None ->
+//                    // If unconstrained, this will be a free type variable
+//                    TypeVariable typeVarToReplace, Set.singleton typeVarToReplace
+
+//                | Some constrained ->
+//                    // If constrained, replace with the constrained concrete type
+//                    replaceAndGetTypeVars constrained
+
+//            | None ->
+//                match uniVar.content.Value.constrained with
+//                | None ->
+//                    // I.e. this is not one of the univars we need to zonk, and there are no constraints to recursively zonk on, so we just return the empty univar as is
+//                    PTC.UnificationVar uniVar, Set.empty
+
+//                | Some constrained ->
+//                    // If constrained, replace with the constrained concrete type
+//                    replaceAndGetTypeVars constrained
+
+//        | TypeVariable tv -> PTC.TypeVariable tv, Set.singleton tv
+//        | PTC.Skolem name -> PTC.Skolem name, Set.empty
+//        | ConcreteType concrete ->
+//            match concrete with
+//            | BuiltInPrims builtInPrims -> BuiltInPrims builtInPrims |> ConcreteType, Set.empty
+//            | Conc.Tuple params_ ->
+//                let replacedParams, typeVars = TOM.map replaceAndGetTypeVars params_ |> TOM.unzip
+//                Conc.Tuple replacedParams |> PTC.ConcreteType, Set.unionMany typeVars
+
+//            | Conc.List param ->
+//                let replaced, newTypeVars = replaceAndGetTypeVars param
+//                Conc.List replaced |> ConcreteType, newTypeVars
+
+//            | Conc.Arrow (fromType, toType) ->
+//                let replacedFrom, newTypeVarsFrom = replaceAndGetTypeVars fromType
+//                let replacedTo, newTypeVarsTo = replaceAndGetTypeVars toType
+
+//                Conc.Arrow (replacedFrom, replacedTo) |> ConcreteType, Set.union newTypeVarsFrom newTypeVarsTo
+
+//            | CustomType (name, typeParams) ->
+//                let replacedParams, typeVars =
+//                    List.map replaceAndGetTypeVars typeParams |> List.unzip
+
+//                CustomType (name, replacedParams) |> PTC.ConcreteType, Set.unionMany typeVars
+
+
+//    let replacedPtc, newTypeVars = replaceAndGetTypeVars ptc
+
+//    { forall = Set.toList newTypeVars
+//      typeExpr = replacedPtc }
+
+
+
+let rec private getAllUnconstrainedUniVars (ptc : PolyTypeContents) : UnificationVarId set =
+    match ptc with
+    | UnificationVar uniVar ->
+        match uniVar.content.Value.constrained with
+        | None -> Set.singleton uniVar.content.Value.id
+        | Some constrained -> getAllUnconstrainedUniVars constrained
+
+    | TypeVariable _ -> Set.empty
+    | PTC.Skolem _ -> Set.empty
+    | ConcreteType concrete ->
+        match concrete with
+        | BuiltInPrims _ -> Set.empty
+        | Conc.Tuple params_ -> TOM.map getAllUnconstrainedUniVars params_ |> Set.unionMany
+        | Conc.List param -> getAllUnconstrainedUniVars param
+        | Conc.Arrow (fromType, toType) ->
+            Set.union (getAllUnconstrainedUniVars fromType) (getAllUnconstrainedUniVars toType)
+        | CustomType (_, typeParams) -> List.map getAllUnconstrainedUniVars typeParams |> Set.unionMany
+
+
+
+/// This will replace all univars from a higher (more deeply nested) or equal level than the current one. If constrained, it will replace the univar with a concrete type. If unconstrained, it will replace them with new type vars.
+let private zonkPolyTypeContents (ctx : Ctx) (ptc : PolyTypeContents) : PolyType =
+    //let uniVarsToTypeVarsMap : Map<UnificationVarId, TypeVariableId> =
+    //    uniVars |> Set.map (fun uniVarId -> uniVarId, makeNewTypeVar ()) |> Map.ofSeq
+    let currLevel = ctx.currentLevel
+
+    let unconstrainedUniVars = getAllUnconstrainedUniVars ptc
+
+    let unconstrainedUniVarsToTypeVarsMap : Map<UnificationVarId, TypeVariableId> =
+        unconstrainedUniVars
+        |> Set.toSeq
+        |> Seq.map (fun uniVarId -> uniVarId, makeNewTypeVar ())
+        |> Map.ofSeq
+
+    let rec replaceAndGetTypeVars (ptc : PolyTypeContents) : PolyTypeContents =
         match ptc with
         | UnificationVar uniVar ->
-            match Map.tryFind uniVar.content.Value.id uniVarsToTypeVarsMap with
-            | Some typeVarToReplace ->
+            if uniVar.content.Value.levelDeclared >= currLevel then
                 match uniVar.content.Value.constrained with
                 | None ->
-                    // If unconstrained, this will be a free type variable
-                    TypeVariable typeVarToReplace, Set.singleton typeVarToReplace
+                    match Map.tryFind uniVar.content.Value.id unconstrainedUniVarsToTypeVarsMap with
+                    | Some typeVar ->
+                        // If unconstrained, this will be a free type variable
+                        TypeVariable typeVar
+
+                    | None -> failwith "We should have reserved type variables for all unconstrained unification vars"
+
 
                 | Some constrained ->
                     // If constrained, replace with the constrained concrete type
                     replaceAndGetTypeVars constrained
 
-            | None ->
-                match uniVar.content.Value.constrained with
-                | None ->
-                    // I.e. this is not one of the univars we need to zonk, and there are no constraints to recursively zonk on, so we just return the empty univar as is
-                    PTC.UnificationVar uniVar, Set.empty
+            else
+                UnificationVar uniVar
 
-                | Some constrained ->
-                    // If constrained, replace with the constrained concrete type
-                    replaceAndGetTypeVars constrained
 
-        | TypeVariable tv -> PTC.TypeVariable tv, Set.singleton tv
-        | PTC.Skolem name -> PTC.Skolem name, Set.empty
+        | TypeVariable tv -> PTC.TypeVariable tv
+        | PTC.Skolem name -> PTC.Skolem name
         | ConcreteType concrete ->
             match concrete with
-            | BuiltInPrims builtInPrims -> BuiltInPrims builtInPrims |> ConcreteType, Set.empty
+            | BuiltInPrims builtInPrims -> BuiltInPrims builtInPrims |> ConcreteType
             | Conc.Tuple params_ ->
-                let replacedParams, typeVars = TOM.map replaceAndGetTypeVars params_ |> TOM.unzip
-                Conc.Tuple replacedParams |> PTC.ConcreteType, Set.unionMany typeVars
+                let replacedParams = TOM.map replaceAndGetTypeVars params_
+                Conc.Tuple replacedParams |> PTC.ConcreteType
 
             | Conc.List param ->
-                let replaced, newTypeVars = replaceAndGetTypeVars param
-                Conc.List replaced |> ConcreteType, newTypeVars
+                let replaced = replaceAndGetTypeVars param
+                Conc.List replaced |> ConcreteType
 
             | Conc.Arrow (fromType, toType) ->
-                let replacedFrom, newTypeVarsFrom = replaceAndGetTypeVars fromType
-                let replacedTo, newTypeVarsTo = replaceAndGetTypeVars toType
+                let replacedFrom = replaceAndGetTypeVars fromType
+                let replacedTo = replaceAndGetTypeVars toType
 
-                Conc.Arrow (replacedFrom, replacedTo) |> ConcreteType, Set.union newTypeVarsFrom newTypeVarsTo
+                Conc.Arrow (replacedFrom, replacedTo) |> ConcreteType
 
             | CustomType (name, typeParams) ->
-                let replacedParams, typeVars =
-                    List.map replaceAndGetTypeVars typeParams |> List.unzip
+                let replacedParams = List.map replaceAndGetTypeVars typeParams
 
-                CustomType (name, replacedParams) |> PTC.ConcreteType, Set.unionMany typeVars
+                CustomType (name, replacedParams) |> PTC.ConcreteType
 
 
-    let replacedPtc, newTypeVars = replaceAndGetTypeVars ptc
+    let replacedPtc = replaceAndGetTypeVars ptc
 
-    { forall = Set.toList newTypeVars
+    { forall = Map.values unconstrainedUniVarsToTypeVarsMap |> List.ofSeq
       typeExpr = replacedPtc }
 
 
 
+
+
 let private zonkPolyTypeContentsResult
-    (uniVars : UnificationVarId set)
+    (ctx : Ctx)
     (ptcResult : Result<PolyTypeContents, UnificationError>)
     : Result<PolyType, UnificationError> =
     // @TODO we should probably zonk the UnificationError contents also!
-    Result.map (zonkPolyTypeContents uniVars) ptcResult
+    Result.map (zonkPolyTypeContents ctx) ptcResult
 
 
-let private zonkPolyType (unificationVarsWeCanEliminate : UnificationVarId set) (type_ : PolyType) : PolyType =
+let private zonkPolyType (ctx : Ctx) (type_ : PolyType) : PolyType =
     // This is fine to replace the whole original polytype because the zonking will include all typevars present in the PTC anyway, so no need to keep hold of the original `forall`s.
-    zonkPolyTypeContents unificationVarsWeCanEliminate type_.typeExpr
+    zonkPolyTypeContents ctx type_.typeExpr
 
 
 /// @TODO we should probably apply this to the error branch as well
 let private zonkPolyTypeResult
-    (unificationVarsWeCanEliminate : UnificationVarId set)
+    (ctx : Ctx)
     (type_ : Result<PolyType, UnificationError>)
     : Result<PolyType, UnificationError> =
-    Result.map (zonkPolyType unificationVarsWeCanEliminate) type_
+    Result.map (zonkPolyType ctx) type_
 
 
 
@@ -493,7 +583,7 @@ let rec inferTypeFromExpr (ctx : Ctx) (expr : S.Expression) : Result<PolyType, U
                 let arrowType =
                     Types.makeArrowTypeFromParamsAndResult (NEL.toList allParamTypes) instantiatedBodyPtc
 
-                let zonkedArrowType = zonkPolyTypeContents (Set.union bodyUniVars uniVars) arrowType
+                let zonkedArrowType = zonkPolyTypeContents ctx arrowType
                 Ok zonkedArrowType
 
             | Error e -> Error e
@@ -508,7 +598,7 @@ let rec inferTypeFromExpr (ctx : Ctx) (expr : S.Expression) : Result<PolyType, U
             let instantiated = instantiateCtor ctx value
 
             Types.makeArrowTypeFromParamsAndResult instantiated.params_ instantiated.result
-            |> zonkPolyTypeContents instantiated.uniVars
+            |> zonkPolyTypeContents ctx
             |> Ok
 
         | None ->
@@ -542,7 +632,7 @@ let rec inferTypeFromExpr (ctx : Ctx) (expr : S.Expression) : Result<PolyType, U
         |> Result.map (fun types ->
             let instantiatedTypes, uniVars = instantiatePolyTypeTom ctx types
 
-            Conc.Tuple instantiatedTypes |> ConcreteType |> zonkPolyTypeContents uniVars)
+            Conc.Tuple instantiatedTypes |> ConcreteType |> zonkPolyTypeContents ctx)
         |> Result.mapError NEL.head
 
     | S.Expression.Record _ -> failwith "Records aren't supported yet"
@@ -600,7 +690,7 @@ let rec inferTypeFromExpr (ctx : Ctx) (expr : S.Expression) : Result<PolyType, U
 
         let allUniVars = branchInformation |> NEL.map _.uniVars |> Set.unionMany
 
-        zonkPolyTypeResult allUniVars returnType
+        zonkPolyTypeResult ctx returnType
 
 
 
@@ -626,7 +716,7 @@ let rec inferTypeFromExpr (ctx : Ctx) (expr : S.Expression) : Result<PolyType, U
 
             let arrowTypeConstraintPolyType =
                 Types.makeArrowTypeFromParamsAndResult (NEL.toList instantiatedParams) returnTypeUniVar
-                |> zonkPolyTypeContents (Set.add returnTypeUniVarId paramsUniVars)
+                |> zonkPolyTypeContents ctx
 
             unifyTwoTypes ctx arrowTypeConstraintPolyType funcType
 
@@ -862,7 +952,7 @@ and private resolveNamesTopologically (ctx : Ctx) (namesAndExprs : S.LetBinding 
                     |> Result.map Types.makePoly
                     |> unifyTwoTypeResults ctx typeExprResult
 
-                let zonkedNamesMap = zonkAssignmentNamesMap uniVars namesMap
+                let zonkedNamesMap = zonkAssignmentNamesMap ctx namesMap
 
                 Some zonkedNamesMap)
         |> Seq.fold (combineNamesMaps ctx) Map.empty
@@ -896,13 +986,13 @@ and private resolveNamesTopologically (ctx : Ctx) (namesAndExprs : S.LetBinding 
                     let inferredTypeFromAssignment, assignmentNamesMap, uniVars =
                         inferTypeFromAssignmentPattern ctx assignmentPattern
 
-                    let zonkedAssignmentNamesMap = assignmentNamesMap |> zonkAssignmentNamesMap uniVars
+                    let zonkedAssignmentNamesMap = assignmentNamesMap |> zonkAssignmentNamesMap ctx
 
                     let inferredType = inferTypeFromExpr combinedNamesMapCtx expr
 
                     /// Unified from the inferred type and the inferred shape from the assignment pattern
                     let unified =
-                        zonkPolyTypeContentsResult uniVars inferredTypeFromAssignment
+                        zonkPolyTypeContentsResult ctx inferredTypeFromAssignment
                         |> unifyTwoTypeResults ctx inferredType
 
                     let withThisBindingAdded : TypedLocalNamesMap =
@@ -930,7 +1020,7 @@ and private resolveNamesTopologically (ctx : Ctx) (namesAndExprs : S.LetBinding 
 
                     let withThisBindingAdded : TypedLocalNamesMap =
                         assignmentNamesMap
-                        |> zonkAssignmentNamesMap uniVars
+                        |> zonkAssignmentNamesMap ctx
                         |> combineNamesMaps ctx localNamesMap
 
                     withThisBindingAdded
@@ -972,7 +1062,7 @@ and private resolveNamesTopologically (ctx : Ctx) (namesAndExprs : S.LetBinding 
 
                                 let withThisBindingAdded : TypedLocalNamesMap =
                                     assignmentNamesMap
-                                    |> zonkAssignmentNamesMap uniVars
+                                    |> zonkAssignmentNamesMap ctx
                                     |> combineNamesMaps ctx namesMap
 
                                 withThisBindingAdded)
@@ -1409,8 +1499,8 @@ and private convertAssignmentNamesMapToTypedLocalNamesMap : AssignmentNamesMap -
     Map.map (fun _ -> Result.map Types.makePoly)
 
 
-and private zonkAssignmentNamesMap (uniVars : UnificationVarId set) : AssignmentNamesMap -> TypedLocalNamesMap =
-    Map.map (fun _ ptcResult -> zonkPolyTypeContentsResult uniVars ptcResult)
+and private zonkAssignmentNamesMap (ctx : Ctx) : AssignmentNamesMap -> TypedLocalNamesMap =
+    Map.map (fun _ ptcResult -> zonkPolyTypeContentsResult ctx ptcResult)
 
 
 
@@ -1419,8 +1509,7 @@ and private unifyTwoTypes (ctx : Ctx) (type1 : PolyType) (type2 : PolyType) : Re
     let ptc1, uniVars1 = instantiatePolyType ctx type1
     let ptc2, uniVars2 = instantiatePolyType ctx type2
 
-    unifyTwoTypeContents ctx ptc1 ptc2
-    |> zonkPolyTypeContentsResult (Set.union uniVars1 uniVars2)
+    unifyTwoTypeContents ctx ptc1 ptc2 |> zonkPolyTypeContentsResult ctx
 
 
 
