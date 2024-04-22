@@ -11,7 +11,7 @@
 
 /// When putting items in a topologically sorted list, we need to treat the mutually recursive items like they are one thing, so we store them together
 type StronglyConnectedGraph<'T, 'Name> =
-    /// A single item that is not dependent on itself
+    /// A single item that is not dependent on itself or any other names that depend on it
     | SingleNonRec of name : 'Name * 'T
     /// A single item that is dependent on itself
     | SingleSelfRec of name : 'Name * 'T
@@ -40,7 +40,7 @@ let makeDependenciesMap (getId : 'T -> 'Key) (getDependencies : 'T -> 'Key seq) 
 
 
 
-let flipDependenciesMapToDependentsMap (dependenciesMap : DepsMap<'T, 'Key>) : DepsMap<'T, 'Key> =
+let private flipDependenciesMapToDependentsMap (dependenciesMap : DepsMap<'T, 'Key>) : DepsMap<'T, 'Key> =
     let dependentsMap =
         dependenciesMap
         |> Map.toSeq
