@@ -116,13 +116,20 @@ type BuiltInPrimitiveTypes =
 
 
 
-
 /// @TODO need to include record types also, both closed or open
 and ConcreteType =
     | BuiltInPrims of BuiltInPrimitiveTypes
     | Tuple of PolyTypeContents tom
     | List of PolyTypeContents
     | Arrow of fromType : PolyTypeContents * toType : PolyTypeContents
+
+    /// When a record is definitely closed
+    | RecordExact of fields : (LowerIdent * PolyTypeContents) list
+    /// When a record may or may not be open
+    | RecordOpenMaybe of fields : (LowerIdent * PolyTypeContents) list
+    /// When a record is definitely open
+    | RecordOpenDefinitely of typeVar : TypeVariableId * fields : (LowerIdent * PolyTypeContents) list
+
     | CustomType of typeName : UpperNameValue * typeParams : PolyTypeContents list
 
 
@@ -135,6 +142,28 @@ and ConcreteType =
 
         | List ptc -> "List " + string ptc
         | Arrow (fromType, toType) -> string fromType + " -> " + string toType
+        | RecordExact fields ->
+            let commafiedFields =
+                fields
+                |> List.map (fun (name, type_) -> string name + " : " + string type_)
+                |> String.join ", "
+
+            "{ " + commafiedFields + " }"
+        | RecordOpenMaybe fields ->
+            let commafiedFields =
+                fields
+                |> List.map (fun (name, type_) -> string name + " : " + string type_)
+                |> String.join ", "
+
+            "{ ? | " + commafiedFields + " }"
+        | RecordOpenDefinitely (typeVar, fields) ->
+            let commafiedFields =
+                fields
+                |> List.map (fun (name, type_) -> string name + " : " + string type_)
+                |> String.join ", "
+
+            "{ " + string typeVar + " | " + commafiedFields + " }"
+
         | CustomType (typeName, typeParams) ->
             upperNameValToStr typeName
             + " "

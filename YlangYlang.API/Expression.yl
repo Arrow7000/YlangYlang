@@ -1,16 +1,16 @@
-﻿module Main.Thing exposing (thisThing,Parser(..))
-
-import Main.Other as MO
-import Main.OtherThing as MOT exposing (all,sorts,ofThings)
-
-
-type Thing a b = Thingy a | Bingy b Bool
-
-type alias ExtendedRec a = 
-    {a :String, fieldOne : Int}
-
-thing = List.map .cacks lists
-
-extendedRecord : {a | fieldOne : Int}
-extendedRecord a b = {otherThing |   fieldOne = 233 , boolValue = True }
-extendedRecord2 = {bla| fieldOne = 233,fieldTwo = ()}
+﻿let
+  a = [1, 2, 3, 4, 5]
+  id x = x
+  tuplify x = (x, x)
+  fst (x,_) = x
+  getIfTrue {x,y} = if x then "true" else "3434"
+  getX {x} =  x
+  point = {x = 3, y = 4 }
+  xCoord = getX point
+  complexRec = {x = 3, y = '4', z = {x = "boo", y = 4}}
+  {x,y } = complexRec.z
+  nestedGetter thing = thing.x.y.z.a
+  ifOfRecords param1 param2 = if param1.x then { param1 | y = 3} else { param2 | z = "hi" }
+in
+(complexRec,x,y,ifOfRecords)
+--( a, (id, id "hi" , id 34.5), (tuplify, tuplify 'd'), (getIfTrue, getIfTrue {x=True,y= ()} ), fst )

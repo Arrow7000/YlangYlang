@@ -828,7 +828,7 @@ module Map =
 
 
     /// Also produces an NEL of the errors so that the first error can be accessed easily without needing to handle the (impossible) case of an empty map
-    let sequenceResult map =
+    let sequenceResult (map : Map<'Key, Result<'T, 'Err>>) =
         map
         |> Map.fold
             (fun state key value ->
