@@ -96,6 +96,9 @@ let private upperNameValToStr (str : UpperNameValue) =
 
 
 
+
+
+
 type BuiltInPrimitiveTypes =
     | Float
     | Int
@@ -125,10 +128,10 @@ and ConcreteType =
 
     /// When a record is definitely closed
     | RecordExact of fields : (LowerIdent * PolyTypeContents) list
-    /// When a record may or may not be open
-    | RecordOpenMaybe of fields : (LowerIdent * PolyTypeContents) list
-    /// When a record is definitely open
-    | RecordOpenDefinitely of typeVar : TypeVariableId * fields : (LowerIdent * PolyTypeContents) list
+    ///// When a record may or may not be open
+    //| RecordOpenMaybe of fields : (LowerIdent * PolyTypeContents) list
+    ///// When a record is definitely open
+    //| RecordOpenDefinitely of typeVar : TypeVariableId * fields : (LowerIdent * PolyTypeContents) list
 
     | CustomType of typeName : UpperNameValue * typeParams : PolyTypeContents list
 
@@ -149,20 +152,20 @@ and ConcreteType =
                 |> String.join ", "
 
             "{ " + commafiedFields + " }"
-        | RecordOpenMaybe fields ->
-            let commafiedFields =
-                fields
-                |> List.map (fun (name, type_) -> string name + " : " + string type_)
-                |> String.join ", "
+        //| RecordOpenMaybe fields ->
+        //    let commafiedFields =
+        //        fields
+        //        |> List.map (fun (name, type_) -> string name + " : " + string type_)
+        //        |> String.join ", "
 
-            "{ ? | " + commafiedFields + " }"
-        | RecordOpenDefinitely (typeVar, fields) ->
-            let commafiedFields =
-                fields
-                |> List.map (fun (name, type_) -> string name + " : " + string type_)
-                |> String.join ", "
+        //    "{ ? | " + commafiedFields + " }"
+        //| RecordOpenDefinitely (typeVar, fields) ->
+        //    let commafiedFields =
+        //        fields
+        //        |> List.map (fun (name, type_) -> string name + " : " + string type_)
+        //        |> String.join ", "
 
-            "{ " + string typeVar + " | " + commafiedFields + " }"
+        //    "{ " + string typeVar + " | " + commafiedFields + " }"
 
         | CustomType (typeName, typeParams) ->
             upperNameValToStr typeName
@@ -191,49 +194,163 @@ and PTC = PolyTypeContents
 
 
 
+and RowField = LowerIdent * PolyTypeContents
+
+/// Either a record with some constrained fields, or any other type
+and TypeOrRecord =
+    | Type_ of PolyTypeContents // For a still unconstrained univar
+    /// This basically means a record type but with the exact fields still open to having more added to them. It just means that at least these fields need to be present on it, and with these types for values.
+    | Record of fields : RowField list // List will be empty for unconstrained univar
+
+
+
 
 and UniVarContent =
     {
         id : UnificationVarId
         /// What level this univar was declared on. This way we know that it is safe to be zonked out of existence on lower levels than its `levelDeclared` property. (Deeper nesting = higher level)
         levelDeclared : uint
-        constrained : PolyTypeContents option
+        constrained : TypeOrRecord option
     }
+
+    override this.ToString () =
+
+        match this.constrained with
+        | None -> string this.id
+        | Some constrained ->
+            match constrained with
+            | Type_ ptc -> $"({string id} : {string ptc})"
+            | Record fields ->
+                let commafiedFields =
+                    fields
+                    |> List.map (fun (name, type_) -> string name + " : " + string type_)
+                    |> String.join ", "
+
+                "{ " + string this.id + " | " + string commafiedFields + " }"
+
+
 
 
 and UnificationVariable =
     { content : UniVarContent ref }
 
-    static member getId (uniVar : UnificationVariable) = uniVar.content.Value.id
-
-    /// Make a new unconstrained unification variable
-    static member makeNewBlank (levelDeclared : uint) (uniVarId : UnificationVarId) =
-        { content =
-            ref
-                { id = uniVarId
-                  levelDeclared = levelDeclared
-                  constrained = None } }
-
-    /// Make a new constrained unification variable
-    static member makeNewConstr (levelDeclared : uint) (uniVarId : UnificationVarId) (constr : PolyTypeContents) =
-        { content =
-            ref
-                { id = uniVarId
-                  levelDeclared = levelDeclared
-                  constrained = Some constr } }
-
     override this.ToString () =
-        let id = UnificationVariable.getId this
 
-        match this.content.Value.constrained with
-        | Some constrained -> $"({string id} : {string constrained})"
-        | None -> string id
+        string this.content.Value
+
+
+
+
+
+
+
+
+
+
+//and Row =
+//    /// This signifies a complete, closed, record (I think)
+//    | Row of fields : RowField list
+
+//| RowUniVar of RowUnivarContent ref
+//| RowTypeVar of TypeVariableId * fields : RowField list
+//| RowSkolem of name : string * fields : RowField list
+
+
+//and RowUnivarContent =
+//    { id : UnificationVarId
+//      levelDeclared : uint
+//      constrained : Row option }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 /// Alias for ConcreteType
 type Conc = ConcreteType
 
+/// Alias for TypeOrRecord
+type TOR = TypeOrRecord
+
+
+
+
+
+
+
+//and Type_ =
+//    | BuiltInPrims_ of BuiltInPrimitiveTypes
+//    | Tuple of Type_ tom
+//    | List of Type_
+//    | Record of fields : (string * Type_) list
+//    | UnificationVariable of Type_ option ref
+//    | TypeVariable of TypeVariableId
+//    | Skolem of name : string
+
+
+//and Row =
+//    | Row of fields : (string * Type_) list
+//    | RowUniVar of Row option ref
+//    | RowTypeVar of TypeVariableId * fields : (string * Type_) list
+//    | RowSkolem of name : string * fields : (string * Type_) list
+
+//and Kind =
+//    | Type_ of Type_
+//    | Row of Row
+
+
+
+
+
+(*
+The type expression `{ r | a : Int, b : String } -> { r | x : Float }`
+would be represented as:
+
+forall (r : Row). { r | a : Int, b : String } -> { r | x : Float }
+
+where `r` is a row variable, and `Row` is a kind
+
+*)
+
+
+
+
+
+
+
+//type ConcreteType =
+//    | BuiltInPrims of BuiltInPrimitiveTypes
+//    | Tuple of TwoOrMore<PolyTypeContents>
+//    | List of PolyTypeContents
+//    | Arrow of fromType : PolyTypeContents * toType : PolyTypeContents
+//    | CustomType of typeName : UpperNameValue * typeParams : PolyTypeContents list
+
+
+//and PolyTypeContents =
+//    /// Referencing a unification variable.
+//    | UnificationVar of UnificationVariable
+//    /// Referencing a *type variable* (not a unification variable!)
+//    | TypeVariable of TypeVariableId
+//    /// This is only available during a type `check` call – may be unified with itself or a uniVar but nothing else!
+//    | Skolem of name : LowerIdent
+//    /// A simple unparametric type like `Int` or `String`, or a parametric type like `List a`, `Maybe a`, `Result e a`
+//    | ConcreteType of ConcreteType
+
+
+//type PolyType =
+//    { forall : TypeVariableId list
+//      typeExpr : PolyTypeContents }
 
 
 
@@ -248,8 +365,17 @@ type UnificationError =
     | TriedToUnifyDifferentSkolems of skolem1 : LowerIdent * skolem2 : LowerIdent
     /// Skolems only unify with themselves, not with anything else
     | NarrowedSkolem of skolemName : LowerIdent * narrowedWith : PolyTypeContents
-    | InfinitelyRecursiveType of unified : UnificationVariable * with_ : PolyTypeContents
+    | InfinitelyRecursiveType of unified : UnificationVariable * with_ : TypeOrRecord
     | WrongNumberOfTypeParams of typeName : UpperNameValue * expected : uint * actual : uint
+
+    | OpenRecordHasMoreFieldsThanExactRecord of openFields : LowerIdent set * exactFields : LowerIdent set
+    | OpenRecordFieldTypesClashWithExactRecFieldTypes of
+        {| fieldName : LowerIdent
+           unifClash : ConcreteType * ConcreteType |} nel
+
+    /// Clash between a concrete (non-record) type and an open record type – only open records bc if it wasn't open it would be a regular unification clash
+    | RecordTypeClash of rowFields : (LowerIdent * PolyTypeContents) list * concreteType : ConcreteType
+
 
     override this.ToString () =
         match this with
@@ -273,6 +399,28 @@ type UnificationError =
             + " but got "
             + string actual
 
+        | OpenRecordHasMoreFieldsThanExactRecord (openFields, exactFields) ->
+            "Open record has more fields than exact record allows: "
+            + string (Set.map string openFields)
+            + " vs. "
+            + string (Set.map string exactFields)
+
+        | OpenRecordFieldTypesClashWithExactRecFieldTypes clashes ->
+            let stringifySingleClash
+                (clash :
+                    {| fieldName : LowerIdent
+                       unifClash : ConcreteType * ConcreteType |})
+                =
+                "Field `"
+                + string clash.fieldName
+                + "` has type `"
+                + string (fst clash.unifClash)
+                + "` in open record but type `"
+                + string (snd clash.unifClash)
+                + "` in exact record"
+
+            "Open record field types clash with exact record field types: "
+            + string (NEL.map stringifySingleClash clashes)
 
     static member makeClash conc1 conc2 =
         // // Uncomment when debugging unexpected type errors

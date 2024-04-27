@@ -39,7 +39,36 @@ let private makeNewTypeVar () = System.Guid.NewGuid () |> T.TypeVariableId
 
 
 
+module UnificationVariable =
+    let getId (uniVar : UnificationVariable) = uniVar.content.Value.id
 
+    /// Make a new unconstrained unification variable
+    let makeNewBlank (levelDeclared : uint) (uniVarId : UnificationVarId) =
+        { content =
+            ref
+                { id = uniVarId
+                  levelDeclared = levelDeclared
+                  constrained = None } }
+
+    /// Make a new type constrained unification variable
+    let makeNewConstr (levelDeclared : uint) (uniVarId : UnificationVarId) (constr : PolyTypeContents) =
+        { content =
+            ref
+                { id = uniVarId
+                  levelDeclared = levelDeclared
+                  constrained = Some (Type_ constr) } }
+
+    /// Make a new record constrained unification variable
+    let makeNewRecConstraint
+        (levelDeclared : uint)
+        (uniVarId : UnificationVarId)
+        (fields : (LowerIdent * PolyTypeContents) list)
+        =
+        { content =
+            ref
+                { id = uniVarId
+                  levelDeclared = levelDeclared
+                  constrained = Some (TOR.Record fields) } }
 
 
 
@@ -329,10 +358,9 @@ let private sortBindingsTopologically
 
 /// Add a local names map to a global one
 let private addLocalNamesMap (localNamesMap : T.TypedLocalNamesMap) (namesMap : T.TypedNamesMap) : T.TypedNamesMap =
-    localNamesMap
-    |> Map.mapKeyVal (fun key v -> LocalLower key, v)
+    let newMap = localNamesMap |> Map.mapKeyVal (fun key v -> LocalLower key, v)
     // @TODO: this should really throw an error if there are any name clashes so we don't get silently overwritten names
-    |> Map.merge namesMap
+    Map.merge newMap namesMap
 
 
 
@@ -351,6 +379,22 @@ let private addLocalNamesMap (localNamesMap : T.TypedLocalNamesMap) (namesMap : 
 
 
 
+/// Maps a function that operates on PTCs and makes it work for TORs also
+let private mapToTypeOrRec (f : PolyTypeContents -> PolyTypeContents) (tor : TypeOrRecord) : TypeOrRecord =
+    match tor with
+    | Type_ ptc -> Type_ (f ptc)
+    | TOR.Record fields -> TOR.Record (List.map (fun (field, value) -> field, f value) fields)
+
+
+/// Takes a function that operates on PTCs and makes it work for TORs also, and gathers the results together
+let private fromTypeOrRec (f : PolyTypeContents -> 'T) (gatherer : 'T list -> 'T) (tor : TypeOrRecord) =
+    match tor with
+    | Type_ ptc -> f ptc
+    | TOR.Record fields -> List.map (snd >> f) fields |> gatherer
+
+
+
+
 
 
 let rec private getAllUnconstrainedUniVars (ptc : PolyTypeContents) : UnificationVarId set =
@@ -358,7 +402,11 @@ let rec private getAllUnconstrainedUniVars (ptc : PolyTypeContents) : Unificatio
     | UnificationVar uniVar ->
         match uniVar.content.Value.constrained with
         | None -> Set.singleton uniVar.content.Value.id
-        | Some constrained -> getAllUnconstrainedUniVars constrained
+        | Some constrained -> fromTypeOrRec getAllUnconstrainedUniVars Set.unionMany constrained
+
+    //| RecordUnificationVar uniVar ->
+    //    // If it's a record unification var it's always unconstrained, in the sense that it's not a closed record so it always has the possibility of extra fields
+    //    Set.singleton uniVar.content.Value.id
 
     | TypeVariable _ -> Set.empty
     | PTC.Skolem _ -> Set.empty
@@ -371,8 +419,8 @@ let rec private getAllUnconstrainedUniVars (ptc : PolyTypeContents) : Unificatio
             Set.union (getAllUnconstrainedUniVars fromType) (getAllUnconstrainedUniVars toType)
 
         | Conc.RecordExact fields -> List.map (snd >> getAllUnconstrainedUniVars) fields |> Set.unionMany
-        | Conc.RecordOpenMaybe fields -> List.map (snd >> getAllUnconstrainedUniVars) fields |> Set.unionMany
-        | Conc.RecordOpenDefinitely (_, fields) -> List.map (snd >> getAllUnconstrainedUniVars) fields |> Set.unionMany
+        //| Conc.RecordOpenMaybe fields -> List.map (snd >> getAllUnconstrainedUniVars) fields |> Set.unionMany
+        //| Conc.RecordOpenDefinitely (_, fields) -> List.map (snd >> getAllUnconstrainedUniVars) fields |> Set.unionMany
 
         | CustomType (_, typeParams) -> List.map getAllUnconstrainedUniVars typeParams |> Set.unionMany
 
@@ -407,11 +455,27 @@ let private zonkPolyTypeContents (ctx : Ctx) (ptc : PolyTypeContents) : PolyType
 
                 | Some constrained ->
                     // If constrained, replace with the constrained concrete type
-                    replaceAndGetTypeVars constrained
+
+                    (* @TODO still need to decide how to zonk a Record univar to a type variable *)
+                    mapToTypeOrRec replaceAndGetTypeVars constrained
 
             else
                 // This uni var is declared at a higher scope and thus has a lower level and thus shouldn't be removed
                 UnificationVar uniVar
+
+        //| RecordUnificationVar uniVar ->
+        //    if uniVar.content.Value.levelDeclared >= ctx.currentLevel then
+        //        match Map.tryFind uniVar.content.Value.id unconstrainedUniVarsToTypeVarsMap with
+        //        | Some typeVar ->
+        //            // If unconstrained, this will be a free type variable
+        //            Conc.RecordOpenDefinitely (typeVar, Seq.toList uniVar.content.Value.fields)
+        //            |> ConcreteType
+
+        //        | None -> failwith "We should have reserved type variables for all unconstrained unification vars"
+
+        //    else
+        //        // This uni var is declared at a higher scope and thus has a lower level and thus shouldn't be removed
+        //        RecordUnificationVar uniVar
 
 
         | TypeVariable tv -> PTC.TypeVariable tv
@@ -439,17 +503,17 @@ let private zonkPolyTypeContents (ctx : Ctx) (ptc : PolyTypeContents) : PolyType
                 |> Conc.RecordExact
                 |> ConcreteType
 
-            | Conc.RecordOpenMaybe fields ->
-                fields
-                |> List.map (fun (field, value) -> field, replaceAndGetTypeVars value)
-                |> Conc.RecordOpenMaybe
-                |> ConcreteType
+            //| Conc.RecordOpenMaybe fields ->
+            //    fields
+            //    |> List.map (fun (field, value) -> field, replaceAndGetTypeVars value)
+            //    |> Conc.RecordOpenMaybe
+            //    |> ConcreteType
 
-            | Conc.RecordOpenDefinitely (typeVar, fields) ->
-                let replacedFields =
-                    fields |> List.map (fun (field, value) -> field, replaceAndGetTypeVars value)
+            //| Conc.RecordOpenDefinitely (typeVar, fields) ->
+            //    let replacedFields =
+            //        fields |> List.map (fun (field, value) -> field, replaceAndGetTypeVars value)
 
-                Conc.RecordOpenDefinitely (typeVar, replacedFields) |> ConcreteType
+            //    Conc.RecordOpenDefinitely (typeVar, replacedFields) |> ConcreteType
 
             | CustomType (name, typeParams) ->
                 let replacedParams = List.map replaceAndGetTypeVars typeParams
@@ -550,13 +614,17 @@ let rec private inferTypeFromExpr (ctx : Ctx) (expr : S.Expression) : Result<Pol
 
     | S.DotGetter fieldName ->
         let fieldNameValUniVar =
-            makeNewUniVar ()
-            |> UnificationVariable.makeNewBlank ctx.currentLevel
-            |> PTC.UnificationVar
+            makeNewUniVar () |> UnificationVariable.makeNewBlank ctx.currentLevel
 
-        Conc.RecordOpenMaybe [ NR.unqualValToLowerIdent fieldName, fieldNameValUniVar ]
-        |> ConcreteType
-        |> Ok
+        let recordUniVar =
+            UnificationVariable.makeNewRecConstraint
+                ctx.currentLevel
+                (makeNewUniVar ())
+                [ NR.unqualValToLowerIdent fieldName, PTC.UnificationVar fieldNameValUniVar ]
+
+        Ok (PTC.UnificationVar recordUniVar)
+
+
 
 
     | S.UpperIdentifier ident ->
@@ -621,7 +689,7 @@ let rec private inferTypeFromExpr (ctx : Ctx) (expr : S.Expression) : Result<Pol
 
 
     | S.Expression.RecordExtension (extendedRecord, extendedFields) ->
-        let inferredNameType =
+        let extendedRecordTypeResult =
             extendedRecord.node
             |> L.UnqualValue
             |> S.LowerIdentifier
@@ -640,8 +708,12 @@ let rec private inferTypeFromExpr (ctx : Ctx) (expr : S.Expression) : Result<Pol
 
         match fieldTypeResults with
         | Ok fieldTypes ->
-            let record = fieldTypes |> NEL.toList |> Conc.RecordOpenMaybe |> ConcreteType
-            unifyTwoTypeContentsResults ctx inferredNameType (Ok record)
+            let recordUniVar =
+                UnificationVariable.makeNewRecConstraint ctx.currentLevel (makeNewUniVar ()) (NEL.toList fieldTypes)
+                |> PTC.UnificationVar
+
+            //let record = fieldTypes |> NEL.toList |> Conc.RecordOpenMaybe |> ConcreteType
+            unifyTwoTypeContentsResults ctx extendedRecordTypeResult (Ok recordUniVar)
 
         | Error e -> Error (NEL.head e)
 
@@ -747,8 +819,11 @@ let rec private inferTypeFromExpr (ctx : Ctx) (expr : S.Expression) : Result<Pol
                     |> PTC.UnificationVar
 
                 let dottedType =
-                    Conc.RecordOpenMaybe [ NR.unqualValToLowerIdent firstFieldName, fieldNameValUniVar ]
-                    |> ConcreteType
+                    UnificationVariable.makeNewRecConstraint
+                        ctx.currentLevel
+                        (makeNewUniVar ())
+                        [ NR.unqualValToLowerIdent firstFieldName, fieldNameValUniVar ]
+                    |> PTC.UnificationVar
 
                 let nested = makeDottableType rest fieldNameValUniVar
                 let unified = unifyTwoTypeContents ctx type_ dottedType
@@ -882,7 +957,10 @@ and private inferTypeFromAssignmentPattern
 
             let list = withUniVars |> List.ofSeq
 
-            Conc.RecordOpenMaybe list |> ConcreteType |> Ok, List.map (Tuple.mapSnd Ok) list |> Map.ofList
+            UnificationVariable.makeNewRecConstraint ctx.currentLevel (makeNewUniVar ()) list
+            |> PTC.UnificationVar
+            |> Ok,
+            List.map (Tuple.mapSnd Ok) list |> Map.ofList
 
 
         | S.DestructuredTypeVariant (ctor, typeParams) ->
@@ -1232,11 +1310,22 @@ and private replaceTypeVarsInPtcFromMap
             | Some constrained ->
                 uniVar.content.Value <-
                     { uniVar.content.Value with
-                        constrained = Some (traverser constrained) }
+                        constrained = Some (mapToTypeOrRec traverser constrained) }
 
                 UnificationVar uniVar
 
             | None -> UnificationVar uniVar
+
+        //| RecordUnificationVar uniVar ->
+        //    let uniVarContents = uniVar.content.Value
+
+        //    uniVar.content.Value <-
+        //        { uniVar.content.Value with
+        //            fields = uniVarContents.fields |> NEL.map (Tuple.mapSnd traverser) }
+
+        //    RecordUnificationVar uniVar
+
+
         | ConcreteType concrete ->
             (match concrete with
              | BuiltInPrims _ -> concrete
@@ -1244,9 +1333,13 @@ and private replaceTypeVarsInPtcFromMap
              | Conc.List item -> traverser item |> Conc.List
              | Conc.Arrow (fromType, toType) -> Conc.Arrow (traverser fromType, traverser toType)
              | Conc.RecordExact fields -> Conc.RecordExact (List.map (Tuple.mapSnd traverser) fields)
-             | Conc.RecordOpenMaybe fields -> Conc.RecordOpenMaybe (List.map (Tuple.mapSnd traverser) fields)
-             | Conc.RecordOpenDefinitely (typeVar, fields) ->
-                 Conc.RecordOpenDefinitely (typeVar, List.map (Tuple.mapSnd traverser) fields)
+             //| Conc.RecordOpenMaybe fields -> Conc.RecordOpenMaybe (List.map (Tuple.mapSnd traverser) fields)
+             //| Conc.RecordOpenDefinitely (typeVar, fields) ->
+             //    Conc.RecordOpenDefinitely (typeVar, List.map (Tuple.mapSnd traverser) fields)
+             //match Map.tryFind typeVar typeVarToUniVarMap with
+             //    | Some uniVar ->
+
+
              | CustomType (typeName, typeParams) -> CustomType (typeName, List.map traverser typeParams))
             |> ConcreteType
 
@@ -1380,70 +1473,70 @@ and private unifyTwoTypeContents
 
             | Error _ -> Error clashErr
 
-        | Conc.RecordExact exactFields, Conc.RecordOpenMaybe openFields
-        | Conc.RecordOpenMaybe openFields, Conc.RecordExact exactFields ->
-            let mapOfExactFields = Map.ofList exactFields
-            let mapOfOpenFields = Map.ofList openFields
+        //| Conc.RecordExact exactFields, Conc.RecordOpenMaybe openFields
+        //| Conc.RecordOpenMaybe openFields, Conc.RecordExact exactFields ->
+        //    let mapOfExactFields = Map.ofList exactFields
+        //    let mapOfOpenFields = Map.ofList openFields
 
-            match Map.getOverlap mapOfExactFields mapOfOpenFields with
-            | Map.MapsOverlap.Exact unifiedKeysMap ->
-                let unifiedMapResult =
-                    unifiedKeysMap
-                    |> Map.map (fun _ (exact, open_) -> unifyTwoTypeContents ctx exact open_)
-                    |> Map.sequenceResult
+        //    match Map.getOverlap mapOfExactFields mapOfOpenFields with
+        //    | Map.MapsOverlap.Exact unifiedKeysMap ->
+        //        let unifiedMapResult =
+        //            unifiedKeysMap
+        //            |> Map.map (fun _ (exact, open_) -> unifyTwoTypeContents ctx exact open_)
+        //            |> Map.sequenceResult
 
-                match unifiedMapResult with
-                | Ok unified -> Conc.RecordExact (Map.toList unified) |> ConcreteType |> Ok
-                | Error (_, e) -> Error (NEL.head e)
+        //        match unifiedMapResult with
+        //        | Ok unified -> Conc.RecordExact (Map.toList unified) |> ConcreteType |> Ok
+        //        | Error (_, e) -> Error (NEL.head e)
 
-            | Map.MapsOverlap.LeftHasMore (leftExtra, shared) ->
-                let unifiedSharedsResult =
-                    shared
-                    |> Map.map (fun _ (exact, open_) -> unifyTwoTypeContents ctx exact open_)
-                    |> Map.sequenceResult
+        //    | Map.MapsOverlap.LeftHasMore (leftExtra, shared) ->
+        //        let unifiedSharedsResult =
+        //            shared
+        //            |> Map.map (fun _ (exact, open_) -> unifyTwoTypeContents ctx exact open_)
+        //            |> Map.sequenceResult
 
-                match unifiedSharedsResult with
-                | Ok unifiedShareds ->
-                    let allExactFields = Map.merge leftExtra unifiedShareds
-                    Conc.RecordExact (Map.toList allExactFields) |> ConcreteType |> Ok
+        //        match unifiedSharedsResult with
+        //        | Ok unifiedShareds ->
+        //            let allExactFields = Map.merge leftExtra unifiedShareds
+        //            Conc.RecordExact (Map.toList allExactFields) |> ConcreteType |> Ok
 
-                | Error (_, e) -> Error (NEL.head e)
+        //        | Error (_, e) -> Error (NEL.head e)
 
-            | Map.MapsOverlap.RightHasMore (_, _) ->
-                // This means the open one has more fields than the exact one, which means they are not compatible
-                UnificationError.makeClash concType1 concType2 |> Error
+        //    | Map.MapsOverlap.RightHasMore (_, _) ->
+        //        // This means the open one has more fields than the exact one, which means they are not compatible
+        //        UnificationError.makeClash concType1 concType2 |> Error
 
-            | Map.MapsOverlap.BothHaveMore (_, _, _) ->
-                // This means the open one has more fields than the exact one, which means they are not compatible
-                UnificationError.makeClash concType1 concType2 |> Error
-
-
-
-        | Conc.RecordOpenMaybe fields1, Conc.RecordOpenMaybe fields2 ->
-            let fieldsMap1 = Map.ofList fields1
-            let fieldsMap2 = Map.ofList fields2
-            let merger = (fun _ val1 val2 -> unifyTwoTypeContents ctx val1 val2)
-
-            let mergedFieldsResult =
-                Map.foldSharedKeys
-                    (fun map key val1 val2 -> Map.add key (unifyTwoTypeContents ctx val1 val2) map)
-                    fieldsMap1
-                    fieldsMap2
-                    Map.empty
-
-            let allCombined : Result<Map<LowerIdent, PolyTypeContents>, _> =
-                mergedFieldsResult
-                |> Map.merge (Map.map (always Ok) fieldsMap1)
-                |> Map.merge (Map.map (always Ok) fieldsMap2)
-                |> Map.sequenceResult
-
-            match allCombined with
-            | Ok mergedFields -> Conc.RecordOpenMaybe (Map.toList mergedFields) |> ConcreteType |> Ok
-            | Error (_, e) -> Error (NEL.head e)
+        //    | Map.MapsOverlap.BothHaveMore (_, _, _) ->
+        //        // This means the open one has more fields than the exact one, which means they are not compatible
+        //        UnificationError.makeClash concType1 concType2 |> Error
 
 
-        | Conc.RecordOpenDefinitely (typeVar1, openDef1), Conc.RecordOpenDefinitely (typeVar2, openDef2) ->
-            failwith "Every type var should have been instantiated with a unification variable before unification!"
+
+        //| Conc.RecordOpenMaybe fields1, Conc.RecordOpenMaybe fields2 ->
+        //    let fieldsMap1 = Map.ofList fields1
+        //    let fieldsMap2 = Map.ofList fields2
+        //    let merger = (fun _ val1 val2 -> unifyTwoTypeContents ctx val1 val2)
+
+        //    let mergedFieldsResult =
+        //        Map.foldSharedKeys
+        //            (fun map key val1 val2 -> Map.add key (unifyTwoTypeContents ctx val1 val2) map)
+        //            fieldsMap1
+        //            fieldsMap2
+        //            Map.empty
+
+        //    let allCombined : Result<Map<LowerIdent, PolyTypeContents>, _> =
+        //        mergedFieldsResult
+        //        |> Map.merge (Map.map (always Ok) fieldsMap1)
+        //        |> Map.merge (Map.map (always Ok) fieldsMap2)
+        //        |> Map.sequenceResult
+
+        //    match allCombined with
+        //    | Ok mergedFields -> Conc.RecordOpenMaybe (Map.toList mergedFields) |> ConcreteType |> Ok
+        //    | Error (_, e) -> Error (NEL.head e)
+
+
+        //| Conc.RecordOpenDefinitely (typeVar1, openDef1), Conc.RecordOpenDefinitely (typeVar2, openDef2) ->
+        //    failwith "Every type var should have been instantiated with a unification variable before unification!"
 
         | _, _ -> UnificationError.makeClash concType1 concType2 |> Error
 
@@ -1462,7 +1555,7 @@ and private unifyTwoTypeContents
     | PTC.UnificationVar uniVar, PTC.ConcreteType concreteType
     | PTC.ConcreteType concreteType, PTC.UnificationVar uniVar ->
 
-        constrainUniVar ctx uniVar (PTC.ConcreteType concreteType)
+        constrainUniVar ctx uniVar (PTC.ConcreteType concreteType |> Type_)
         |> Result.map PTC.UnificationVar
 
 
@@ -1481,6 +1574,139 @@ and private unifyTwoTypeContents
 
 
 
+and private unifyTwoTypesOrRecords
+    (ctx : Ctx)
+    (typeOrRec1 : TypeOrRecord)
+    (typeOrRec2 : TypeOrRecord)
+    : Result<TypeOrRecord, UnificationError> =
+    match typeOrRec1, typeOrRec2 with
+    | Type_ type1, Type_ type2 -> unifyTwoTypeContents ctx type1 type2 |> Result.map Type_
+
+    | TOR.Record record1, TOR.Record record2 ->
+        let map1 = Map.ofList record1
+        let map2 = Map.ofList record2
+
+        let okifyVals map key v = Map.add key (Ok v) map
+
+        let resultingMap =
+            Map.foldAllEntries<LowerIdent, PolyTypeContents, PolyTypeContents, Map<LowerIdent, Result<PolyTypeContents, UnificationError>>>
+                okifyVals
+                okifyVals
+                (fun map key val1 val2 -> Map.add key (unifyTwoTypeContents ctx val1 val2) map)
+                map1
+                map2
+                Map.empty
+            |> Map.sequenceResult
+
+
+        match resultingMap with
+        | Ok unifiedMap -> TOR.Record (Map.toList unifiedMap) |> Ok
+        | Error (_, e) -> Error (NEL.head e)
+
+
+    | Type_ type_, TOR.Record rowFields
+    | TOR.Record rowFields, Type_ type_ ->
+        match type_ with
+        | UnificationVar uniVar ->
+            constrainUniVar ctx uniVar (TOR.Record rowFields)
+            |> Result.map (UnificationVar >> Type_)
+
+        | PTC.Skolem skolem -> NarrowedSkolem (skolem, type_) |> Error
+        | ConcreteType conc ->
+            match conc with
+            | RecordExact exactRecFields ->
+                let exactMap = Map.ofList exactRecFields
+                let openMap = Map.ofList rowFields
+
+                match Map.getOverlap exactMap openMap with
+                | Map.MapsOverlap.Exact combinedMap ->
+                    let unifiedResult =
+                        combinedMap
+                        |> Map.map (fun _ (exactVal, openVal) -> unifyTwoTypeContents ctx exactVal openVal)
+                        |> Map.sequenceResult
+
+                    match unifiedResult with
+                    | Ok unified -> Ok (TOR.Record (Map.toList unified))
+                    | Error (_, e) -> Error (NEL.head e)
+
+
+                | Map.MapsOverlap.RightHasMore (shared, diffRight) ->
+                    let openExcessFields = diffRight |> Map.keys |> Set.ofSeq
+                    let exactFields = shared |> Map.keys |> Set.ofSeq
+
+                    OpenRecordHasMoreFieldsThanExactRecord (openExcessFields, exactFields) |> Error
+
+                | Map.MapsOverlap.BothHaveMore (_, shared, diffRight) ->
+                    let openExcessFields = diffRight |> Map.keys |> Set.ofSeq
+                    let exactFields = shared |> Map.keys |> Set.ofSeq
+
+                    OpenRecordHasMoreFieldsThanExactRecord (openExcessFields, exactFields) |> Error
+
+                | Map.MapsOverlap.LeftHasMore (diffLeft, shared) ->
+                    let unifiedResult =
+                        shared
+                        |> Map.map (fun _ (exactVal, openVal) -> unifyTwoTypeContents ctx exactVal openVal)
+                        |> Map.sequenceResult
+
+                    match unifiedResult with
+                    | Ok unified ->
+                        Map.merge unified diffLeft
+                        |> Map.toList
+                        |> RecordExact
+                        |> ConcreteType
+                        |> Type_
+                        |> Ok
+
+                    | Error (_, e) -> Error (NEL.head e)
+
+            | _ -> RecordTypeClash (rowFields, conc) |> Error
+
+
+        | TypeVariable _ -> failwith "There should be no type variables during unification!"
+
+
+
+
+
+//let sorted1 = List.sortBy fst record1
+//let sorted2 = List.sortBy fst record2
+
+//match List.zipList sorted1 sorted2 with
+//| Ok zipped ->
+//    let unified =
+//        zipped
+//        |> List.map (fun ((fieldName1, value1), (fieldName2, value2)) ->
+//            if fieldName1 = fieldName2 then
+//                match unifyTwoTypeContents ctx value1 value2 with
+//                | Ok result -> Ok (fieldName1, result)
+//                | Error e -> Error e
+//            else
+
+//                Error clashErr)
+//        |> Result.sequenceList
+
+//    match unified with
+//    | Ok fields -> TOR.Record fields |> Ok
+//    | Error e -> Error (NEL.head e)
+
+//| Error _ -> Error clashErr
+
+//| _, _ -> UnificationError.makeClash typeOrRec1 typeOrRec2 |> Error
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1488,11 +1714,11 @@ and private unifyTwoTypeContents
 /// Other than the trivial case of unifying a univar with itself, a univar can't be unified with another type containing itself. Otherwise you'd have an infinitely recursive type. So we need to check that that's not what we're doing here.
 ///
 /// Returns true if the univar is indeed somewhere nested inside the PTC resulting in infinite recursive type if we were to try and unify them
-and private occursCheck (univar : UnificationVariable) (ptc : PTC) : bool =
+and private occursCheck (univar : UnificationVariable) (typeOrRec : TypeOrRecord) : bool =
     /// Is the predicate true for any item in the list
     let forAny pred = Seq.fold (fun state item -> state || pred item) false
 
-    let rec nestedOccursCheck ptc_ =
+    let rec nestedOccursCheckPtc (ptc_ : PolyTypeContents) : bool =
         match ptc_ with
         | UnificationVar innerUniVar -> innerUniVar.content.Value = univar.content.Value
 
@@ -1501,21 +1727,26 @@ and private occursCheck (univar : UnificationVariable) (ptc : PTC) : bool =
         | ConcreteType concType ->
             match concType with
             | BuiltInPrims _ -> false
-            | Conc.Tuple typeParams -> forAny nestedOccursCheck typeParams
-            | Conc.List typeParam -> nestedOccursCheck typeParam
-            | Conc.Arrow (fromType, toType) -> nestedOccursCheck fromType || nestedOccursCheck toType
-            | Conc.RecordExact fields -> forAny (snd >> nestedOccursCheck) fields
-            | Conc.RecordOpenMaybe fields -> forAny (snd >> nestedOccursCheck) fields
-            | Conc.RecordOpenDefinitely (_, fields) -> forAny (snd >> nestedOccursCheck) fields
-            | Conc.CustomType (_, typeParams) -> forAny nestedOccursCheck typeParams
+            | Conc.Tuple typeParams -> forAny nestedOccursCheckPtc typeParams
+            | Conc.List typeParam -> nestedOccursCheckPtc typeParam
+            | Conc.Arrow (fromType, toType) -> nestedOccursCheckPtc fromType || nestedOccursCheckPtc toType
+            | Conc.RecordExact fields -> forAny (snd >> nestedOccursCheckPtc) fields
+            //| Conc.RecordOpenMaybe fields -> forAny (snd >> nestedOccursCheck) fields
+            //| Conc.RecordOpenDefinitely (_, fields) -> forAny (snd >> nestedOccursCheck) fields
+            | Conc.CustomType (_, typeParams) -> forAny nestedOccursCheckPtc typeParams
+
+    and nestedOccursCheckRecord (fields : RowField list) : bool = fields |> forAny (snd >> nestedOccursCheckPtc)
 
 
-    match ptc with
-    | UnificationVar _ ->
+
+    match typeOrRec with
+    | Type_ (UnificationVar _) ->
         // I.e. top levels univars being equal to each other is not a problem. It's only nested ones that are a problem.
+        // @TODO actually I'm not sure if this logic is correct? feels like we need to actually be checking through the univars
         false
 
-    | _ -> nestedOccursCheck ptc
+    | Type_ ptc_ -> nestedOccursCheckPtc ptc_
+    | TOR.Record record -> nestedOccursCheckRecord record
 
 
 
@@ -1563,7 +1794,7 @@ and private unifyUniVars
             InfinitelyRecursiveType (univar2, result1) |> Error
 
         else
-            let unifiedResult = unifyTwoTypeContents ctx result1 result2
+            let unifiedResult = unifyTwoTypesOrRecords ctx result1 result2
 
             match unifiedResult with
             | Ok unified ->
@@ -1582,11 +1813,45 @@ and private unifyUniVars
 
 
 
+///// Add a constraint to a univar
+//and private constrainUniVar
+//    (ctx : Ctx)
+//    (uniVar : UnificationVariable)
+//    (constraint_ : PolyTypeContents)
+//    : Result<UnificationVariable, UnificationError> =
+//    let content = uniVar.content.Value
+
+//    match content.constrained with
+//    | None ->
+//        uniVar.content.Value <-
+//            { uniVar.content.Value with
+//                constrained = Some constraint_ }
+
+//        Ok uniVar
+
+//    | Some existingConstraint ->
+//        if occursCheck uniVar constraint_ then
+//            InfinitelyRecursiveType (uniVar, constraint_) |> Error
+
+//        else
+
+//            match unifyTwoTypeContents ctx existingConstraint constraint_ with
+//            | Ok unified ->
+//                uniVar.content.Value <-
+//                    { uniVar.content.Value with
+//                        constrained = Some unified }
+
+//                Ok uniVar
+
+//            | Error e -> Error e
+
+
+
 /// Add a constraint to a univar
 and private constrainUniVar
     (ctx : Ctx)
     (uniVar : UnificationVariable)
-    (constraint_ : PolyTypeContents)
+    (constraint_ : TypeOrRecord)
     : Result<UnificationVariable, UnificationError> =
     let content = uniVar.content.Value
 
@@ -1604,7 +1869,7 @@ and private constrainUniVar
 
         else
 
-            match unifyTwoTypeContents ctx existingConstraint constraint_ with
+            match unifyTwoTypesOrRecords ctx existingConstraint constraint_ with
             | Ok unified ->
                 uniVar.content.Value <-
                     { uniVar.content.Value with
@@ -1616,6 +1881,8 @@ and private constrainUniVar
 
 
 
+
+
 and private combineNamesMaps
     (ctx : Ctx)
     (namesMap1 : TypedLocalNamesMap)
@@ -1623,6 +1890,7 @@ and private combineNamesMaps
     : TypedLocalNamesMap =
     let merger _ polytype1 polytype2 = unifyTwoTypeResults ctx polytype1 polytype2
 
+    // @TODO hm I don't think we need a merger that does unification, I think we just need to forbid the same name from being inserted in the first place. If we have to occurrences of the name `a` being assigned to different things, we don't fix that by unifying both expressions' types, we just throw an error that shadowing is not allowed!
     Map.mergeSafe merger namesMap1 namesMap2
 
 
@@ -1633,8 +1901,10 @@ and private combineAssignmentNamesMaps
     (namesMap2 : AssignmentNamesMap)
     : AssignmentNamesMap =
     let merger _ polytype1 polytype2 = unifyTwoTypeContentsResults ctx polytype1 polytype2
-
+    // @TODO same here as above
     Map.mergeSafe merger namesMap1 namesMap2
+
+
 
 /// This one converts *without zonking*
 and private convertAssignmentNamesMapToTypedLocalNamesMap : AssignmentNamesMap -> TypedLocalNamesMap =

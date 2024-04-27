@@ -476,6 +476,7 @@ and TOM<'a> = TwoOrMore<'a>
 
 /// List of two or more
 and 'a tom = TwoOrMore<'a>
+and 'a twoOrMore = TwoOrMore<'a>
 
 
 
