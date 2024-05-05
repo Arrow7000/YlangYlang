@@ -998,7 +998,7 @@ and parseInherentlyDelimType =
 
           parseSingleValueIdentifier |> map (getNode >> MentionableType.GenericTypeVar)
 
-          parseUnit |> map (always UnitType)
+          parseUnit |> map (always MentionableType.UnitType)
 
           // parses a single type name without any type params
           typeNameParser

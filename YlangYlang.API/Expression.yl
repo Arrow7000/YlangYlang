@@ -10,7 +10,11 @@
   complexRec = {x = 3, y = '4', z = {x = "boo", y = 4}}
   {x,y } = complexRec.z
   nestedGetter thing = thing.x.y.z.a
-  ifOfRecords param1 param2 = if param1.x then { param1 | y = 3} else { param2 | z = "hi" }
+  ifOfRecords a param2 = if a.x then { a | y = 3} else { param2 | z = "hi" }
+  newFunc param =
+    let
+      ({aaa,bbb,cc} as newRecord) = param
+    in newRecord
 in
-(complexRec,x,y,ifOfRecords)
+(ifOfRecords,point)
 --( a, (id, id "hi" , id 34.5), (tuplify, tuplify 'd'), (getIfTrue, getIfTrue {x=True,y= ()} ), fst )

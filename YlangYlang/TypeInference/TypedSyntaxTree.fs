@@ -119,8 +119,10 @@ type BuiltInPrimitiveTypes =
 
 
 
+
+
 /// @TODO need to include record types also, both closed or open
-and ConcreteType =
+type ConcreteType =
     | BuiltInPrims of BuiltInPrimitiveTypes
     | Tuple of PolyTypeContents tom
     | List of PolyTypeContents
@@ -177,7 +179,7 @@ and PolyTypeContents =
     /// Referencing a unification variable.
     | UnificationVar of UnificationVariable
     /// Referencing a *type variable* (not a unification variable!)
-    | TypeVariable of TypeVariableId
+    | TypeVariable of typeVar : TypeVariable
     /// This is only available during a type `check` call – may be unified with itself or a uniVar but nothing else!
     | Skolem of name : LowerIdent
     /// A simple unparametric type like `Int` or `String`, or a parametric type like `List a`, `Maybe a`, `Result e a`
@@ -186,7 +188,7 @@ and PolyTypeContents =
     override this.ToString () =
         match this with
         | UnificationVar uniVar -> string uniVar
-        | TypeVariable typeVar -> string typeVar
+        | TypeVariable typeVar -> TypeVariable.stringifyWithKindForRows typeVar
         | Skolem name -> string name
         | ConcreteType concType -> string concType
 
@@ -196,11 +198,61 @@ and PTC = PolyTypeContents
 
 and RowField = LowerIdent * PolyTypeContents
 
-/// Either a record with some constrained fields, or any other type
-and TypeOrRecord =
-    | Type_ of PolyTypeContents // For a still unconstrained univar
+
+
+
+/// Used to represent which kind a type variable has
+and TypeVariableKind =
+    /// I.e. could be any concrete type
+    | Type_
+    /// I.e. is specifically a record type with at least the following fields
+    | Record of fields : RowField list
+
+
+
+and TypeVariable =
+    { id : TypeVariableId
+      kind : TypeVariableKind }
+
+    override this.ToString () = TypeVariable.stringifyWithKindForRows this
+
+    static member createType id = { id = id; kind = Type_ }
+    static member createRecord id fields = { id = id; kind = Record fields }
+
+    static member stringifySimple (tv : TypeVariable) = string tv.id
+
+
+    /// Include the kind in the stringification, suitable for `forall` clauses
+    static member stringifyWithKind (tv : TypeVariable) =
+        match tv.kind with
+        | Type_ -> "(" + string tv.id + " : Type)"
+        | Record fields ->
+            let commafiedFields =
+                fields
+                |> List.map (fun (name, type_) -> string name + " : " + string type_)
+                |> String.join ", "
+
+            "{ " + string tv.id + " | " + commafiedFields + " }"
+
+    /// Include the kind in the stringification only for Row kinds
+    static member stringifyWithKindForRows (tv : TypeVariable) =
+        match tv.kind with
+        | Type_ -> string tv.id
+        | Record fields ->
+            let commafiedFields =
+                fields
+                |> List.map (fun (name, type_) -> string name + " : " + string type_)
+                |> String.join ", "
+
+            "{ " + string tv.id + " | " + commafiedFields + " }"
+
+
+
+/// Either a record with some constrained fields, or any other type constraint
+and TypeOrRecordConstr =
+    | TypeConstr of PolyTypeContents // For a still unconstrained univar
     /// This basically means a record type but with the exact fields still open to having more added to them. It just means that at least these fields need to be present on it, and with these types for values.
-    | Record of fields : RowField list // List will be empty for unconstrained univar
+    | RecordConstr of fields : RowField list // List will be empty for unconstrained univar
 
 
 
@@ -210,17 +262,16 @@ and UniVarContent =
         id : UnificationVarId
         /// What level this univar was declared on. This way we know that it is safe to be zonked out of existence on lower levels than its `levelDeclared` property. (Deeper nesting = higher level)
         levelDeclared : uint
-        constrained : TypeOrRecord option
+        constrained : TypeOrRecordConstr option
     }
 
     override this.ToString () =
-
         match this.constrained with
         | None -> string this.id
         | Some constrained ->
             match constrained with
-            | Type_ ptc -> $"({string id} : {string ptc})"
-            | Record fields ->
+            | TypeConstr ptc -> $"({string this.id} : {string ptc})"
+            | RecordConstr fields ->
                 let commafiedFields =
                     fields
                     |> List.map (fun (name, type_) -> string name + " : " + string type_)
@@ -281,7 +332,7 @@ and UnificationVariable =
 type Conc = ConcreteType
 
 /// Alias for TypeOrRecord
-type TOR = TypeOrRecord
+type TOR = TypeOrRecordConstr
 
 
 
@@ -365,7 +416,7 @@ type UnificationError =
     | TriedToUnifyDifferentSkolems of skolem1 : LowerIdent * skolem2 : LowerIdent
     /// Skolems only unify with themselves, not with anything else
     | NarrowedSkolem of skolemName : LowerIdent * narrowedWith : PolyTypeContents
-    | InfinitelyRecursiveType of unified : UnificationVariable * with_ : TypeOrRecord
+    | InfinitelyRecursiveType of unified : UnificationVariable * with_ : TypeOrRecordConstr
     | WrongNumberOfTypeParams of typeName : UpperNameValue * expected : uint * actual : uint
 
     | OpenRecordHasMoreFieldsThanExactRecord of openFields : LowerIdent set * exactFields : LowerIdent set
@@ -440,7 +491,7 @@ type UnificationError =
 
 
 type PolyType =
-    { forall : TypeVariableId list
+    { forall : TypeVariable list
       typeExpr : PolyTypeContents }
 
     override this.ToString () =
@@ -448,7 +499,11 @@ type PolyType =
 
         match this.forall with
         | [] -> bodyStr
-        | _ :: _ -> "forall " + String.concat " " (List.map string this.forall) + ". " + bodyStr
+        | _ :: _ ->
+            "forall "
+            + String.concat " " (List.map TypeVariable.stringifyWithKind this.forall)
+            + ". "
+            + bodyStr
 
 
 
@@ -473,7 +528,7 @@ type TypeNamesMap = Map<UpperNameValue, PolyType>
 ///The list represents the parameters for this particular constructor
 
 type Ctor =
-    { forall : TypeVariableId list
+    { forall : TypeVariable list
       params_ : PolyTypeContents list
       result : PolyTypeContents }
 
