@@ -188,7 +188,7 @@ and PolyTypeContents =
     override this.ToString () =
         match this with
         | UnificationVar uniVar -> string uniVar
-        | TypeVariable typeVar -> TypeVariable.stringifyWithKindForRows typeVar
+        | TypeVariable typeVar -> TypeVariable.simpleStringify typeVar
         | Skolem name -> string name
         | ConcreteType concType -> string concType
 
@@ -219,7 +219,11 @@ and TypeVariable =
     static member createType id = { id = id; kind = Type_ }
     static member createRecord id fields = { id = id; kind = Record fields }
 
-    static member stringifySimple (tv : TypeVariable) = string tv.id
+    /// For simple stringification as part of a PTC, where there is always going to be a forall clause stringification to refer to what the row types actually contain
+    static member simpleStringify (tv : TypeVariable) =
+        match tv.kind with
+        | Type_ -> string tv.id
+        | Record _ -> "{ " + string tv.id + " }"
 
 
     /// Include the kind in the stringification, suitable for `forall` clauses
@@ -430,7 +434,7 @@ type UnificationError =
 
     override this.ToString () =
         match this with
-        | UnificationClash (conc1, conc2) -> "Unification clash: `" + string conc1 + "` and `" + string conc2 + "`"
+        | UnificationClash (conc1, conc2) -> "Unification clash:\n`" + string conc1 + "`\nand\n`" + string conc2 + "`"
         | UndefinedName name -> "Undefined name: " + string name
         | UndefinedTypeCtor name -> "Undefined type constructor: " + string name
         | TriedToUnifyDifferentSkolems (skolem1, skolem2) ->
@@ -481,11 +485,6 @@ type UnificationError =
 
 
 
-
-
-
-/// Alias for PolyTypeContents
-//type PTC = PolyTypeContents
 
 
 
