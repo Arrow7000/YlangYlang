@@ -228,7 +228,6 @@ let rec private getNamesUsedInExpr (namesToLookOutFor : ValIdent set) (expr : S.
                 Set.empty
         )
 
-
     | S.LetExpression (bindings, inExpr) ->
         let shadowedNames =
             bindings
@@ -375,9 +374,6 @@ let private addLocalNamesMap (localNamesMap : T.TypedLocalNamesMap) (namesMap : 
 
 
 
-
-
-
 (* Zonking *)
 
 
@@ -402,6 +398,12 @@ let private fromTypeOrRec (f : PolyTypeContents -> 'T) (gatherer : 'T list -> 'T
 /// This should get all the univars that need to be replaced by type variables. Constrained univars will be replaced with their contents, so we don't need to gather them here.
 /// @TODO hmm, with the new thing that this does now -  i.e. returning both univars and the kind – this logic has become quite fiddly and I feel like there should be a better way of getting the same outcome in a more natural, less awkward way.
 /// Although I wonder if that way would entail mutable type variable kinds, in the same way that we do unification variables.
+///
+/// Note:
+/// So the reasoning for having this separate function from the zonking one is that we need to gather all the univars up front in order to assign one typevar per univar before we then dive back in and replace each univar with a typevar. Which we can't do in one pass, because we need to make sure we assign the same typevars to the same univars, so we can't just instantiate a fresh typevar in situ for each univar, because then we'd end up with a different typevar for each univar.
+/// Now the problem we're running in to, well, they're two-fold really.
+/// 1. It's kind of awkward that the fields of the row kinds we're gather still need to go through their own zonking, so we're kind of doing an awkward gathering of them here as they are, then we replace the univars with the kinds, and then we need to do another pass to zonk the fields of the row kinds. It would be so much nicer if we could do it all in one pass.
+/// 2. If there is an infinite recursion of univars here, we just get stuck in an infinite loop long before we do the unification of the univars which has the occurs check. We either need to make it so that this function never links univars in a recursive loop, or we need to also have a kind of occurs check in this function.
 let private getAllUnconstrainedUniVars (ptc : PolyTypeContents) : (UnificationVarId * TypeVariableKind) set =
 
     let getUniVarsFromTuples (tuples : (UnificationVarId * TypeVariableKind) set) : UnificationVarId set =
@@ -1932,7 +1934,9 @@ and private unifyUniVars
     (uniVar2 : UnificationVariable)
     : Result<UnificationVariable, UnificationError> =
     if uniVar1.content.Value.id = uniVar2.content.Value.id then
+        // They're already the same thing
         Ok uniVar1
+
     else
         match uniVar1.content.Value.constrained, uniVar2.content.Value.constrained with
         | None, None ->
@@ -2022,9 +2026,7 @@ and private constrainUniVar
             match occursCheck uniVar (TypeConstr constr2) with
             | OccursAndIsIndirect -> InfinitelyRecursiveType (uniVar, TypeConstr constr2) |> Error
 
-            | OccursButIsDirect ->
-
-                Ok uniVar
+            | OccursButIsDirect -> Ok uniVar
 
             | NoOccurs ->
                 match unifyTwoTypesOrRecords ctx uniVarConstraint (TypeConstr constr2) with
@@ -2040,11 +2042,7 @@ and private constrainUniVar
         | RecordConstr _, RecordConstr fields2 ->
             match occursCheck uniVar (RecordConstr fields2) with
             | OccursAndIsIndirect -> InfinitelyRecursiveType (uniVar, RecordConstr fields2) |> Error
-
-            | OccursButIsDirect ->
-
-                Ok uniVar
-
+            | OccursButIsDirect -> Ok uniVar
             | NoOccurs ->
                 match unifyTwoTypesOrRecords ctx uniVarConstraint (RecordConstr fields2) with
                 | Ok unified ->

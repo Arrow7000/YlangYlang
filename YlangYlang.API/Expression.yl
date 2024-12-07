@@ -1,20 +1,24 @@
 ﻿let
-  a = [1, 2, 3, 4, 5]
-  id x = x
-  tuplify x = (x, x)
-  fst (x,_) = x
-  getIfTrue {x,y} = if x then "true" else "3434"
-  getX {x} =  x
-  point = {x = 3, y = 4 }
-  xCoord = getX point
-  complexRec = {x = 3, y = '4', z = {x = "boo", y = 4}}
-  {x,y } = complexRec.z
-  nestedGetter thing = thing.x.y.z.a
-  ifOfRecords a param2 = if a.x then { a | y = 3} else { param2 | z = "hi" }
-  newFunc param =
+  makeSame a b = [a, b]
+
+  f x =
     let
-      ({aaa,bbb,cc} as newRecord) = param
-    in newRecord
+      genX {y} =
+        let
+          _ = makeSame x [ y ]
+        in
+        ()
+      in
+      (makeSame x "bla", makeSame x 1)
 in
-(ifOfRecords,point)
+f
+
+
+
+
+
+
+
+
 --( a, (id, id "hi" , id 34.5), (tuplify, tuplify 'd'), (getIfTrue, getIfTrue {x=True,y= ()} ), fst )
+

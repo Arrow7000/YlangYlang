@@ -12,7 +12,7 @@ type UnificationVarId =
 
     override this.ToString () =
         let (UnificationVarId id) = this
-        "?" + String.trim 8 (string id)
+        "?" + String.trim 4 (string id)
 
 
 
@@ -22,7 +22,7 @@ type TypeVariableId =
 
     override this.ToString () =
         let (TypeVariableId id) = this
-        String.trim 8 (string id)
+        String.trim 4 (string id)
 
 
 

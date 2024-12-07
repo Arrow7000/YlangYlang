@@ -17,7 +17,7 @@ type UnificationVarId =
 
     override this.ToString () =
         let (UnificationVarId id) = this
-        "?" + String.trim 8 (string id)
+        "?" + String.trim 4 (string id)
 
 
 
@@ -27,7 +27,7 @@ type TypeVariableId =
 
     override this.ToString () =
         let (TypeVariableId id) = this
-        String.trim 8 (string id)
+        String.trim 4 (string id)
 
 
 
@@ -476,6 +476,12 @@ type UnificationError =
 
             "Open record field types clash with exact record field types: "
             + string (NEL.map stringifySingleClash clashes)
+
+        | RecordTypeClash (rowFields, concreteType) ->
+            "Cannot unify types of different kinds, type vs row: "
+            + string concreteType
+            + " vs. "
+            + string rowFields
 
     static member makeClash conc1 conc2 =
         // // Uncomment when debugging unexpected type errors
